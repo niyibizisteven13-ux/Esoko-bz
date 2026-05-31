@@ -40,6 +40,8 @@ const SMTP_HOST = config.smtp.host;
 const configuredSmtpPort = config.smtp.port;
 const SMTP_FROM = config.smtp.from;
 const configuredSmtpSecure = config.smtp.secure;
+const RESEND_API_KEY = env.RESEND_API_KEY || '';
+const RESEND_FROM = env.RESEND_FROM || SMTP_FROM;
 const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
@@ -64,6 +66,40 @@ const emailTransporter = nodemailer.createTransport({
   socketTimeout: 30000,
   auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
 } as any);
+
+async function sendAppEmail(mailOptions: {
+  from?: string;
+  to: string | string[];
+  subject: string;
+  html?: string;
+  text?: string;
+  [key: string]: any;
+}) {
+  if (RESEND_API_KEY) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: mailOptions.from || RESEND_FROM,
+        to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        text: mailOptions.text,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || payload?.error || `Resend API failed: ${response.status}`);
+    }
+    return payload;
+  }
+
+  return emailTransporter.sendMail(mailOptions);
+}
 
 const db = initializeDatabase();
 const {
@@ -554,7 +590,7 @@ async function sendAccountVerificationEmail(
   `;
 
   try {
-    await emailTransporter.sendMail({
+    await sendAppEmail({
       from: SMTP_FROM,
       to: user.email,
       subject,
@@ -2788,7 +2824,7 @@ async function sendLoginAlertEmail(req: any, user: any, token: string) {
     </div>
   `;
 
-  await emailTransporter.sendMail({
+  await sendAppEmail({
     from: SMTP_FROM,
     to: user.email,
     subject: '🔐 ESOKO Nexus Login Alert – Confirm or block this login',
@@ -2893,7 +2929,7 @@ async function sendPasswordResetEmail(req: any, user: any, resetUrl: string) {
     </div>
   `;
 
-  await emailTransporter.sendMail({
+  await sendAppEmail({
     from: SMTP_FROM,
     to: user.email,
     subject: 'Reset your ESOKO Nexus password',
@@ -2930,7 +2966,7 @@ async function sendEmailVerificationEmail(req: any, user: any, verificationUrl: 
     </div>
   `;
 
-  await emailTransporter.sendMail({
+  await sendAppEmail({
     from: SMTP_FROM,
     to: user.email,
     subject: 'Verify your ESOKO Nexus email address',
@@ -3000,7 +3036,7 @@ async function sendLoginNotificationEmail(req: any, user: any) {
     </div>
   `;
 
-  await emailTransporter.sendMail({
+  await sendAppEmail({
     from: SMTP_FROM,
     to: user.email,
     subject: '🔐 Security Alert: New Login to Your ESOKO Nexus Account',
@@ -3313,6 +3349,8 @@ app.get('/api/health', (_req, res) => {
     firebase: false,
     email: {
       configured: Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM),
+      provider: RESEND_API_KEY ? 'resend' : 'smtp',
+      resendConfigured: Boolean(RESEND_API_KEY),
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_SECURE,
@@ -3660,7 +3698,7 @@ async function sendTeamInvitationEmail(req: any, invitation: any, token: string)
     throw new Error('SMTP is not configured for team invitation emails');
   }
   const email = createTeamInvitationEmail(req, invitation, token);
-  await emailTransporter.sendMail({
+  await sendAppEmail({
     from: SMTP_FROM,
     to: invitation.email,
     subject: 'ESOKO Nexus trader team invitation',
@@ -4831,7 +4869,7 @@ app.post('/api/transaction-email', authenticate, async (req: any, res): Promise<
       </div>
     `;
 
-    await emailTransporter.sendMail({
+    await sendAppEmail({
       from: SMTP_FROM,
       to: requestedEmail,
       subject: `Transaction Confirmation - ${escapeHtml(type)}`,
@@ -7667,7 +7705,7 @@ app.put('/api/admin/users/:id', requireRole(['admin']), async (req: any, res): P
         </div>
       `;
 
-      await emailTransporter.sendMail({
+      await sendAppEmail({
         from: SMTP_FROM,
         to: updatedUser.email,
         subject: 'Your ESOKO Nexus Account Has Been Suspended',
@@ -7738,7 +7776,7 @@ app.put('/api/admin/users/:id', requireRole(['admin']), async (req: any, res): P
         </div>
       `;
 
-      await emailTransporter.sendMail({
+      await sendAppEmail({
         from: SMTP_FROM,
         to: updatedUser.email,
         subject: 'Your ESOKO Nexus Account Has Been Reactivated',
@@ -8431,7 +8469,7 @@ app.post('/api/admin/send-email', requireRole(['admin']), async (req: any, res):
       ...(text ? { text } : {}),
     };
 
-    const info = await emailTransporter.sendMail(mailOptions);
+    const info = await sendAppEmail(mailOptions);
     db.prepare(
       `
       INSERT INTO email_logs (id, adminId, recipient, subject, bodyText, bodyHtml, status, createdAt)
@@ -8504,7 +8542,7 @@ app.post('/api/emails', authenticate, async (req: any, res): Promise<any> => {
       ...(text ? { text } : {}),
     };
 
-    const info = await emailTransporter.sendMail(mailOptions);
+    const info = await sendAppEmail(mailOptions);
     console.log(`📧 Email sent to ${to}: ${subject}`);
     console.log(`   Message ID: ${info.messageId}`);
     logSystem(`Email sent to ${to}: ${subject}`, 'info', 'email', req.user.id);
@@ -8537,7 +8575,7 @@ app.post('/api/welcome-email', authenticate, async (req: any, res): Promise<any>
   }
 
   try {
-    await emailTransporter.sendMail({
+    await sendAppEmail({
       from: SMTP_FROM,
       to: email,
       subject: 'Welcome to ESOKO Nexus',
@@ -9806,7 +9844,7 @@ app.post('/api/admin/request-otp', adminOtpLimiter, async (req: any, res): Promi
     </div>
   `;
 
-    await emailTransporter.sendMail({
+    await sendAppEmail({
       from: SMTP_FROM,
       to: email,
       subject: 'ESOKO Nexus - Admin Portal Verification Code',
@@ -10888,7 +10926,7 @@ app.post('/api/admin/smtp/test', requireRole(['admin']), async (req: any, res): 
     `;
 
     const startTime = Date.now();
-    await emailTransporter.sendMail({
+    await sendAppEmail({
       from: SMTP_FROM,
       to: testEmail,
       subject: '✅ ESOKO Nexus SMTP Test - Connection Successful',
