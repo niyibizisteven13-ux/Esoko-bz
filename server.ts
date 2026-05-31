@@ -53,11 +53,17 @@ const emailTransporter = nodemailer.createTransport({
   port: SMTP_PORT,
   secure: SMTP_SECURE,
   family: Number(env.SMTP_FAMILY || 4),
+  lookup: (hostname: string, options: any, callback: any) => {
+    dns.lookup(hostname, { ...options, family: Number(env.SMTP_FAMILY || 4), all: false }, callback);
+  },
+  tls: {
+    servername: SMTP_HOST,
+  },
   connectionTimeout: 15000,
   greetingTimeout: 15000,
   socketTimeout: 30000,
   auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-});
+} as any);
 
 const db = initializeDatabase();
 const {
@@ -3312,6 +3318,7 @@ app.get('/api/health', (_req, res) => {
       secure: SMTP_SECURE,
       family: Number(env.SMTP_FAMILY || 4),
       correctedMisconfiguredGmailPort: shouldUseGmailStartTls,
+      forcedIpv4Lookup: true,
       from: SMTP_FROM ? 'configured' : 'missing',
     },
     uptime: process.uptime(),
