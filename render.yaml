@@ -36,3 +36,9 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_ADMIN_NAME
+        sync: false

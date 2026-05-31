@@ -1249,6 +1249,65 @@ function generateAppNumber() {
   return uuidv4().slice(0, 8);
 }
 
+function bootstrapInitialAdmin() {
+  const email = String(env.BOOTSTRAP_ADMIN_EMAIL || '')
+    .trim()
+    .toLowerCase();
+  const password = String(env.BOOTSTRAP_ADMIN_PASSWORD || '');
+  const name = String(env.BOOTSTRAP_ADMIN_NAME || 'ESOKO Admin').trim();
+
+  if (!email && !password) return;
+  if (!email || !email.includes('@')) {
+    console.warn('BOOTSTRAP_ADMIN_EMAIL is set incorrectly; initial admin was not created.');
+    return;
+  }
+  if (password.length < 8) {
+    console.warn('BOOTSTRAP_ADMIN_PASSWORD must be at least 8 characters; initial admin was not created.');
+    return;
+  }
+
+  const adminCount = (
+    db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as any
+  ).count;
+  if (adminCount > 0) return;
+
+  const existingUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+  const id = existingUser?.id || uuidv4();
+
+  db.transaction(() => {
+    if (existingUser) {
+      db.prepare(
+        `
+        UPDATE users
+        SET name = ?, password = ?, role = 'admin', verificationStatus = 'verified',
+            emailVerified = 1, verifiedAt = COALESCE(verifiedAt, CURRENT_TIMESTAMP),
+            onboardingComplete = 1, updatedAt = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      ).run(name || existingUser.name, hashPassword(password), id);
+    } else {
+      db.prepare(
+        `
+        INSERT INTO users (
+          id, email, name, password, role, verificationStatus, walletBalance, appNumber,
+          tier, onboardingComplete, loyaltyPoints, emailVerified, verifiedAt, createdAt, updatedAt
+        ) VALUES (?, ?, ?, ?, 'admin', 'verified', 0, ?, 'free', 1, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+      ).run(id, email, name, hashPassword(password), generateAppNumber());
+    }
+
+    createAccountMode(id, 'admin', {});
+    db.prepare(
+      `
+      INSERT OR IGNORE INTO loyalty_points (id, userId, points, totalEarned, updatedAt)
+      VALUES (?, ?, 0, 0, CURRENT_TIMESTAMP)
+    `
+    ).run(uuidv4(), id);
+  })();
+
+  logSystem(`Initial admin bootstrapped for ${email}`, 'info', 'auth', id);
+}
+
 function txCode(prefix: string) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 }
@@ -11352,6 +11411,8 @@ app.use('/api', (_req, res) => {
     hint: 'The backend is running, but this /api route does not exist.',
   });
 });
+
+bootstrapInitialAdmin();
 
 // Error handling middleware - must come after all other middleware and routes
 app.use(errorHandler);
