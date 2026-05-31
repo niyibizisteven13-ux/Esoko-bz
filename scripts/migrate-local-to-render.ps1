@@ -13,6 +13,10 @@ if (-not $Email -or -not $Password) {
   throw "Set ESOKO_ADMIN_EMAIL and ESOKO_ADMIN_PASSWORD before running this migration."
 }
 
+if ($Email -eq "your_admin_email" -or $Password -eq "your_admin_password") {
+  throw "Replace placeholder values with the real Render admin email and password. Example: `$env:ESOKO_ADMIN_EMAIL='admin@example.com'"
+}
+
 if (-not (Test-Path -LiteralPath $DatabasePath)) {
   throw "Database file not found: $DatabasePath"
 }
@@ -24,12 +28,21 @@ $loginBody = @{
 } | ConvertTo-Json
 
 Write-Host "Logging in to $BaseUrl ..."
-$login = Invoke-RestMethod `
-  -Uri "$BaseUrl/api/auth/login" `
-  -Method Post `
-  -Body $loginBody `
-  -ContentType "application/json" `
-  -WebSession $session
+try {
+  $login = Invoke-RestMethod `
+    -Uri "$BaseUrl/api/auth/login" `
+    -Method Post `
+    -Body $loginBody `
+    -ContentType "application/json" `
+    -WebSession $session
+} catch {
+  $body = ""
+  if ($_.Exception.Response) {
+    $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+    $body = $reader.ReadToEnd()
+  }
+  throw "Login request failed. Server response: $body"
+}
 
 if (-not $login.success) {
   throw "Login failed. Check ESOKO_ADMIN_EMAIL and ESOKO_ADMIN_PASSWORD."
