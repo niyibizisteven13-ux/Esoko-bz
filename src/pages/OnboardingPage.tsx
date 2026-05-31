@@ -276,7 +276,10 @@ export default function OnboardingPage() {
       );
     } catch (err: any) {
       console.error('Failed to send verification email:', err);
-      setError(err.message || 'Failed to send verification email');
+      setEmailVerificationSent(false);
+      setError(
+        'Email delivery is temporarily unavailable. You can continue now and verify your email later from settings.'
+      );
     } finally {
       setLoading(false);
     }
@@ -734,6 +737,11 @@ export default function OnboardingPage() {
                         Check your email for a verification link. It will expire in 24 hours. After opening it, return here and press Check.
                       </p>
                     )}
+                    {!emailVerified && (
+                      <p className="text-xs text-neutral-500">
+                        Email verification is optional while email delivery is being configured. You can continue and verify later.
+                      </p>
+                    )}
                   </div>
                 </div>
               </motion.div>
@@ -786,7 +794,7 @@ export default function OnboardingPage() {
                       : !surveyData.shoppingHabit)) ||
                 (step === 2 &&
                   (isTrader ? !surveyData.businessSize : surveyData.savingsGoal === undefined)) ||
-                (step === 5 && (!surveyData.termsAccepted || !emailVerified))
+                (step === 5 && !surveyData.termsAccepted)
               }
               className="flex-1 py-4 bg-orange-600 text-white rounded-2xl font-bold hover:bg-orange-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-orange-900/20"
             >
