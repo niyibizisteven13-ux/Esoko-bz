@@ -11431,7 +11431,12 @@ app.use('/api', (_req, res) => {
   });
 });
 
-bootstrapInitialAdmin();
+try {
+  bootstrapInitialAdmin();
+} catch (error: any) {
+  console.error('Bootstrap admin failed:', error);
+  logSystem(`Bootstrap admin failed: ${error.message || error}`, 'error', 'auth');
+}
 
 // Error handling middleware - must come after all other middleware and routes
 app.use(errorHandler);
