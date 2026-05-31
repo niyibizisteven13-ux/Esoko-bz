@@ -8441,6 +8441,46 @@ app.post('/api/emails', authenticate, async (req: any, res): Promise<any> => {
   }
 });
 
+app.post('/api/welcome-email', authenticate, async (req: any, res): Promise<any> => {
+  const email = String(req.body.email || req.user.email || '')
+    .trim()
+    .toLowerCase();
+  const name = String(req.body.name || req.user.name || 'there').trim();
+
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+
+  if (!SMTP_USER || !SMTP_PASS) {
+    logSystem(`Welcome email skipped for ${email}: SMTP not configured`, 'warn', 'email', req.user.id);
+    return res.json({ success: true, skipped: true, reason: 'SMTP configuration missing' });
+  }
+
+  try {
+    await emailTransporter.sendMail({
+      from: SMTP_FROM,
+      to: email,
+      subject: 'Welcome to ESOKO Nexus',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; color: #1f2937;">
+          <h1 style="color: #ea580c; margin-bottom: 8px;">Welcome to ESOKO Nexus, ${escapeHtml(name)}!</h1>
+          <p>Your account has been created. Please verify your email from the verification message we sent so you can use your account confidently.</p>
+          <p>Document upload is optional and can be completed later if you want a verified badge.</p>
+          <p style="font-size: 13px; color: #6b7280;">Thank you for joining ESOKO Nexus.</p>
+        </div>
+      `,
+      text: `Welcome to ESOKO Nexus, ${name}! Please verify your email. Document upload is optional and can be completed later if you want a verified badge.`,
+    });
+
+    logSystem(`Welcome email sent to ${email}`, 'info', 'email', req.user.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Failed to send welcome email:', error);
+    logSystem(`Welcome email failed to ${email}: ${error.message || error}`, 'error', 'email', req.user.id);
+    res.status(500).json({ error: 'Failed to send welcome email', details: error.message || error });
+  }
+});
+
 app.get('/api/admin/email-logs', requireRole(['admin']), (req: any, res): any => {
   const { limit, offset } = parseLimitOffset(req.query);
   const logs = db

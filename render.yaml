@@ -17,9 +17,9 @@ services:
       - key: COOKIE_SAMESITE
         value: strict
       - key: APP_URL
-        value: https://esoko.onrender.com
+        value: https://esoko-bz-1.onrender.com
       - key: FRONTEND_URLS
-        value: https://esoko.onrender.com
+        value: https://esoko-bz-1.onrender.com
       - key: UPLOAD_DIR
         value: /app/data/uploads
       - key: JWT_SECRET
