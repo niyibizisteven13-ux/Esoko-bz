@@ -3007,15 +3007,14 @@ async function handlePasswordResetRequest(req: any, res: any) {
 
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
   if (!user) {
-    return res.json({
-      success: true,
-      message: 'If that email exists, a reset link has been sent.',
+    return res.status(404).json({
+      error: 'No account exists with that email address.',
     });
   }
 
   if (!SMTP_USER || !SMTP_PASS) {
     return res
-      .status(500)
+      .status(503)
       .json({ error: 'SMTP is not configured. Set SMTP_USER and SMTP_PASS to send reset emails.' });
   }
 
@@ -3033,7 +3032,7 @@ async function handlePasswordResetRequest(req: any, res: any) {
 
   await sendPasswordResetEmail(req, user, resetUrl);
   logSystem(`Password reset email sent for ${email}`, 'info', 'auth', user.id);
-  res.json({ success: true, message: 'If that email exists, a reset link has been sent.' });
+  res.json({ success: true, message: 'Password reset email sent.' });
 }
 
 function parseJsonObject(value: any): Record<string, any> {
@@ -3300,6 +3299,11 @@ app.get('/api/health', (_req, res) => {
     database,
     backend: 'express',
     firebase: false,
+    email: {
+      configured: Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM),
+      host: SMTP_HOST,
+      from: SMTP_FROM ? 'configured' : 'missing',
+    },
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   });
@@ -8512,7 +8516,7 @@ app.post('/api/welcome-email', authenticate, async (req: any, res): Promise<any>
 
   if (!SMTP_USER || !SMTP_PASS) {
     logSystem(`Welcome email skipped for ${email}: SMTP not configured`, 'warn', 'email', req.user.id);
-    return res.json({ success: true, skipped: true, reason: 'SMTP configuration missing' });
+    return res.status(503).json({ error: 'SMTP configuration missing' });
   }
 
   try {
