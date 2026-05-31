@@ -166,35 +166,28 @@ export default function RegisterPage() {
       // Update user data
       await apiPut(`/api/users/${currentUser.id}`, userData);
 
-      // Send Welcome Email
-      if (email) {
-        emailService.sendWelcomeEmail(email, name, role);
-      }
-
-      // Send welcome notification
-      try {
-        await apiPost('/api/notifications', {
+      void apiPost('/api/notifications', {
           userId: currentUser.id,
           message: `Welcome to ESOKO, ${name}! Your professional commerce account is now active. Explore the marketplace and start your journey.`,
           type: 'success',
           subType: 'system',
           read: false,
           timestamp: new Date().toISOString(),
+        }).catch((notifErr) => {
+          console.error('Welcome notification failed:', notifErr);
         });
-      } catch (notifErr) {
-        console.error('Welcome notification failed:', notifErr);
+
+      if (email) {
+        void emailService.sendWelcomeEmail(email, name, role);
       }
 
-      // Send welcome email via server
-      try {
-        await fetch('/api/welcome-email', {
+      void fetch('/api/welcome-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: userData.email, name: userData.name }),
+        }).catch((emailErr) => {
+          console.error('Failed to trigger welcome email:', emailErr);
         });
-      } catch (emailErr) {
-        console.error('Failed to trigger welcome email:', emailErr);
-      }
 
       // Always go to onboarding first for new registrations
       navigate('/onboarding');
