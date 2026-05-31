@@ -3,6 +3,7 @@ import express from 'express';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
 import net from 'net';
+import dns from 'dns';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import path from 'path';
@@ -41,10 +42,16 @@ const SMTP_FROM = config.smtp.from;
 const SMTP_SECURE = config.smtp.secure;
 const JWT_SECRET = config.jwtSecret;
 
+dns.setDefaultResultOrder('ipv4first');
+
 const emailTransporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_SECURE,
+  family: Number(env.SMTP_FAMILY || 4),
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 30000,
   auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
 });
 
