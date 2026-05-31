@@ -1,6 +1,11 @@
 node_modules/
+dist/
+data/
+uploads/
 coverage/
 .DS_Store
 *.log
+server_logs.txt
+server_errors.txt
 .env*
 !.env.example
