@@ -75,30 +75,59 @@ async function sendAppEmail(mailOptions: {
   text?: string;
   [key: string]: any;
 }) {
-  if (RESEND_API_KEY) {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: RESEND_FROM || mailOptions.from,
-        to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
-        subject: mailOptions.subject,
-        html: mailOptions.html,
-        text: mailOptions.text,
-      }),
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.error || `Resend API failed: ${response.status}`);
+  const sendViaSmtp = async () => {
+    if (!SMTP_USER || !SMTP_PASS) {
+      throw new Error('SMTP is not configured');
     }
-    return payload;
+
+    return emailTransporter.sendMail({
+      ...mailOptions,
+      from: SMTP_FROM || mailOptions.from,
+    });
+  };
+
+  if (RESEND_API_KEY) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: RESEND_FROM || mailOptions.from,
+          to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+          subject: mailOptions.subject,
+          html: mailOptions.html,
+          text: mailOptions.text,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          payload?.message || payload?.error || `Resend API failed: ${response.status}`
+        );
+      }
+      return payload;
+    } catch (resendError: any) {
+      if (!SMTP_USER || !SMTP_PASS) throw resendError;
+      console.warn(
+        `Resend email failed; falling back to SMTP: ${resendError.message || resendError}`
+      );
+      try {
+        return await sendViaSmtp();
+      } catch (smtpError: any) {
+        throw new Error(
+          `Resend failed: ${resendError.message || resendError}; SMTP failed: ${
+            smtpError.message || smtpError
+          }`
+        );
+      }
+    }
   }
 
-  return emailTransporter.sendMail(mailOptions);
+  return sendViaSmtp();
 }
 
 const db = initializeDatabase();
@@ -3349,8 +3378,9 @@ app.get('/api/health', (_req, res) => {
     firebase: false,
     email: {
       configured: Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM),
-      provider: RESEND_API_KEY ? 'resend' : 'smtp',
+      provider: RESEND_API_KEY ? 'resend-with-smtp-fallback' : 'smtp',
       resendConfigured: Boolean(RESEND_API_KEY),
+      smtpConfigured: Boolean(SMTP_USER && SMTP_PASS),
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_SECURE,
