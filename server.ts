@@ -83,7 +83,7 @@ async function sendAppEmail(mailOptions: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: mailOptions.from || RESEND_FROM,
+        from: RESEND_FROM || mailOptions.from,
         to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
         subject: mailOptions.subject,
         html: mailOptions.html,
