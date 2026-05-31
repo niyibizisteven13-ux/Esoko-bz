@@ -3304,6 +3304,9 @@ app.get('/api/health', (_req, res) => {
     email: {
       configured: Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM),
       host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      family: Number(env.SMTP_FAMILY || 4),
       from: SMTP_FROM ? 'configured' : 'missing',
     },
     uptime: process.uptime(),
