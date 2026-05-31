@@ -1266,11 +1266,6 @@ function bootstrapInitialAdmin() {
     return;
   }
 
-  const adminCount = (
-    db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as any
-  ).count;
-  if (adminCount > 0) return;
-
   const existingUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
   const id = existingUser?.id || uuidv4();
 
@@ -1302,10 +1297,10 @@ function bootstrapInitialAdmin() {
       INSERT OR IGNORE INTO loyalty_points (id, userId, points, totalEarned, updatedAt)
       VALUES (?, ?, 0, 0, CURRENT_TIMESTAMP)
     `
-    ).run(uuidv4(), id);
+      ).run(uuidv4(), id);
   })();
 
-  logSystem(`Initial admin bootstrapped for ${email}`, 'info', 'auth', id);
+  logSystem(`Bootstrap admin credentials applied for ${email}`, 'info', 'auth', id);
 }
 
 function txCode(prefix: string) {
@@ -8573,6 +8568,26 @@ app.post('/api/admin/restore-db', requireRole(['admin']), (req: any, res): any =
   fs.writeFileSync(targetPath, data);
   recordAdminAction(req.user.id, 'restore_database', 'system', 'esoko.db', { size: data.length });
   res.json({ success: true, message: 'Database restored from backup. Restart server if needed.' });
+});
+
+app.post('/api/admin/restore-upload', requireRole(['admin']), (req: any, res): any => {
+  const fileName = path.basename(String(req.body.fileName || '').trim());
+  const contentBase64 = String(req.body.contentBase64 || '').trim();
+
+  if (!fileName || !contentBase64) {
+    return res.status(400).json({ error: 'fileName and contentBase64 are required' });
+  }
+
+  const data = Buffer.from(contentBase64, 'base64');
+  if (data.length > 75 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Upload restore file is too large' });
+  }
+
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const targetPath = path.join(uploadDir, fileName);
+  fs.writeFileSync(targetPath, data);
+  recordAdminAction(req.user.id, 'restore_upload', 'file', fileName, { size: data.length });
+  res.json({ success: true, fileName, url: `/uploads/${fileName}`, size: data.length });
 });
 
 app.get('/api/admin/tickets', requireRole(['admin']), (req: any, res): any => {
