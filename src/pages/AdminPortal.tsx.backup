@@ -1,0 +1,3569 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  ShieldCheck,
+  Lock,
+  ArrowRight,
+  Users,
+  Store,
+  Activity,
+  Settings,
+  Database,
+  AlertTriangle,
+  AlertCircle,
+  ChevronRight,
+  Search,
+  Filter,
+  MoreVertical,
+  CheckCircle2,
+  XCircle,
+  BarChart3,
+  ArrowDownLeft,
+  ChevronDown,
+  Globe,
+  Zap,
+  Layers,
+  LifeBuoy,
+  Send,
+  Trash2,
+  Loader2,
+  Edit2,
+  Bell,
+  MessageSquare,
+  Wallet,
+  Award,
+  Fingerprint,
+  RefreshCw,
+  Terminal,
+  TrendingUp,
+  TrendingDown,
+  Clock,
+  Server,
+  Mail,
+  Wifi,
+  WifiOff,
+  Cpu,
+  HardDrive,
+  MemoryStick,
+  Eye,
+  EyeOff,
+  Play,
+  Pause,
+  RotateCcw,
+  AlertOctagon,
+  CheckSquare,
+  XSquare,
+  DollarSign,
+  ShoppingCart,
+  Package,
+  UserCheck,
+  UserX,
+  Calendar,
+  Timer,
+  Zap as Lightning
+} from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import { cn, formatCurrency } from '../lib/utils';
+
+interface SystemHealth {
+  status: 'operational' | 'maintenance' | 'degraded';
+  timestamp: string;
+  uptime: number;
+  database: {
+    status: 'healthy' | 'unhealthy';
+    responseTime: 'fast' | 'slow';
+  };
+  memory: {
+    heapUsed: number;
+    heapTotal: number;
+    external: number;
+  };
+  transactions: {
+    lastHourCount: number;
+    lastHourVolume: number;
+  };
+  users: {
+    recentActive: number;
+  };
+  email: {
+    totalSent: number;
+    totalFailed: number;
+    successRate: number;
+  };
+}
+
+interface QuickStats {
+  todayTransactions: number;
+  todayRevenue: number;
+  pendingLoginAlerts: number;
+  openTickets: number;
+  newUsersToday: number;
+  failedTransactions: number;
+}
+
+interface TransactionFeed {
+  id: string;
+  userId: string;
+  type: string;
+  amount: number;
+  status: string;
+  description: string;
+  createdAt: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface LoginAlert {
+  id: string;
+  userId: string;
+  status: 'pending' | 'confirmed' | 'denied' | 'expired';
+  expiresAt: string;
+  ipAddress: string;
+  userAgent: string;
+  location: string;
+  role: string;
+  createdAt: string;
+  email: string;
+  name: string;
+  phone: string;
+  walletBalance: number;
+}
+
+export default function AdminPortal() {
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [authStep, setAuthStep] = useState<'email' | 'otp'>('email');
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'health' | 'users' | 'transactions' | 'security' | 'system' | 'logs'>('dashboard');
+
+  // Real-time data states
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
+  const [quickStats, setQuickStats] = useState<QuickStats | null>(null);
+  const [transactionFeed, setTransactionFeed] = useState<TransactionFeed[]>([]);
+  const [loginAlerts, setLoginAlerts] = useState<LoginAlert[]>([]);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [refreshInterval, setRefreshInterval] = useState(30000); // 30 seconds
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const apiBaseUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/+$/, '') : '';
+
+  // Auto-refresh functionality
+  const refreshData = useCallback(async () => {
+    if (!isAuthorized || !isAdmin) return;
+
+    setIsRefreshing(true);
+    try {
+      const [healthRes, statsRes, feedRes, alertsRes] = await Promise.allSettled([
+        fetch(`${apiBaseUrl}/api/admin/health/check`, { credentials: 'include' }),
+        fetch(`${apiBaseUrl}/api/admin/dashboard/quick-stats`, { credentials: 'include' }),
+        fetch(`${apiBaseUrl}/api/admin/transactions/feed?limit=20`, { credentials: 'include' }),
+        fetch(`${apiBaseUrl}/api/admin/login-alerts/pending?limit=10`, { credentials: 'include' })
+      ]);
+
+      if (healthRes.status === 'fulfilled' && healthRes.value.ok) {
+        const health = await healthRes.value.json();
+        setSystemHealth(health.health);
+      }
+
+      if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+        const stats = await statsRes.value.json();
+        setQuickStats(stats.stats);
+      }
+
+      if (feedRes.status === 'fulfilled' && feedRes.value.ok) {
+        const feed = await feedRes.value.json();
+        setTransactionFeed(feed.transactions || []);
+      }
+
+      if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) {
+        const alerts = await alertsRes.value.json();
+        setLoginAlerts(alerts.alerts || []);
+      }
+
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Failed to refresh data:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isAuthorized, isAdmin, apiBaseUrl]);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (!autoRefreshEnabled || !isAuthorized || !isAdmin) return;
+
+    const interval = setInterval(refreshData, refreshInterval);
+    return () => clearInterval(interval);
+  }, [autoRefreshEnabled, refreshInterval, refreshData, isAuthorized, isAdmin]);
+
+  // Initial data load
+  useEffect(() => {
+    if (isAuthorized && isAdmin) {
+      refreshData();
+    }
+  }, [isAuthorized, isAdmin, refreshData]);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/me`, {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const user = await res.json();
+          if (user.role === 'admin') {
+            setIsAdmin(true);
+            setIsAuthorized(true);
+          } else {
+            setIsAuthorized(false);
+          }
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, [apiBaseUrl]);
+
+  const handleOtpRequest = async () => {
+    if (!email || !email.includes('@')) {
+      setError('Valid email is required');
+      return;
+    }
+
+    setIsSendingOtp(true);
+    setError('');
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/request-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+        credentials: 'include'
+      });
+
+      if (res.ok) {
+        setAuthStep('otp');
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Failed to send OTP');
+      }
+    } catch (err) {
+      setError('Failed to send OTP. Please try again.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleOtpVerify = async () => {
+    if (!otp) {
+      setError('OTP is required');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+        credentials: 'include'
+      });
+
+      if (res.ok) {
+        setIsAdmin(true);
+        setIsAuthorized(true);
+        setError('');
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Invalid OTP');
+      }
+    } catch (err) {
+      setError('Failed to verify OTP. Please try again.');
+    }
+  };
+
+  const handleSmtpTest = async (testEmail?: string) => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/smtp/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testEmail }),
+        credentials: 'include'
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        alert(`SMTP Test Successful!\n\nHost: ${result.details.host}\nResponse Time: ${result.details.responseTime}\nTo: ${result.details.to}`);
+      } else {
+        const error = await res.json();
+        alert(`SMTP Test Failed: ${error.error}\n\n${error.details?.join('\n')}`);
+      }
+    } catch (err) {
+      alert('Failed to test SMTP configuration');
+    }
+  };
+
+  const handleLoginAlertAction = async (alertId: string, action: 'confirm' | 'deny') => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/login-alerts/${alertId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+        credentials: 'include'
+      });
+
+      if (res.ok) {
+        // Refresh alerts
+        const alertsRes = await fetch(`${apiBaseUrl}/api/admin/login-alerts/pending?limit=10`, { credentials: 'include' });
+        if (alertsRes.ok) {
+          const alerts = await alertsRes.value.json();
+          setLoginAlerts(alerts.alerts || []);
+        }
+      } else {
+        const error = await res.json();
+        alert(`Failed to ${action} alert: ${error.error}`);
+      }
+    } catch (err) {
+      alert(`Failed to ${action} login alert`);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-white/5 border-t-orange-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md bg-[#111] rounded-3xl p-8 border border-white/5"
+        >
+          <div className="text-center mb-8">
+            <ShieldCheck className="w-16 h-16 text-orange-600 mx-auto mb-4" />
+            <h1 className="text-2xl font-black text-white mb-2">Admin Portal</h1>
+            <p className="text-neutral-500 text-sm">Secure access to system controls</p>
+          </div>
+
+          {authStep === 'email' ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-neutral-300 mb-2">Admin Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#0a0a0a] border border-white/5 rounded-xl text-white placeholder:text-neutral-600 focus:ring-2 focus:ring-orange-500 outline-none"
+                  placeholder="admin@esoko.com"
+                />
+              </div>
+              <button
+                onClick={handleOtpRequest}
+                disabled={isSendingOtp}
+                className="w-full py-3 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+              >
+                {isSendingOtp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Send Verification Code
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-neutral-300 mb-2">Verification Code</label>
+                <input
+                  type="text"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  className="w-full px-4 py-3 bg-[#0a0a0a] border border-white/5 rounded-xl text-white placeholder:text-neutral-600 focus:ring-2 focus:ring-orange-500 outline-none text-center text-2xl font-mono tracking-widest"
+                  placeholder="000000"
+                  maxLength={6}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setAuthStep('email')}
+                  className="flex-1 py-3 border border-white/5 text-neutral-400 hover:text-white font-bold rounded-xl transition-all"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleOtpVerify}
+                  className="flex-1 py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl transition-all"
+                >
+                  Verify
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+              <p className="text-red-400 text-sm font-medium">{error}</p>
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
+  const tabs = [
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { id: 'health', label: 'System Health', icon: Server },
+    { id: 'users', label: 'Users', icon: Users },
+    { id: 'transactions', label: 'Transactions', icon: DollarSign },
+    { id: 'security', label: 'Security', icon: ShieldCheck },
+    { id: 'system', label: 'System', icon: Settings },
+    { id: 'logs', label: 'Logs', icon: Terminal }
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      {/* Header */}
+      <div className="border-b border-white/5 bg-[#111] sticky top-0 z-50">
+        <div className="px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <ShieldCheck className="w-8 h-8 text-orange-600" />
+            <div>
+              <h1 className="text-xl font-black text-white">ESOKO Nexus Admin</h1>
+              <p className="text-xs text-neutral-500 font-medium">Control Center</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {/* Auto-refresh controls */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                className={cn(
+                  "p-2 rounded-lg transition-all",
+                  autoRefreshEnabled ? "bg-green-600/10 text-green-500" : "bg-neutral-600/10 text-neutral-500"
+                )}
+                title={autoRefreshEnabled ? "Disable auto-refresh" : "Enable auto-refresh"}
+              >
+                {autoRefreshEnabled ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </button>
+
+              <button
+                onClick={refreshData}
+                disabled={isRefreshing}
+                className="p-2 rounded-lg bg-orange-600/10 text-orange-500 hover:bg-orange-600 hover:text-white transition-all disabled:opacity-50"
+                title="Refresh data"
+              >
+                {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+              </button>
+
+              <select
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                className="px-3 py-1 bg-[#0a0a0a] border border-white/5 rounded-lg text-xs text-neutral-300"
+              >
+                <option value={10000}>10s</option>
+                <option value={30000}>30s</option>
+                <option value={60000}>1m</option>
+                <option value={300000}>5m</option>
+              </select>
+            </div>
+
+            <div className="text-right">
+              <p className="text-xs text-neutral-500">Last updated</p>
+              <p className="text-xs text-neutral-300 font-mono">
+                {lastUpdate.toLocaleTimeString()}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <div className="px-6 pb-4">
+          <div className="flex gap-1 overflow-x-auto">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={cn(
+                    "px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap flex items-center gap-2",
+                    activeTab === tab.id
+                      ? "bg-orange-600 text-white shadow-lg shadow-orange-600/20"
+                      : "text-neutral-500 hover:text-neutral-300 hover:bg-white/5"
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-6">
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            {/* Quick Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-[#111] rounded-2xl p-6 border border-white/5"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-blue-600/10 rounded-xl">
+                    <DollarSign className="w-6 h-6 text-blue-500" />
+                  </div>
+                  <TrendingUp className="w-4 h-4 text-green-500" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-2xl font-black text-white">
+                    {quickStats?.todayTransactions || 0}
+                  </p>
+                  <p className="text-sm text-neutral-500 font-medium">Today's Transactions</p>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="bg-[#111] rounded-2xl p-6 border border-white/5"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-green-600/10 rounded-xl">
+                    <Wallet className="w-6 h-6 text-green-500" />
+                  </div>
+                  <TrendingUp className="w-4 h-4 text-green-500" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-2xl font-black text-white">
+                    {formatCurrency(quickStats?.todayRevenue || 0)}
+                  </p>
+                  <p className="text-sm text-neutral-500 font-medium">Today's Revenue</p>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-[#111] rounded-2xl p-6 border border-white/5"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-yellow-600/10 rounded-xl">
+                    <AlertTriangle className="w-6 h-6 text-yellow-500" />
+                  </div>
+                  <span className="text-xs font-bold text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded-full">
+                    {loginAlerts.length}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-2xl font-black text-white">
+                    {quickStats?.pendingLoginAlerts || 0}
+                  </p>
+                  <p className="text-sm text-neutral-500 font-medium">Pending Alerts</p>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="bg-[#111] rounded-2xl p-6 border border-white/5"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-purple-600/10 rounded-xl">
+                    <LifeBuoy className="w-6 h-6 text-purple-500" />
+                  </div>
+                  <span className="text-xs font-bold text-purple-500 bg-purple-500/10 px-2 py-1 rounded-full">
+                    {quickStats?.openTickets || 0}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-2xl font-black text-white">
+                    {quickStats?.openTickets || 0}
+                  </p>
+                  <p className="text-sm text-neutral-500 font-medium">Open Tickets</p>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* System Health Overview */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-[#111] rounded-2xl p-6 border border-white/5"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-black text-white">System Health</h3>
+                <div className="flex items-center gap-2">
+                  <div className={cn(
+                    "w-3 h-3 rounded-full",
+                    systemHealth?.status === 'operational' ? "bg-green-500" :
+                    systemHealth?.status === 'maintenance' ? "bg-yellow-500" : "bg-red-500"
+                  )} />
+                  <span className="text-sm font-bold capitalize text-neutral-300">
+                    {systemHealth?.status || 'Unknown'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <div className="flex items-center justify-center mb-2">
+                    <Server className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium">Database</p>
+                  <p className={cn(
+                    "text-sm font-bold",
+                    systemHealth?.database.status === 'healthy' ? "text-green-500" : "text-red-500"
+                  )}>
+                    {systemHealth?.database.status || 'Unknown'}
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="flex items-center justify-center mb-2">
+                    <MemoryStick className="w-5 h-5 text-purple-500" />
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium">Memory</p>
+                  <p className="text-sm font-bold text-white">
+                    {systemHealth ? `${Math.round(systemHealth.memory.heapUsed / 1024 / 1024)}MB` : 'N/A'}
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="flex items-center justify-center mb-2">
+                    <Clock className="w-5 h-5 text-orange-500" />
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium">Uptime</p>
+                  <p className="text-sm font-bold text-white">
+                    {systemHealth ? `${Math.floor(systemHealth.uptime / 3600)}h` : 'N/A'}
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="flex items-center justify-center mb-2">
+                    <Mail className="w-5 h-5 text-green-500" />
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium">Email Rate</p>
+                  <p className="text-sm font-bold text-white">
+                    {systemHealth ? `${systemHealth.email.successRate}%` : 'N/A'}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Transaction Feed */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-[#111] rounded-2xl p-6 border border-white/5"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-black text-white">Live Transaction Feed</h3>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  <span className="text-xs text-green-500 font-bold">LIVE</span>
+                </div>
+              </div>
+
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {transactionFeed.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Activity className="w-12 h-12 text-neutral-600 mx-auto mb-4" />
+                    <p className="text-neutral-500 font-medium">No recent transactions</p>
+                  </div>
+                ) : (
+                  transactionFeed.map((tx) => (
+                    <motion.div
+                      key={tx.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-xl border border-white/5"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-orange-600/10 rounded-lg">
+                          <DollarSign className="w-4 h-4 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">{tx.name}</p>
+                          <p className="text-xs text-neutral-500">{tx.description}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-white">{formatCurrency(tx.amount)}</p>
+                        <p className="text-xs text-neutral-500">
+                          {new Date(tx.createdAt).toLocaleTimeString()}
+                        </p>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {activeTab === 'health' && (
+          <div className="space-y-6">
+            {/* System Health Details */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-[#111] rounded-2xl p-6 border border-white/5"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-black text-white">System Health Monitor</h3>
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => handleSmtpTest()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-all flex items-center gap-2"
+                  >
+                    <Mail className="w-4 h-4" />
+                    Test SMTP
+                  </button>
+                  <div className={cn(
+                    "px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2",
+                    systemHealth?.status === 'operational' ? "bg-green-600/10 text-green-500" :
+                    systemHealth?.status === 'maintenance' ? "bg-yellow-600/10 text-yellow-500" :
+                    "bg-red-600/10 text-red-500"
+                  )}>
+                    <div className={cn(
+                      "w-2 h-2 rounded-full",
+                      systemHealth?.status === 'operational' ? "bg-green-500" :
+                      systemHealth?.status === 'maintenance' ? "bg-yellow-500" : "bg-red-500"
+                    )} />
+                    {systemHealth?.status || 'Unknown'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Database Health */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Database className="w-5 h-5 text-blue-500" />
+                      <span className="text-sm font-bold text-white">Database</span>
+                    </div>
+                    <div className={cn(
+                      "w-3 h-3 rounded-full",
+                      systemHealth?.database.status === 'healthy' ? "bg-green-500" : "bg-red-500"
+                    )} />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Status</span>
+                      <span className="text-white font-bold capitalize">
+                        {systemHealth?.database.status || 'Unknown'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Response Time</span>
+                      <span className="text-white font-bold">
+                        {systemHealth?.database.responseTime || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Memory Usage */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <MemoryStick className="w-5 h-5 text-purple-500" />
+                      <span className="text-sm font-bold text-white">Memory</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Heap Used</span>
+                      <span className="text-white font-bold">
+                        {systemHealth ? `${Math.round(systemHealth.memory.heapUsed / 1024 / 1024)}MB` : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Heap Total</span>
+                      <span className="text-white font-bold">
+                        {systemHealth ? `${Math.round(systemHealth.memory.heapTotal / 1024 / 1024)}MB` : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">External</span>
+                      <span className="text-white font-bold">
+                        {systemHealth ? `${Math.round(systemHealth.memory.external / 1024 / 1024)}MB` : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Email Service */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Mail className="w-5 h-5 text-green-500" />
+                      <span className="text-sm font-bold text-white">Email Service</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Success Rate</span>
+                      <span className="text-white font-bold">
+                        {systemHealth ? `${systemHealth.email.successRate}%` : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Sent (24h)</span>
+                      <span className="text-white font-bold">
+                        {systemHealth?.email.totalSent || 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Failed (24h)</span>
+                      <span className="text-red-400 font-bold">
+                        {systemHealth?.email.totalFailed || 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Transaction Activity */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Activity className="w-5 h-5 text-orange-500" />
+                      <span className="text-sm font-bold text-white">Transactions</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Last Hour</span>
+                      <span className="text-white font-bold">
+                        {systemHealth?.transactions.lastHourCount || 0}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Volume</span>
+                      <span className="text-white font-bold">
+                        {formatCurrency(systemHealth?.transactions.lastHourVolume || 0)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* User Activity */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Users className="w-5 h-5 text-cyan-500" />
+                      <span className="text-sm font-bold text-white">User Activity</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Active (24h)</span>
+                      <span className="text-white font-bold">
+                        {systemHealth?.users.recentActive || 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* System Uptime */}
+                <div className="bg-[#0a0a0a] rounded-xl p-4 border border-white/5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <Clock className="w-5 h-5 text-yellow-500" />
+                      <span className="text-sm font-bold text-white">System Uptime</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Hours</span>
+                      <span className="text-white font-bold">
+                        {systemHealth ? Math.floor(systemHealth.uptime / 3600) : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-neutral-500">Last Check</span>
+                      <span className="text-white font-bold text-xs">
+                        {systemHealth ? new Date(systemHealth.timestamp).toLocaleTimeString() : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {activeTab === 'security' && (
+          <div className="space-y-6">
+            {/* Pending Login Alerts */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-[#111] rounded-2xl p-6 border border-white/5"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-black text-white">Pending Login Alerts</h3>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                  <span className="text-sm font-bold text-yellow-500">
+                    {loginAlerts.length} pending
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {loginAlerts.length === 0 ? (
+                  <div className="text-center py-8">
+                    <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                    <p className="text-neutral-500 font-medium">No pending login alerts</p>
+                  </div>
+                ) : (
+                  loginAlerts.map((alert) => (
+                    <motion.div
+                      key={alert.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="bg-[#0a0a0a] rounded-xl p-4 border border-yellow-500/20"
+                    >
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-yellow-600/10 rounded-lg">
+                            <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white">{alert.name}</p>
+                            <p className="text-xs text-neutral-500">{alert.email}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-neutral-500">Expires</p>
+                          <p className="text-xs text-yellow-400 font-mono">
+                            {new Date(alert.expiresAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-xs">
+                        <div>
+                          <p className="text-neutral-500">IP Address</p>
+                          <p className="text-white font-mono">{alert.ipAddress}</p>
+                        </div>
+                        <div>
+                          <p className="text-neutral-500">Device</p>
+                          <p className="text-white truncate" title={alert.userAgent}>
+                            {alert.userAgent.split(' ')[0]}...
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-neutral-500">Location</p>
+                          <p className="text-white">{alert.location}</p>
+                        </div>
+                        <div>
+                          <p className="text-neutral-500">Balance</p>
+                          <p className="text-white">{formatCurrency(alert.walletBalance)}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleLoginAlertAction(alert.id, 'confirm')}
+                          className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          Confirm Login
+                        </button>
+                        <button
+                          onClick={() => handleLoginAlertAction(alert.id, 'deny')}
+                          className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          Block Access
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Placeholder for other tabs */}
+        {activeTab !== 'dashboard' && activeTab !== 'health' && activeTab !== 'security' && (
+          <div className="bg-[#111] rounded-2xl p-12 border border-white/5 text-center">
+            <Settings className="w-16 h-16 text-neutral-600 mx-auto mb-4" />
+            <h3 className="text-xl font-black text-white mb-2">{tabs.find(t => t.id === activeTab)?.label}</h3>
+            <p className="text-neutral-500">This section is under development</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function AdminPortal() {
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [authStep, setAuthStep] = useState<'email' | 'otp'>('email');
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'traders' | 'payments' | 'system' | 'subscriptions' | 'support' | 'logs' | 'database' | 'audit' | 'emails' | 'fees' | 'surveys'>('overview');
+  const [systemConfig, setSystemConfig] = useState<any>(null);
+  const [systemLogs, setSystemLogs] = useState<any[]>([]);
+
+  const apiBaseUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).replace(/\/+$/, '') : '';
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/me`, {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const user = await res.json();
+          if (user.role === 'admin') {
+            setIsAdmin(true);
+            setIsAuthorized(true);
+          } else {
+            setIsAuthorized(false);
+          }
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'logs') return;
+
+    const fetchSystemLogs = async () => {
+      try {
+        const res = await fetch('/api/system-logs', {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSystemLogs(data.logs || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch system logs:', err);
+      }
+    };
+
+    fetchSystemLogs();
+    const interval = setInterval(fetchSystemLogs, 30000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
+
+  const handleRequestOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSendingOtp(true);
+    setError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/request-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setAuthStep('otp');
+      } else {
+        setError(data.error || 'Failed to send OTP');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Connection error');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSendingOtp(true);
+    setError('');
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setIsAuthorized(true);
+        setIsAdmin(true);
+      } else {
+        setError(data.error || 'Invalid OTP');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Verification failed');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <Loader2 className="text-orange-500 animate-spin" size={40} />
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 selection:bg-orange-500/30">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full bg-slate-900 p-10 rounded-[3rem] border border-slate-800 shadow-2xl"
+        >
+          <div className="text-center mb-10">
+            <div className="w-20 h-20 bg-orange-500/10 text-orange-500 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-orange-500/20">
+              <ShieldCheck size={40} />
+            </div>
+            <h1 className="text-3xl font-black text-white tracking-tight mb-2">Admin Portal</h1>
+            <p className="text-slate-400 font-medium">Restricted System Access</p>
+          </div>
+
+          <form onSubmit={authStep === 'email' ? handleRequestOtp : handleVerifyOtp} className="space-y-6">
+            <div className="space-y-2">
+              <label htmlFor="admin-auth-input" className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                {authStep === 'email' ? 'Admin Email' : 'One-Time Password'}
+              </label>
+              <div className="relative">
+                {authStep === 'email' ? (
+                  <Globe className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
+                ) : (
+                  <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
+                )}
+                <input
+                  id="admin-auth-input"
+                  name="admin-auth"
+                  type={authStep === 'email' ? 'email' : 'text'}
+                  value={authStep === 'email' ? email : otp}
+                  onChange={(e) => authStep === 'email' ? setEmail(e.target.value) : setOtp(e.target.value)}
+                  placeholder={authStep === 'email' ? "admin@esoko.com" : "000000"}
+                  maxLength={authStep === 'otp' ? 6 : undefined}
+                  className="w-full pl-14 pr-5 py-5 bg-slate-800 border border-slate-700 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-white placeholder:text-slate-700"
+                  required
+                />
+              </div>
+            </div>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl">
+                <p className="text-red-400 text-xs font-bold text-center">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSendingOtp}
+              className="w-full py-5 bg-orange-600 text-white rounded-2xl font-black text-lg hover:bg-orange-700 transition-all shadow-lg shadow-orange-900/20 flex items-center justify-center gap-2 group disabled:opacity-50"
+            >
+              {isSendingOtp ? (
+                <Loader2 className="animate-spin" size={20} />
+              ) : (
+                <>
+                  {authStep === 'email' ? 'Request Access Code' : 'Verify & Access'}
+                  <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                </>
+              )}
+            </button>
+
+            {authStep === 'otp' && (
+              <button
+                type="button"
+                onClick={() => setAuthStep('email')}
+                className="w-full text-center text-xs font-bold text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Change Email
+              </button>
+            )}
+          </form>
+
+          <p className="mt-10 text-center text-slate-600 text-[10px] font-black uppercase tracking-widest">
+            Authorized Personnel Only
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col md:flex-row font-sans">
+      {/* Sidebar */}
+      <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 p-6 flex flex-col transition-all duration-300">
+        <div className="flex items-center gap-3 mb-8 shrink-0">
+          <div className="w-9 h-9 bg-orange-600 rounded-xl flex items-center justify-center text-white font-black text-lg">E</div>
+          <div>
+            <h2 className="text-lg font-black text-white leading-none">ESOKO</h2>
+            <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest mt-1">Control Panel</p>
+          </div>
+        </div>
+
+        <nav className="flex-1 space-y-1 overflow-y-auto">
+          <AdminNavItem active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={<Activity size={18} />} label="Overview" />
+          <AdminNavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users size={18} />} label="User Management" />
+          <AdminNavItem active={activeTab === 'traders'} onClick={() => setActiveTab('traders')} icon={<Store size={18} />} label="Trader Oversight" />
+          <AdminNavItem active={activeTab === 'subscriptions'} onClick={() => setActiveTab('subscriptions')} icon={<Zap size={18} />} label="Subscriptions" />
+          <AdminNavItem active={activeTab === 'fees'} onClick={() => setActiveTab('fees')} icon={<Wallet size={18} />} label="Fee Collection" />
+          <AdminNavItem active={activeTab === 'support'} onClick={() => setActiveTab('support')} icon={<LifeBuoy size={18} />} label="Support Center" />
+          <AdminNavItem active={activeTab === 'payments'} onClick={() => setActiveTab('payments')} icon={<BarChart3 size={18} />} label="Payment Logs" />
+          <AdminNavItem active={activeTab === 'audit'} onClick={() => setActiveTab('audit')} icon={<Terminal size={18} />} label="Audit Trail" />
+          <AdminNavItem active={activeTab === 'surveys'} onClick={() => setActiveTab('surveys')} icon={<MessageSquare size={18} />} label="Survey Management" />
+          <AdminNavItem active={activeTab === 'emails'} onClick={() => setActiveTab('emails')} icon={<Send size={18} />} label="Email Center" />
+          <AdminNavItem active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} icon={<Database size={18} />} label="System Logs" />
+          <AdminNavItem active={activeTab === 'database'} onClick={() => setActiveTab('database')} icon={<Layers size={18} />} label="Database Control" />
+          <AdminNavItem active={activeTab === 'system'} onClick={() => setActiveTab('system')} icon={<Settings size={18} />} label="Platform Config" />
+        </nav>
+
+        <div className="mt-auto pt-6 border-t border-slate-800 shrink-0">
+          <button
+            onClick={() => {
+              setIsAuthorized(false);
+              setEmail('');
+              setOtp('');
+              setAuthStep('email');
+            }}
+            className="w-full flex items-center gap-3 p-3 text-slate-500 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-bold text-xs"
+          >
+            <Zap size={18} /> Terminate Session
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 p-8 md:p-12 h-screen overflow-y-auto relative">
+        <div className="max-w-7xl mx-auto space-y-10">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div>
+              <h1 className="text-4xl font-black text-white tracking-tight mb-2">
+                {activeTab === 'overview' && "System Overview"}
+                {activeTab === 'users' && "User Management"}
+                {activeTab === 'traders' && "Trader Oversight"}
+                {activeTab === 'support' && "Support Center"}
+                {activeTab === 'payments' && "Payment Logs"}
+                {activeTab === 'audit' && "Audit Trail"}
+                {activeTab === 'surveys' && "Survey Management"}
+                {activeTab === 'emails' && "Email Center"}
+                {activeTab === 'logs' && "System Logs"}
+                {activeTab === 'database' && "Database Control"}
+                {activeTab === 'system' && "Platform Health"}
+                {activeTab === 'subscriptions' && "Subscriptions"}
+                {activeTab === 'fees' && "Fee Collection & Analytics"}
+              </h1>
+              <p className="text-slate-500 font-medium">Real-time administrative control & monitoring</p>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="bg-slate-900 px-6 py-3 rounded-2xl border border-slate-800 flex items-center gap-3">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Network Secure</span>
+              </div>
+              <button className="p-3 bg-slate-900 text-slate-400 hover:text-white rounded-xl border border-slate-800 transition-all">
+                <Settings size={20} />
+              </button>
+            </div>
+          </header>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              {activeTab === 'overview' && <AdminOverview />}
+              {activeTab === 'users' && <AdminUsers />}
+              {activeTab === 'traders' && <AdminTraders />}
+              {activeTab === 'support' && <AdminSupport />}
+              {activeTab === 'subscriptions' && <AdminSubscriptions />}
+              {activeTab === 'payments' && <AdminPayments />}
+              {activeTab === 'audit' && <AdminAudit />}
+              {activeTab === 'surveys' && <AdminSurveys />}
+              {activeTab === 'emails' && <AdminEmail />}
+              {activeTab === 'fees' && <AdminFees />}
+              {activeTab === 'logs' && <AdminLogs logs={systemLogs} />}
+              {activeTab === 'database' && <AdminDatabasePanel />}
+              {activeTab === 'system' && <AdminSystem />}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function AdminSurveys() {
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [responses, setResponses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'questions' | 'responses'>('questions');
+  const [showAddQuestion, setShowAddQuestion] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<any>(null);
+  const [formData, setFormData] = useState({
+    question: '',
+    questionType: 'text',
+    options: [] as string[],
+    required: false,
+    orderIndex: 0
+  });
+
+  useEffect(() => {
+    fetchQuestions();
+    fetchResponses();
+  }, []);
+
+  const fetchQuestions = async () => {
+    try {
+      const res = await fetch('/api/admin/survey-questions', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setQuestions(data.questions || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch questions:', err);
+    }
+  };
+
+  const fetchResponses = async () => {
+    try {
+      const res = await fetch('/api/admin/survey-responses', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setResponses(data.responses || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch responses:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const url = editingQuestion ? `/api/admin/survey-questions/${editingQuestion.id}` : '/api/admin/survey-questions';
+      const method = editingQuestion ? 'PUT' : 'POST';
+      
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          ...formData,
+          options: formData.questionType === 'multiple-choice' ? formData.options : null
+        })
+      });
+
+      if (res.ok) {
+        await fetchQuestions();
+        setShowAddQuestion(false);
+        setEditingQuestion(null);
+        setFormData({ question: '', questionType: 'text', options: [], required: false, orderIndex: 0 });
+      }
+    } catch (err) {
+      console.error('Failed to save question:', err);
+    }
+  };
+
+  const handleEditQuestion = (question: any) => {
+    setEditingQuestion(question);
+    setFormData({
+      question: question.question,
+      questionType: question.questionType,
+      options: question.options ? JSON.parse(question.options) : [],
+      required: Boolean(question.required),
+      orderIndex: question.orderIndex || 0
+    });
+    setShowAddQuestion(true);
+  };
+
+  const handleDeleteQuestion = async (questionId: string) => {
+    if (!confirm('Are you sure you want to delete this question? This will also delete all responses to it.')) return;
+    
+    try {
+      const res = await fetch(`/api/admin/survey-questions/${questionId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (res.ok) {
+        await fetchQuestions();
+        await fetchResponses();
+      }
+    } catch (err) {
+      console.error('Failed to delete question:', err);
+    }
+  };
+
+  const addOption = () => {
+    setFormData(prev => ({ ...prev, options: [...prev.options, ''] }));
+  };
+
+  const updateOption = (index: number, value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      options: prev.options.map((opt, i) => i === index ? value : opt)
+    }));
+  };
+
+  const removeOption = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      options: prev.options.filter((_, i) => i !== index)
+    }));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="text-orange-500 animate-spin" size={40} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Tab Navigation */}
+      <div className="flex gap-2 bg-slate-900 p-2 rounded-2xl border border-slate-800">
+        <button
+          onClick={() => setActiveTab('questions')}
+          className={cn(
+            "flex-1 py-3 px-6 rounded-xl font-bold text-sm transition-all",
+            activeTab === 'questions' ? "bg-orange-600 text-white" : "text-slate-400 hover:text-white"
+          )}
+        >
+          Survey Questions ({questions.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('responses')}
+          className={cn(
+            "flex-1 py-3 px-6 rounded-xl font-bold text-sm transition-all",
+            activeTab === 'responses' ? "bg-orange-600 text-white" : "text-slate-400 hover:text-white"
+          )}
+        >
+          User Responses ({responses.length})
+        </button>
+      </div>
+
+      {activeTab === 'questions' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h3 className="text-xl font-black text-white">Survey Questions</h3>
+            <button
+              onClick={() => {
+                setShowAddQuestion(true);
+                setEditingQuestion(null);
+                setFormData({ question: '', questionType: 'text', options: [], required: false, orderIndex: 0 });
+              }}
+              className="px-6 py-3 bg-orange-600 text-white rounded-2xl font-black hover:bg-orange-500 transition-all"
+            >
+              Add Question
+            </button>
+          </div>
+
+          {showAddQuestion && (
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+              <h4 className="text-lg font-black text-white mb-6">
+                {editingQuestion ? 'Edit Question' : 'Add New Question'}
+              </h4>
+              <form onSubmit={handleSubmitQuestion} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-400 mb-2">Question</label>
+                  <textarea
+                    value={formData.question}
+                    onChange={(e) => setFormData(prev => ({ ...prev, question: e.target.value }))}
+                    className="w-full rounded-2xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none"
+                    rows={3}
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-400 mb-2">Question Type</label>
+                    <select
+                      value={formData.questionType}
+                      onChange={(e) => setFormData(prev => ({ ...prev, questionType: e.target.value }))}
+                      className="w-full rounded-2xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none"
+                    >
+                      <option value="text">Text Input</option>
+                      <option value="multiple-choice">Multiple Choice</option>
+                      <option value="rating">Rating (1-5)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-slate-400 mb-2">Order Index</label>
+                    <input
+                      type="number"
+                      value={formData.orderIndex}
+                      onChange={(e) => setFormData(prev => ({ ...prev, orderIndex: Number(e.target.value) }))}
+                      className="w-full rounded-2xl bg-slate-950 border border-slate-800 px-4 py-3 text-white outline-none"
+                      min="0"
+                    />
+                  </div>
+                </div>
+
+                {formData.questionType === 'multiple-choice' && (
+                  <div>
+                    <label className="block text-sm font-bold text-slate-400 mb-2">Options</label>
+                    <div className="space-y-2">
+                      {formData.options.map((option, index) => (
+                        <div key={index} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={option}
+                            onChange={(e) => updateOption(index, e.target.value)}
+                            className="flex-1 rounded-2xl bg-slate-950 border border-slate-800 px-4 py-2 text-white outline-none"
+                            placeholder={`Option ${index + 1}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeOption(index)}
+                            className="p-2 text-red-400 hover:text-red-300"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={addOption}
+                        className="px-4 py-2 bg-slate-800 text-slate-300 rounded-2xl hover:bg-slate-700 transition-all"
+                      >
+                        Add Option
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="required"
+                    checked={formData.required}
+                    onChange={(e) => setFormData(prev => ({ ...prev, required: e.target.checked }))}
+                    className="rounded border-slate-700 bg-slate-950 text-orange-500"
+                  />
+                  <label htmlFor="required" className="text-sm text-slate-300">Required question</label>
+                </div>
+
+                <div className="flex gap-4">
+                  <button
+                    type="submit"
+                    className="px-6 py-3 bg-orange-600 text-white rounded-2xl font-black hover:bg-orange-500 transition-all"
+                  >
+                    {editingQuestion ? 'Update Question' : 'Add Question'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddQuestion(false);
+                      setEditingQuestion(null);
+                    }}
+                    className="px-6 py-3 bg-slate-800 text-slate-300 rounded-2xl font-bold hover:bg-slate-700 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {questions.map((question) => (
+              <div key={question.id} className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex-1">
+                    <h4 className="text-lg font-bold text-white mb-2">{question.question}</h4>
+                    <div className="flex items-center gap-4 text-sm text-slate-400">
+                      <span>Type: {question.questionType}</span>
+                      <span>Order: {question.orderIndex}</span>
+                      {question.required && <span className="text-red-400">Required</span>}
+                    </div>
+                    {question.options && (
+                      <div className="mt-3">
+                        <p className="text-sm text-slate-500 mb-2">Options:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {JSON.parse(question.options).map((option: string, idx: number) => (
+                            <span key={idx} className="px-3 py-1 bg-slate-800 text-slate-300 rounded-xl text-sm">
+                              {option}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleEditQuestion(question)}
+                      className="p-2 text-slate-400 hover:text-white"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteQuestion(question.id)}
+                      className="p-2 text-red-400 hover:text-red-300"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'responses' && (
+        <div className="space-y-6">
+          <h3 className="text-xl font-black text-white">User Responses</h3>
+          
+          <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-800">
+                    <th className="px-6 py-4 text-left text-xs font-black text-slate-500 uppercase tracking-widest">User</th>
+                    <th className="px-6 py-4 text-left text-xs font-black text-slate-500 uppercase tracking-widest">Question</th>
+                    <th className="px-6 py-4 text-left text-xs font-black text-slate-500 uppercase tracking-widest">Response</th>
+                    <th className="px-6 py-4 text-left text-xs font-black text-slate-500 uppercase tracking-widest">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {responses.map((response) => (
+                    <tr key={response.id} className="hover:bg-slate-800/50">
+                      <td className="px-6 py-4 text-sm text-white">
+                        <div>
+                          <p className="font-bold">{response.userName}</p>
+                          <p className="text-slate-400 text-xs">{response.userEmail}</p>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-slate-300">{response.question}</td>
+                      <td className="px-6 py-4 text-sm text-slate-300">
+                        {typeof response.response === 'string' ? response.response : JSON.stringify(response.response)}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-slate-400">
+                        {new Date(response.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminNavItem({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-3 p-3 rounded-xl font-bold text-[13px] transition-all",
+        active
+          ? "bg-orange-600 text-white shadow-lg shadow-orange-900/10"
+          : "text-slate-500 hover:text-slate-200 hover:bg-slate-800"
+      )}
+    >
+      <div className={active ? "text-white" : "text-slate-600"}>
+        {icon}
+      </div>
+      {label}
+    </button>
+  );
+}
+
+function AdminOverview() {
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    totalTraders: 0,
+    totalVolume: 0,
+    totalRevenue: 0,
+    totalProducts: 0,
+    totalTransactions: 0,
+    premiumUsers: 0
+  });
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch('/api/admin/stats', {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setStats(data?.stats || data || {});
+        }
+      } catch (err) {
+        console.error('Failed to fetch stats:', err);
+      }
+    };
+
+    fetchStats();
+    const interval = setInterval(fetchStats, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="space-y-10">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <OverviewCard label="Total Users" value={(stats.totalUsers ?? 0).toString()} icon={Users} color="text-blue-500 bg-blue-500/10" />
+        <OverviewCard label="Platform Revenue" value={`RWF ${formatCurrency(stats.totalRevenue ?? 0)}`} icon={Lock} color="text-emerald-500 bg-emerald-500/10" />
+        <OverviewCard label="Total Transactions" value={(stats.totalTransactions ?? 0).toString()} icon={Wallet} color="text-blue-400 bg-blue-400/10" />
+        <OverviewCard label="Premium Users" value={(stats.premiumUsers ?? 0).toString()} icon={Zap} color="text-yellow-500 bg-yellow-500/10" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+          <h3 className="text-xl font-black text-white mb-6 flex items-center gap-3">
+            <Activity size={24} className="text-orange-500" /> Platform Stats
+          </h3>
+          <div className="space-y-4">
+            <StatRow label="Total Traders" value={(stats.totalTraders ?? 0).toString()} />
+            <StatRow label="Total Products" value={(stats.totalProducts ?? 0).toString()} />
+            <StatRow label="Transaction Volume" value={`RWF ${formatCurrency(stats.totalVolume ?? 0)}`} />
+          </div>
+        </div>
+
+        <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+          <h3 className="text-xl font-black text-white mb-6 flex items-center gap-3">
+            <Globe size={24} className="text-blue-500" /> System Health
+          </h3>
+          <div className="space-y-6">
+            <HealthBar label="Database" percentage={95} />
+            <HealthBar label="API Response" percentage={98} />
+            <HealthBar label="Uptime" percentage={99.9} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center p-4 bg-slate-950 rounded-2xl border border-slate-800/50">
+      <span className="text-sm font-bold text-white">{label}</span>
+      <span className="text-lg font-black text-orange-500">{value}</span>
+    </div>
+  );
+}
+
+function HealthBar({ label, percentage }: { label: string; percentage: number }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between text-xs font-bold">
+        <span className="text-slate-400">{label}</span>
+        <span className="text-white">{percentage}%</span>
+      </div>
+      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${percentage}%` }}
+          className="h-full bg-green-500"
+        />
+      </div>
+    </div>
+  );
+}
+
+function OverviewCard({ label, value, icon: Icon, color }: any) {
+  return (
+    <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl shadow-black/20">
+      <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center mb-6", color)}>
+        <Icon size={24} />
+      </div>
+      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{label}</p>
+      <p className="text-3xl font-black text-white tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function AdminUsers() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [processing, setProcessing] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [userFees, setUserFees] = useState<any>(null);
+  const [userAccountDetails, setUserAccountDetails] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch(`/api/admin/users?search=${encodeURIComponent(searchTerm)}`, {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setUsers(data.users || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch users:', err);
+      }
+    };
+
+    const timeout = setTimeout(fetchUsers, 300);
+    return () => clearTimeout(timeout);
+  }, [searchTerm]);
+
+  const refreshSelectedUser = async (userId: string) => {
+    setDetailLoading(true);
+    try {
+      const [userRes, feesRes, accountRes] = await Promise.all([
+        fetch(`/api/admin/users/${userId}`, { credentials: 'include' }),
+        fetch(`/api/admin/users/${userId}/fees`, { credentials: 'include' }),
+        fetch(`/api/admin/users/${userId}/account-details`, { credentials: 'include' })
+      ]);
+
+      if (userRes.ok) {
+        const data = await userRes.json();
+        setSelectedUser(data.user || null);
+      }
+
+      if (feesRes.ok) {
+        const data = await feesRes.json();
+        setUserFees(data.fees || null);
+      }
+
+      if (accountRes.ok) {
+        const data = await accountRes.json();
+        setUserAccountDetails(data.accountDetails || null);
+      }
+    } catch (err) {
+      console.error('Failed to load user details:', err);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleSuspend = async (userId: string) => {
+    setProcessing(userId);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: selectedUser?.id === userId && selectedUser.status === 'suspended' ? 'active' : 'suspended' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsers(users.map(u => u.id === userId ? data.user : u));
+        if (selectedUser?.id === userId) {
+          setSelectedUser(data.user);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update user status:', err);
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const handleChangeRole = async (userId: string) => {
+    const nextRole = window.prompt('Enter new role (customer, trader, agent, manager, admin):', selectedUser?.role || 'customer');
+    if (!nextRole) return;
+    const res = await fetch(`/api/admin/users/${userId}/change-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ role: nextRole.trim().toLowerCase() })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setUsers(users.map(u => u.id === userId ? data.user : u));
+      if (selectedUser?.id === userId) setSelectedUser(data.user);
+    }
+  };
+
+  const handleAdjustWallet = async (userId: string) => {
+    const value = window.prompt('Enter adjustment amount (positive to credit, negative to debit):', '0');
+    if (!value) return;
+    const difference = Number(value);
+    if (Number.isNaN(difference)) return;
+    const description = window.prompt('Adjustment description:', 'Admin balance adjustment') || 'Admin balance adjustment';
+    const res = await fetch(`/api/admin/users/${userId}/wallet-adjust`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ amount: difference, description, type: 'admin_adjustment' })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setUsers(users.map(u => u.id === userId ? data.user : u));
+      if (selectedUser?.id === userId) setSelectedUser(data.user);
+    }
+  };
+
+  const handleVerifyUser = async (userId: string) => {
+    const res = await fetch('/api/admin/verify-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ userId })
+    });
+    if (res.ok) {
+      await refreshSelectedUser(userId);
+      setUsers(users.map((u) => u.id === userId ? { ...u, verificationStatus: 'verified' } : u));
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="relative w-full md:w-96">
+          <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600" size={20} />
+          <input
+            type="text"
+            placeholder="Search users by name, phone, or email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-14 pr-5 py-4 bg-slate-900 border border-slate-800 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-white"
+          />
+        </div>
+      </div>
+
+      <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">User</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Role</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Joined</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {users.map((user) => (
+                <tr key={user.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-500 font-black">
+                        {user.name?.[0] || 'U'}
+                      </div>
+                      <div>
+                        <p className="font-bold text-white">{user.name || 'Anonymous'}</p>
+                        <p className="text-xs text-slate-500">{user.phone || user.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <span className={cn(
+                      "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
+                      user.role === 'trader' ? 'text-orange-500 bg-orange-500/10' :
+                        user.role === 'manager' ? 'text-purple-500 bg-purple-500/10' :
+                          user.role === 'admin' ? 'text-red-500 bg-red-500/10' : 'text-blue-500 bg-blue-500/10'
+                    )}>
+                      {user.role}
+                    </span>
+                  </td>
+                  <td className="px-8 py-6">
+                    <div className="flex items-center gap-2">
+                      <div className={cn("w-1.5 h-1.5 rounded-full", user.status === 'active' ? 'bg-green-500' : 'bg-red-500')} />
+                      <span className="text-xs font-bold text-slate-300 capitalize">{user.status || 'Active'}</span>
+                    </div>
+                  </td>
+                  <td className="px-8 py-6 text-xs font-bold text-slate-500">
+                    {new Date(user.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-8 py-6 text-right space-x-2">
+                    <button
+                      onClick={() => refreshSelectedUser(user.id)}
+                      className="px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => handleSuspend(user.id)}
+                      disabled={processing === user.id}
+                      className="px-3 py-1.5 bg-red-600/10 text-red-500 hover:bg-red-600 hover:text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
+                    >
+                      {user.status === 'suspended' ? 'Activate' : 'Suspend'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {selectedUser && (
+        <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl space-y-8">
+          <div className="flex flex-col md:flex-row justify-between gap-4 mb-8">
+            <div>
+              <h3 className="text-2xl font-black text-white">User Details & Account Information</h3>
+              <p className="text-slate-500 text-sm mt-2">Manage user permissions, balance, verification, and fee information.</p>
+            </div>
+            <button
+              onClick={() => {
+                setSelectedUser(null);
+                setUserFees(null);
+                setUserAccountDetails(null);
+              }}
+              className="self-start text-slate-500 hover:text-white bg-slate-800 px-4 py-2 rounded-2xl"
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Basic Information */}
+          <div>
+            <h4 className="text-lg font-black text-white mb-4">Basic Information</h4>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="space-y-4">
+                <InfoCard label="Name" value={selectedUser.name || '-'} />
+                <InfoCard label="Email" value={selectedUser.email || '-'} />
+                <InfoCard label="Phone" value={selectedUser.phone || '-'} />
+              </div>
+              <div className="space-y-4">
+                <InfoCard label="Role" value={selectedUser.role || '-'} />
+                <InfoCard label="Tier" value={selectedUser.tier || 'free'} />
+                <InfoCard label="Status" value={selectedUser.status || 'active'} />
+              </div>
+              <div className="space-y-4">
+                <InfoCard label="Wallet Balance" value={`RWF ${formatCurrency(selectedUser.walletBalance || 0)}`} />
+                <InfoCard label="Joined" value={new Date(selectedUser.createdAt).toLocaleDateString()} />
+                <InfoCard label="Verification" value={selectedUser.verificationStatus === 'verified' ? 'Verified' : 'Pending'} />
+              </div>
+            </div>
+          </div>
+
+          {/* Verification & KYC Status */}
+          {userAccountDetails && (
+            <div>
+              <h4 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+                <Fingerprint size={20} className="text-blue-500" /> Verification & KYC Status
+              </h4>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                <InfoCard 
+                  label="Email Verified" 
+                  value={userAccountDetails.verification?.emailVerified ? '✓ Yes' : '✗ No'} 
+                />
+                <InfoCard 
+                  label="Phone Verified" 
+                  value={userAccountDetails.verification?.phoneVerified ? '✓ Yes' : '✗ No'} 
+                />
+                <InfoCard 
+                  label="KYC Status" 
+                  value={userAccountDetails.verification?.kycStatus || 'not_started'} 
+                />
+                <InfoCard 
+                  label="ID Document" 
+                  value={userAccountDetails.verification?.idDocumentVerified ? '✓ Verified' : '✗ Not verified'} 
+                />
+              </div>
+              {userAccountDetails.verification?.verifiedAt && (
+                <div className="mt-4 p-4 bg-green-500/10 rounded-2xl border border-green-500/20">
+                  <p className="text-xs font-bold text-green-400">
+                    ✓ Verification completed on {new Date(userAccountDetails.verification.verifiedAt).toLocaleDateString()}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fee Information */}
+          {userFees && (
+            <div>
+              <h4 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+                <Wallet size={20} className="text-emerald-500" /> Fee Collection Summary
+              </h4>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                <InfoCard 
+                  label="Total Fees Collected" 
+                  value={`RWF ${formatCurrency(userFees.summary?.totalFeesCollected || 0)}`} 
+                />
+                <InfoCard 
+                  label="Total Fee Transactions" 
+                  value={(userFees.summary?.totalFeeTransactions || 0).toString()} 
+                />
+                <InfoCard 
+                  label="Avg Fee per Transaction" 
+                  value={`RWF ${userFees.summary?.averageFeePerTransaction || 0}`} 
+                />
+              </div>
+              
+              {userFees.byType && userFees.byType.length > 0 && (
+                <div className="bg-slate-950 rounded-2xl p-6 border border-slate-800">
+                  <h5 className="font-black text-white mb-4">Fees by Type</h5>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                          <th className="pb-3 font-black text-slate-400">Fee Type</th>
+                          <th className="pb-3 font-black text-slate-400 text-right">Total Amount</th>
+                          <th className="pb-3 font-black text-slate-400 text-right">Transactions</th>
+                          <th className="pb-3 font-black text-slate-400 text-right">Avg Fee</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700">
+                        {userFees.byType.map((fee: any, idx: number) => (
+                          <tr key={idx}>
+                            <td className="py-3 font-bold text-white capitalize">{fee.feeType}</td>
+                            <td className="py-3 text-right font-black text-emerald-400">RWF {formatCurrency(fee.totalFeeAmount || 0)}</td>
+                            <td className="py-3 text-right text-slate-300">{fee.transactionCount}</td>
+                            <td className="py-3 text-right text-slate-300">RWF {formatCurrency(fee.avgFeeAmount || 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4 pt-8 border-t border-slate-800">
+            <button
+              onClick={() => handleChangeRole(selectedUser.id)}
+              className="w-full px-5 py-4 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all"
+            >
+              Change Role
+            </button>
+            <button
+              onClick={() => handleAdjustWallet(selectedUser.id)}
+              className="w-full px-5 py-4 bg-slate-800 text-slate-200 rounded-3xl font-black uppercase tracking-widest hover:bg-slate-700 transition-all"
+            >
+              Adjust Wallet
+            </button>
+            <button
+              onClick={() => handleVerifyUser(selectedUser.id)}
+              className="w-full px-5 py-4 bg-emerald-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-emerald-500 transition-all"
+            >
+              Verify User
+            </button>
+            <button
+              onClick={() => handleSuspend(selectedUser.id)}
+              disabled={processing === selectedUser.id}
+              className="w-full px-5 py-4 bg-red-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-red-500 transition-all disabled:opacity-50"
+            >
+              {selectedUser.status === 'suspended' ? 'Activate' : 'Suspend'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-slate-950 p-5 rounded-3xl border border-slate-800/50">
+      <p className="text-xs font-black uppercase tracking-widest text-slate-500">{label}</p>
+      <p className="mt-3 text-lg font-black text-white">{value}</p>
+    </div>
+  );
+}
+
+function AdminTraders() {
+  const [traders, setTraders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<string>('all'); // 'all', 'active', 'suspended'
+
+  useEffect(() => {
+    const fetchTraders = async () => {
+      try {
+        const url = statusFilter === 'all' 
+          ? '/api/admin/traders'
+          : `/api/admin/traders?status=${statusFilter}`;
+        
+        const res = await fetch(url, {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setTraders(data.traders || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch traders:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTraders();
+  }, [statusFilter]);
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h3 className="text-xl font-black text-white mb-2">Filter Traders</h3>
+          <p className="text-sm text-slate-500">View active or suspended traders</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setStatusFilter('all')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              statusFilter === 'all'
+                ? 'bg-orange-600 text-white'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            All Traders
+          </button>
+          <button
+            onClick={() => setStatusFilter('active')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              statusFilter === 'active'
+                ? 'bg-green-600 text-white'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            Active
+          </button>
+          <button
+            onClick={() => setStatusFilter('suspended')}
+            className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+              statusFilter === 'suspended'
+                ? 'bg-red-600 text-white'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            Suspended
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12">
+          <Loader2 className="text-orange-500 animate-spin mx-auto mb-4" size={32} />
+          <p className="text-slate-400 font-bold">Loading trader information...</p>
+        </div>
+      ) : traders.length === 0 ? (
+        <div className="text-center py-12 bg-slate-900 rounded-2xl border border-slate-800">
+          <p className="text-slate-400 font-bold">No traders found with status: {statusFilter}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6">
+          {traders.map((trader) => (
+            <div key={trader.id} className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl hover:shadow-2xl transition-all">
+              <div className="flex flex-col lg:flex-row justify-between items-start gap-8 mb-6">
+                <div className="flex items-start gap-6 flex-1">
+                  <div className="w-16 h-16 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center border border-orange-500/20 flex-shrink-0">
+                    <Store size={32} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h4 className="text-xl font-black text-white">{trader.name}</h4>
+                      {trader.status === 'active' && <CheckCircle2 size={18} className="text-green-500" />}
+                      {trader.status === 'suspended' && <AlertCircle size={18} className="text-red-500" />}
+                      {trader.verification?.status === 'verified' && (
+                        <div className="px-2 py-1 bg-blue-500/10 text-blue-400 rounded text-[10px] font-black">Verified</div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-4 text-sm font-bold text-slate-400 mb-3">
+                      <span className="flex items-center gap-1"><Globe size={14} /> {trader.location || 'N/A'}</span>
+                      <span className="flex items-center gap-1"><Store size={14} /> {trader.businessName || 'N/A'}</span>
+                      <span className="flex items-center gap-1"><Award size={14} /> Tier: {trader.tier || 'Free'}</span>
+                    </div>
+                    <p className="text-xs text-slate-500">ID: {trader.id}</p>
+                  </div>
+                </div>
+
+                {/* Status Badge */}
+                <div className="flex items-center gap-2">
+                  <div className={cn(
+                    "px-4 py-2 rounded-2xl text-center",
+                    trader.status === 'active' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
+                  )}>
+                    <p className="text-xs font-black uppercase tracking-widest">Status: {trader.status || 'Active'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* KYC Status Badge */}
+              <div className="flex items-center gap-2 mb-6">
+                <div className={cn(
+                  "px-4 py-2 rounded-2xl text-center",
+                  trader.verification?.kycStatus === 'verified' ? 'bg-green-500/10 text-green-400' :
+                  trader.verification?.kycStatus === 'pending' ? 'bg-yellow-500/10 text-yellow-400' :
+                  'bg-red-500/10 text-red-400'
+                )}>
+                  <p className="text-xs font-black uppercase tracking-widest">KYC: {trader.verification?.kycStatus || 'Not Started'}</p>
+                </div>
+              </div>
+
+              {/* Trading Statistics */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 pb-6 border-b border-slate-700">
+                <InfoCard label="Total Transactions" value={(trader.stats?.totalTransactions || 0).toString()} />
+                <InfoCard label="Transaction Volume" value={`RWF ${formatCurrency(trader.stats?.totalVolume || 0)}`} />
+                <InfoCard label="Customers Served" value={(trader.stats?.totalCustomers || 0).toString()} />
+                <InfoCard label="Fees Collected" value={`RWF ${formatCurrency(trader.fees?.totalCollected || 0)}`} />
+              </div>
+
+              {/* Verification Details */}
+              <div className="bg-slate-950 rounded-2xl p-6 border border-slate-800">
+                <h5 className="font-black text-white mb-4 flex items-center gap-2">
+                  <Fingerprint size={16} /> Verification Status
+                </h5>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="text-xs">
+                    <p className="text-slate-500 font-bold mb-1">Email</p>
+                    <p className="font-black text-slate-300">{trader.emailVerified ? '✓ Verified' : '✗ Pending'}</p>
+                  </div>
+                  <div className="text-xs">
+                    <p className="text-slate-500 font-bold mb-1">KYC</p>
+                    <p className="font-black text-slate-300 capitalize">{trader.verification?.kycStatus || 'Not Started'}</p>
+                  </div>
+                  <div className="text-xs">
+                    <p className="text-slate-500 font-bold mb-1">Business</p>
+                    <p className="font-black text-slate-300">{trader.verification?.businessVerified ? '✓ Verified' : '✗ Pending'}</p>
+                  </div>
+                  <div className="text-xs">
+                    <p className="text-slate-500 font-bold mb-1">Account Status</p>
+                    <p className="font-black text-slate-300 capitalize">{trader.status || 'Active'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminPayments() {
+  const [payments, setPayments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedPayment, setSelectedPayment] = useState<any>(null);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    const fetchPayments = async () => {
+      try {
+        const res = await fetch('/api/admin/payments', {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPayments(data.payments || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch payments:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPayments();
+  }, []);
+
+  const handleViewPayment = async (paymentId: string) => {
+    setProcessing(true);
+    try {
+      const res = await fetch(`/api/admin/transactions/${paymentId}`, {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPayment(data.transaction || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch transaction:', err);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleCorrectPayment = async () => {
+    if (!selectedPayment) return;
+    const amountInput = window.prompt('Enter corrected amount:', String(selectedPayment.amount));
+    if (amountInput === null) return;
+    const status = window.prompt('Enter new status (completed, pending, failed):', selectedPayment.status || 'completed');
+    if (status === null) return;
+
+    const amount = Number(amountInput);
+    if (Number.isNaN(amount)) return;
+
+    setProcessing(true);
+    try {
+      const res = await fetch(`/api/admin/transactions/${selectedPayment.id}/correct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ amount, status: status.trim(), description: selectedPayment.description })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPayment(data.transaction);
+        setPayments(payments.map((payment) => payment.id === data.transaction.id ? data.transaction : payment));
+      }
+    } catch (err) {
+      console.error('Failed to correct payment:', err);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Customer</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Amount</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Date</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-500 font-bold">Loading...</td>
+                </tr>
+              ) : payments.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-500 font-bold">No payments found.</td>
+                </tr>
+              ) : payments.map((payment) => (
+                <tr key={payment.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-8 py-6">
+                    <p className="font-bold text-white">{payment.customerName || payment.customerId || 'Anonymous'}</p>
+                  </td>
+                  <td className="px-8 py-6">
+                    <p className="font-black text-white">RWF {formatCurrency(payment.amount || 0)}</p>
+                  </td>
+                  <td className="px-8 py-6">
+                    <span className={cn(
+                      "px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
+                      payment.status === 'completed' ? 'text-green-500 bg-green-500/10' : 'text-orange-500 bg-orange-500/10'
+                    )}>
+                      {payment.status}
+                    </span>
+                  </td>
+                  <td className="px-8 py-6 text-xs font-bold text-slate-500">
+                    {new Date(payment.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    <button
+                      onClick={() => handleViewPayment(payment.id)}
+                      className="px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {selectedPayment && (
+        <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-6">
+            <div>
+              <h3 className="text-2xl font-black text-white">Transaction Details</h3>
+              <p className="text-slate-500 text-sm mt-2">Review and correct payment records from the admin console.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleCorrectPayment}
+                disabled={processing}
+                className="px-5 py-3 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-50"
+              >
+                Correct Transaction
+              </button>
+              <button
+                onClick={() => setSelectedPayment(null)}
+                className="px-5 py-3 bg-slate-800 text-slate-200 rounded-3xl font-black uppercase tracking-widest hover:bg-slate-700 transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <InfoCard label="Reference" value={selectedPayment.reference || selectedPayment.transactionCode || '-'} />
+            <InfoCard label="Amount" value={`RWF ${formatCurrency(selectedPayment.amount || 0)}`} />
+            <InfoCard label="Status" value={selectedPayment.status || '-'} />
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <InfoCard label="Type" value={selectedPayment.type || '-'} />
+            <InfoCard label="Description" value={selectedPayment.description || 'No description'} />
+            <InfoCard label="Created" value={new Date(selectedPayment.createdAt).toLocaleString()} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminAudit() {
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchAudit = async () => {
+      try {
+        const res = await fetch('/api/admin/audit-logs', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setLogs(data.logs || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch audit logs:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAudit();
+  }, []);
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="p-8 border-b border-white/5">
+          <h3 className="text-xl font-black text-white">Audit Trail</h3>
+          <p className="text-sm text-slate-500 mt-2">Review recorded admin actions and system events.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">When</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Admin</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Action</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Target</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Details</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-500 font-bold">Loading audit data...</td>
+                </tr>
+              ) : logs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-500 font-bold">No audit events found.</td>
+                </tr>
+              ) : logs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-8 py-6 text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                  <td className="px-8 py-6 text-sm text-white">{log.adminName || 'Unknown'}</td>
+                  <td className="px-8 py-6 text-sm text-slate-200">{log.action}</td>
+                  <td className="px-8 py-6 text-sm text-slate-200">{log.targetType || 'system'}{log.targetId ? ` / ${log.targetId}` : ''}</td>
+                  <td className="px-8 py-6 text-xs text-slate-400 break-words max-w-xl">{log.details ? JSON.stringify(log.details) : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminFees() {
+  const [feeStats, setFeeStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchFeeStats = async () => {
+      try {
+        const res = await fetch('/api/admin/fees/stats', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setFeeStats(data.feeStats || null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch fee statistics:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFeeStats();
+  }, []);
+
+  return (
+    <div className="space-y-8">
+      {loading ? (
+        <div className="text-center py-12">
+          <Loader2 className="text-orange-500 animate-spin mx-auto mb-4" size={32} />
+          <p className="text-slate-400 font-bold">Loading fee statistics...</p>
+        </div>
+      ) : (
+        <>
+          {/* Fee Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl">
+              <div className="w-12 h-12 bg-emerald-500/10 text-emerald-500 rounded-2xl flex items-center justify-center mb-6">
+                <Wallet size={24} />
+              </div>
+              <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">Total Fees Collected</p>
+              <p className="text-3xl font-black text-emerald-400">{`RWF ${formatCurrency(feeStats?.total?.totalAmount || 0)}`}</p>
+            </div>
+
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl">
+              <div className="w-12 h-12 bg-blue-500/10 text-blue-500 rounded-2xl flex items-center justify-center mb-6">
+                <Activity size={24} />
+              </div>
+              <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">Total Transactions</p>
+              <p className="text-3xl font-black text-blue-400">{feeStats?.total?.totalTransactions || 0}</p>
+            </div>
+
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl">
+              <div className="w-12 h-12 bg-purple-500/10 text-purple-500 rounded-2xl flex items-center justify-center mb-6">
+                <Users size={24} />
+              </div>
+              <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">Unique Users Charged</p>
+              <p className="text-3xl font-black text-purple-400">{feeStats?.total?.uniqueUsers || 0}</p>
+            </div>
+
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl">
+              <div className="w-12 h-12 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center mb-6">
+                <BarChart3 size={24} />
+              </div>
+              <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">Avg Fee/Transaction</p>
+              <p className="text-3xl font-black text-orange-400">{`RWF ${feeStats?.averageFeePerTransaction || 0}`}</p>
+            </div>
+          </div>
+
+          {/* Fees by Type */}
+          {feeStats?.byType && feeStats.byType.length > 0 && (
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+              <h3 className="text-xl font-black text-white mb-6">Fees by Transaction Type</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-slate-800">
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest">Type</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Total Collected</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Transactions</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Average Fee</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Range (Min-Max)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/50">
+                    {feeStats.byType.map((fee: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-4 font-black text-white capitalize">{fee.feeType}</td>
+                        <td className="px-6 py-4 font-black text-emerald-400 text-right">RWF {formatCurrency(fee.totalAmount || 0)}</td>
+                        <td className="px-6 py-4 text-slate-300 text-right">{fee.transactionCount}</td>
+                        <td className="px-6 py-4 text-slate-300 text-right">RWF {formatCurrency(fee.avgFee || 0)}</td>
+                        <td className="px-6 py-4 text-slate-300 text-right text-xs">
+                          RWF {formatCurrency(fee.minFee || 0)} - RWF {formatCurrency(fee.maxFee || 0)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Fees by User Tier */}
+          {feeStats?.byUserTier && feeStats.byUserTier.length > 0 && (
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+              <h3 className="text-xl font-black text-white mb-6">Fees by User Tier</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {feeStats.byUserTier.map((tier: any, idx: number) => (
+                  <div key={idx} className="bg-slate-950 p-6 rounded-2xl border border-slate-800">
+                    <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Tier: {tier.tier || 'N/A'}</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Total Collected:</span>
+                        <span className="font-black text-emerald-400">RWF {formatCurrency(tier.totalAmount || 0)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Transactions:</span>
+                        <span className="font-black text-slate-300">{tier.transactionCount}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-400">Users:</span>
+                        <span className="font-black text-slate-300">{tier.userCount}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Daily Fees Trend */}
+          {feeStats?.dailyTrend && feeStats.dailyTrend.length > 0 && (
+            <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+              <h3 className="text-xl font-black text-white mb-6">Daily Fee Collection Trend (Last 30 Days)</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-slate-800">
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest">Date</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Total Fees</th>
+                      <th className="px-6 py-4 text-xs font-black text-slate-500 uppercase tracking-widest text-right">Transactions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/50">
+                    {feeStats.dailyTrend.slice(0, 15).map((day: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-4 font-bold text-white">{new Date(day.date).toLocaleDateString()}</td>
+                        <td className="px-6 py-4 font-black text-emerald-400 text-right">RWF {formatCurrency(day.totalAmount || 0)}</td>
+                        <td className="px-6 py-4 text-slate-300 text-right">{day.transactionCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AdminEmail() {
+  const [to, setTo] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [broadcast, setBroadcast] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [logs, setLogs] = useState<any[]>([]);
+  const [sending, setSending] = useState(false);
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch('/api/admin/email-logs', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch email logs:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchLogs();
+  }, []);
+
+  const handleSend = async () => {
+    setSending(true);
+    setStatusMessage('');
+    try {
+      const res = await fetch('/api/admin/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ to, subject, html: body, text: body, broadcast })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatusMessage('Email queued successfully.');
+        setTo('');
+        setSubject('');
+        setBody('');
+        await fetchLogs();
+      } else {
+        setStatusMessage(data.error || 'Failed to send email');
+      }
+    } catch (error: any) {
+      setStatusMessage(error.message || 'Email failed');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+        <div className="grid grid-cols-1 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-widest text-slate-500">Recipient</span>
+              <input
+                type="email"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="recipient@example.com"
+                disabled={broadcast}
+                className="w-full px-4 py-4 bg-slate-950 border border-slate-800 rounded-3xl text-white outline-none"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-widest text-slate-500">Subject</span>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Email subject"
+                className="w-full px-4 py-4 bg-slate-950 border border-slate-800 rounded-3xl text-white outline-none"
+              />
+            </label>
+          </div>
+
+          <label className="space-y-2">
+            <span className="text-xs uppercase tracking-widest text-slate-500">Message</span>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={10}
+              className="w-full px-4 py-4 bg-slate-950 border border-slate-800 rounded-3xl text-white outline-none"
+            />
+          </label>
+
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-3 text-sm text-slate-400">
+              <input type="checkbox" checked={broadcast} onChange={(e) => setBroadcast(e.target.checked)} />
+              Broadcast to all users
+            </label>
+            <button
+              onClick={handleSend}
+              disabled={sending}
+              className="px-6 py-4 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-50"
+            >
+              {sending ? 'Sending…' : 'Send Email'}
+            </button>
+          </div>
+
+          {statusMessage && <p className="text-sm text-slate-300">{statusMessage}</p>}
+        </div>
+      </div>
+
+      <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="p-8 border-b border-white/5">
+          <h3 className="text-xl font-black text-white">Email Delivery Log</h3>
+          <p className="text-sm text-slate-500 mt-2">Recent outgoing messages and broadcast activity.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Sent</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Recipient</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Subject</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+                <th className="px-8 py-6 text-[10px] font-black text-slate-500 uppercase tracking-widest">Admin</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {logs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-8 py-12 text-center text-slate-500 font-bold">No email logs yet.</td>
+                </tr>
+              ) : logs.map((log) => (
+                <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-8 py-6 text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</td>
+                  <td className="px-8 py-6 text-sm text-white">{log.recipient}</td>
+                  <td className="px-8 py-6 text-sm text-slate-200">{log.subject}</td>
+                  <td className="px-8 py-6 text-sm text-slate-200">{log.status}</td>
+                  <td className="px-8 py-6 text-sm text-slate-200">{log.adminName || 'admin'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminLogs({ logs }: { logs: any[] }) {
+  return (
+    <div className="space-y-6">
+      <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] overflow-hidden">
+        <div className="p-8 border-b border-white/5">
+          <h3 className="text-xl font-black text-white">System Logs</h3>
+          <p className="text-xs text-slate-500 font-medium uppercase tracking-widest mt-1">Live infrastructure auditing</p>
+        </div>
+        <div className="p-4 overflow-x-auto">
+          <div className="space-y-2">
+            {logs.length > 0 ? logs.slice(0, 20).map((log, i) => (
+              <div key={i} className="flex items-start gap-4 p-4 bg-slate-950 rounded-2xl border border-slate-800/50">
+                <div className={cn(
+                  "w-2 h-2 rounded-full mt-1.5 shrink-0",
+                  log.level === 'error' ? 'bg-red-500' : log.level === 'warn' ? 'bg-yellow-500' : 'bg-blue-500'
+                )} />
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-white">{log.message}</p>
+                  <p className="text-[10px] text-slate-500 font-medium mt-1">Source: {log.source || 'System'}</p>
+                </div>
+              </div>
+            )) : (
+              <p className="text-center text-slate-500 py-10">No logs available.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusIndicator({ label, status }: { label: string; status: string }) {
+  return (
+    <div className="flex justify-between items-center p-4 bg-slate-950 rounded-2xl border border-slate-800/50">
+      <span className="text-sm font-bold text-white">{label}</span>
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+        <span className="text-sm font-bold text-green-500">{status}</span>
+      </div>
+    </div>
+  );
+}
+
+function AdminSupport() {
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [statusUpdate, setStatusUpdate] = useState('');
+  const [feedback, setFeedback] = useState('');
+
+  useEffect(() => {
+    fetchTickets();
+  }, []);
+
+  const fetchTickets = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/tickets?limit=50', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setTickets(data.tickets || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tickets:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadTicketDetails = async (id: string) => {
+    setDetailLoading(true);
+    setSelectedTicket(null);
+    setMessages([]);
+    setFeedback('');
+    try {
+      const res = await fetch(`/api/admin/tickets/${id}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedTicket(data.ticket || null);
+        setMessages(data.messages || []);
+        setStatusUpdate(data.ticket?.status || 'open');
+      }
+    } catch (err) {
+      console.error('Failed to load ticket details:', err);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleReply = async () => {
+    if (!selectedTicket || !replyText.trim()) return;
+    setFeedback('');
+
+    try {
+      const res = await fetch(`/api/admin/tickets/${selectedTicket.id}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ message: replyText.trim(), status: statusUpdate || selectedTicket.status })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setReplyText('');
+        setFeedback('Reply sent successfully.');
+        await fetchTickets();
+        await loadTicketDetails(selectedTicket.id);
+      } else {
+        setFeedback(data.error || 'Failed to send reply.');
+      }
+    } catch (err: any) {
+      setFeedback(err.message || 'Reply failed.');
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
+        <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 overflow-hidden shadow-2xl">
+          <div className="p-8 border-b border-white/5">
+            <h3 className="text-xl font-black text-white">Support Tickets</h3>
+            <p className="text-sm text-slate-500 mt-2">Monitor and respond to inbound support requests.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-slate-800">
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Title</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Created By</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Updated</th>
+                  <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50">
+                {loading ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500 font-bold">Loading tickets...</td>
+                  </tr>
+                ) : tickets.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500 font-bold">No support tickets available.</td>
+                  </tr>
+                ) : tickets.map((ticket) => (
+                  <tr key={ticket.id} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-6 py-5">
+                      <p className="font-bold text-white">{ticket.title}</p>
+                      <p className="text-xs text-slate-500 mt-1">{ticket.category || 'General'}</p>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className={cn(
+                        'px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest',
+                        ticket.status === 'open' ? 'text-emerald-400 bg-emerald-500/10' : ticket.status === 'pending' ? 'text-yellow-400 bg-yellow-500/10' : 'text-slate-300 bg-slate-700/50'
+                      )}>
+                        {ticket.status || 'open'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5 text-sm text-slate-200">{ticket.createdByName || 'Unknown'}</td>
+                    <td className="px-6 py-5 text-xs font-bold text-slate-500">{new Date(ticket.updatedAt || ticket.createdAt).toLocaleString()}</td>
+                    <td className="px-6 py-5 text-right">
+                      <button
+                        onClick={() => loadTicketDetails(ticket.id)}
+                        className="px-4 py-2 bg-orange-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-500 transition-all"
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl">
+            <div className="flex items-center justify-between gap-4 mb-6">
+              <div>
+                <h4 className="text-lg font-black text-white">Ticket Summary</h4>
+                <p className="text-sm text-slate-500">Open a ticket to view details and respond.</p>
+              </div>
+              <button
+                onClick={fetchTickets}
+                className="px-4 py-3 bg-slate-800 text-slate-300 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {!selectedTicket ? (
+              <div className="text-center py-16 text-slate-500 border border-dashed border-slate-800 rounded-3xl">
+                Select a ticket from the list to review its details.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <p className="text-xs uppercase tracking-widest text-slate-500">Ticket</p>
+                  <h3 className="text-xl font-black text-white">{selectedTicket.title}</h3>
+                  <p className="text-sm text-slate-400">{selectedTicket.description || 'No description available.'}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <InfoCard label="Status" value={selectedTicket.status || 'open'} />
+                  <InfoCard label="Priority" value={selectedTicket.priority || 'normal'} />
+                  <InfoCard label="Created By" value={selectedTicket.createdByName || 'Unknown'} />
+                  <InfoCard label="Updated" value={new Date(selectedTicket.updatedAt || selectedTicket.createdAt).toLocaleString()} />
+                </div>
+
+                <div className="space-y-4">
+                  <label className="block text-xs uppercase tracking-widest text-slate-500">Update Status</label>
+                  <select
+                    value={statusUpdate}
+                    onChange={(e) => setStatusUpdate(e.target.value)}
+                    className="w-full rounded-3xl bg-slate-950 border border-slate-800 px-4 py-4 text-white outline-none"
+                  >
+                    <option value="open">Open</option>
+                    <option value="pending">Pending</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs uppercase tracking-widest text-slate-500">Reply</label>
+                  <textarea
+                    rows={6}
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    className="w-full rounded-3xl bg-slate-950 border border-slate-800 px-4 py-4 text-white outline-none"
+                    placeholder="Write your response here"
+                  />
+                </div>
+
+                {feedback && <p className="text-sm text-slate-300">{feedback}</p>}
+
+                <div className="flex flex-wrap gap-4">
+                  <button
+                    onClick={handleReply}
+                    disabled={detailLoading}
+                    className="px-6 py-4 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-50"
+                  >
+                    Send Reply
+                  </button>
+                  <button
+                    onClick={() => setSelectedTicket(null)}
+                    className="px-6 py-4 bg-slate-800 text-slate-200 rounded-3xl font-black uppercase tracking-widest hover:bg-slate-700 transition-all"
+                  >
+                    Close Ticket
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl">
+            <h4 className="text-lg font-black text-white mb-4">Ticket Activity</h4>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              Support tickets are loaded from the admin queue. Use this panel to quickly respond, escalate, and close issues.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminSubscriptions() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusMessage, setStatusMessage] = useState('');
+
+  useEffect(() => {
+    const fetchPremiumUsers = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/admin/premium-users', {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setUsers(data.premiumUsers || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch premium users:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPremiumUsers();
+  }, []);
+
+  const handleUpgradeUser = async (user: any) => {
+    const tier = window.prompt('Enter new tier for this user (free, premium, gold, platinum):', user.tier || 'premium');
+    if (!tier) return;
+
+    setStatusMessage('Saving tier change...');
+    try {
+      const res = await fetch('/api/admin/upgrade-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ userId: user.id, tier: tier.trim() })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUsers(users.map((item) => item.id === user.id ? data.user : item));
+        setStatusMessage('User tier updated successfully.');
+      } else {
+        setStatusMessage(data.error || 'Failed to update tier.');
+      }
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Failed to update tier.');
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+        <div className="flex flex-col md:flex-row justify-between gap-4 mb-6">
+          <div>
+            <h3 className="text-xl font-black text-white">Premium Subscribers</h3>
+            <p className="text-sm text-slate-500 mt-2">Manage active premium accounts and pricing tiers.</p>
+          </div>
+          <div className="text-right text-slate-400 text-sm">{users.length} premium users</div>
+        </div>
+
+        {statusMessage && <p className="text-sm text-slate-300 mb-4">{statusMessage}</p>}
+
+        <div className="overflow-x-auto rounded-[2rem] border border-slate-800">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Name</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Email</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Tier</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Balance</th>
+                <th className="px-6 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-14 text-center text-slate-500 font-bold">Loading subscribers...</td>
+                </tr>
+              ) : users.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-14 text-center text-slate-500 font-bold">No premium subscribers yet.</td>
+                </tr>
+              ) : users.map((user) => (
+                <tr key={user.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="px-6 py-5 text-white font-bold">{user.name}</td>
+                  <td className="px-6 py-5 text-slate-300 text-sm">{user.email || '—'}</td>
+                  <td className="px-6 py-5 text-slate-200">{user.tier || 'premium'}</td>
+                  <td className="px-6 py-5 text-white">RWF {formatCurrency(user.walletBalance || 0)}</td>
+                  <td className="px-6 py-5 text-right">
+                    <button
+                      onClick={() => handleUpgradeUser(user)}
+                      className="px-4 py-2 bg-orange-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-500 transition-all"
+                    >
+                      Change Tier
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminDatabasePanel() {
+  const [stats, setStats] = useState<any[]>([]);
+  const [backupStatus, setBackupStatus] = useState('');
+  const [restoring, setRestoring] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('/api/admin/database-stats', {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const statsObject = data?.stats || {};
+        setStats(Array.isArray(statsObject) ? statsObject : Object.entries(statsObject).map(([name, count]) => ({ name, count })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch stats:', err);
+    }
+  };
+
+  const downloadBackup = async () => {
+    setBackupStatus('Preparing backup download...');
+    try {
+      const res = await fetch('/api/admin/export-db', { credentials: 'include' });
+      if (!res.ok) {
+        const body = await res.json();
+        setBackupStatus(body.error || 'Unable to download backup.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'esoko-backup.db';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      setBackupStatus('Database backup download started.');
+    } catch (err: any) {
+      setBackupStatus(err.message || 'Backup download failed.');
+    }
+  };
+
+  const restoreBackup = async (file: File) => {
+    setRestoring(true);
+    setBackupStatus('Restoring database...');
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const result = reader.result as ArrayBuffer | string;
+        const base64 = typeof result === 'string'
+          ? result.split(',')[1]
+          : arrayBufferToBase64(result);
+
+        const res = await fetch('/api/admin/restore-db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ backupBase64: base64 })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          setBackupStatus('Database restored successfully. Restart the server.');
+        } else {
+          setBackupStatus(data.error || 'Restore failed.');
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setBackupStatus(err.message || 'Restore failed.');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      restoreBackup(file);
+    }
+  };
+
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {stats.map((col: any, i: number) => (
+          <div key={i} className="p-6 rounded-3xl border border-white/5 bg-slate-900 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{col.name}</p>
+            <span className="text-2xl font-black text-white">{col.count}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-orange-600/5 border border-orange-600/10 p-8 rounded-[2.5rem] flex flex-col gap-6">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+          <div>
+            <h4 className="text-xl font-black text-white">Database Control</h4>
+            <p className="text-slate-400 font-medium text-sm">Export or restore the current SQLite database from the admin portal.</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={downloadBackup}
+              className="px-6 py-4 bg-slate-950 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-slate-900 transition-all"
+            >
+              Download Backup
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={restoring}
+              className="px-6 py-4 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-50"
+            >
+              {restoring ? 'Restoring…' : 'Restore Backup'}
+            </button>
+          </div>
+        </div>
+        <input ref={fileInputRef} type="file" accept=".db" className="hidden" onChange={handleFileSelected} />
+        {backupStatus && <p className="text-sm text-slate-300">{backupStatus}</p>}
+      </div>
+    </div>
+  );
+}
+
+function AdminSystem() {
+  const [config, setConfig] = useState<any>({ globalFees: { free: 0.006, premium: 0.003 } });
+  const [health, setHealth] = useState<any>({ status: 'unknown', uptimeSeconds: 0, memoryUsage: {} });
+  const [saving, setSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+
+  useEffect(() => {
+    fetchConfig();
+    fetchHealth();
+  }, []);
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch('/api/admin/config', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setConfig(data.config || {});
+      }
+    } catch (err) {
+      console.error('Failed to fetch config:', err);
+    }
+  };
+
+  const fetchHealth = async () => {
+    try {
+      const res = await fetch('/api/admin/server-health', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setHealth(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch health:', err);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setSaving(true);
+    setStatusMessage('Saving configuration...');
+    try {
+      const res = await fetch('/api/admin/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          maintenanceMode: Boolean(config.maintenanceMode),
+          registrationOpen: Boolean(config.registrationOpen),
+          globalFeesFree: Number(config.globalFees?.free ?? 0.006),
+          globalFeesPremium: Number(config.globalFees?.premium ?? 0.003)
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setConfig(data.config || config);
+        setStatusMessage('Configuration saved successfully.');
+      } else {
+        setStatusMessage(data.error || 'Failed to save config.');
+      }
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Failed to save config.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-10">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+          <h3 className="text-xl font-black text-white mb-6 flex items-center gap-3">
+            <Settings size={24} className="text-orange-500" /> Platform Settings
+          </h3>
+          <div className="space-y-6">
+            <label className="block text-sm font-black uppercase tracking-widest text-slate-500">Maintenance Mode</label>
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={Boolean(config.maintenanceMode)}
+                onChange={(e) => setConfig({ ...config, maintenanceMode: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-orange-500"
+              />
+              <span className="text-sm text-slate-300">Enable maintenance mode</span>
+            </div>
+
+            <label className="block text-sm font-black uppercase tracking-widest text-slate-500">Registration Open</label>
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={Boolean(config.registrationOpen)}
+                onChange={(e) => setConfig({ ...config, registrationOpen: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-orange-500"
+              />
+              <span className="text-sm text-slate-300">Allow new user registrations</span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <label className="space-y-2">
+                <span className="text-xs uppercase tracking-widest text-slate-500">Free Plan Fee Rate</span>
+                <input
+                  type="number"
+                  value={config.globalFees?.free ?? 0.006}
+                  step="0.0001"
+                  min="0"
+                  onChange={(e) => setConfig({ ...config, globalFees: { ...config.globalFees, free: Number(e.target.value) } })}
+                  className="w-full rounded-3xl bg-slate-950 border border-slate-800 px-4 py-4 text-white outline-none"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs uppercase tracking-widest text-slate-500">Premium Plan Fee Rate</span>
+                <input
+                  type="number"
+                  value={config.globalFees?.premium ?? 0.003}
+                  step="0.0001"
+                  min="0"
+                  onChange={(e) => setConfig({ ...config, globalFees: { ...config.globalFees, premium: Number(e.target.value) } })}
+                  className="w-full rounded-3xl bg-slate-950 border border-slate-800 px-4 py-4 text-white outline-none"
+                />
+              </label>
+            </div>
+
+            <button
+              onClick={handleSaveConfig}
+              disabled={saving}
+              className="w-full px-6 py-4 bg-orange-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Settings'}
+            </button>
+
+            {statusMessage && <p className="text-sm text-slate-300">{statusMessage}</p>}
+          </div>
+        </div>
+
+        <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800">
+          <h3 className="text-xl font-black text-white mb-6 flex items-center gap-3">
+            <AlertTriangle size={24} className="text-yellow-500" /> System Health
+          </h3>
+          <div className="space-y-5">
+            <StatusIndicator label="Status" status={health.status || 'unknown'} />
+            <StatusIndicator label="Uptime" status={`${Math.round(health.uptimeSeconds || 0)} sec`} />
+            <StatusIndicator label="Memory Used" status={`${Math.round(((health.memoryUsage?.rss || 0) / 1024 / 1024) * 100) / 100} MB`} />
+            <StatusIndicator label="Heap Total" status={`${Math.round(((health.memoryUsage?.heapTotal || 0) / 1024 / 1024) * 100) / 100} MB`} />
+            <StatusIndicator label="Heap Used" status={`${Math.round(((health.memoryUsage?.heapUsed || 0) / 1024 / 1024) * 100) / 100} MB`} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

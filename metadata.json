@@ -1,0 +1,9 @@
+{
+  "name": "Esoko Nexus - B2B Commerce & Payments",
+  "description": "The premium unified platform for digital payments, smart inventory, and trader analytics in Rwanda. empower your business with Esoko Nexus's secure QR payments, real-time reporting, and automated incentive programs.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
