@@ -37,9 +37,13 @@ const FRONTEND_URLS = config.frontendUrls;
 const SMTP_USER = config.smtp.user;
 const SMTP_PASS = config.smtp.pass;
 const SMTP_HOST = config.smtp.host;
-const SMTP_PORT = config.smtp.port;
+const configuredSmtpPort = config.smtp.port;
 const SMTP_FROM = config.smtp.from;
-const SMTP_SECURE = config.smtp.secure;
+const configuredSmtpSecure = config.smtp.secure;
+const shouldUseGmailStartTls =
+  SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
+const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
+const SMTP_SECURE = shouldUseGmailStartTls ? false : SMTP_PORT === 465 ? true : configuredSmtpSecure;
 const JWT_SECRET = config.jwtSecret;
 
 dns.setDefaultResultOrder('ipv4first');
@@ -3307,6 +3311,7 @@ app.get('/api/health', (_req, res) => {
       port: SMTP_PORT,
       secure: SMTP_SECURE,
       family: Number(env.SMTP_FAMILY || 4),
+      correctedMisconfiguredGmailPort: shouldUseGmailStartTls,
       from: SMTP_FROM ? 'configured' : 'missing',
     },
     uptime: process.uptime(),
