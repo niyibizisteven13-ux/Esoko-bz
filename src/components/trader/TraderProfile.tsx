@@ -28,6 +28,7 @@ import { cn } from '../../lib/utils';
 import { getCurrentCoordinates } from '../../lib/locationUtils';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { isAccountVerified } from '../../lib/verification';
+import TrustVerificationPanel from '../profile/TrustVerificationPanel';
 
 interface TraderProfileProps {
   userData: any;
@@ -166,6 +167,10 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
           <p className="text-neutral-500 dark:text-neutral-400 font-medium mt-1">
             {t.profile.subtitle}
           </p>
+        </div>
+
+        <div className="px-8 pt-8">
+          <TrustVerificationPanel userData={userData} role="trader" />
         </div>
 
         <form onSubmit={handleSave} className="p-8 space-y-8">

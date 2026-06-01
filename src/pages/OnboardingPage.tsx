@@ -213,6 +213,12 @@ export default function OnboardingPage() {
   };
 
   const handleSkip = async () => {
+    if (!surveyData.termsAccepted) {
+      setStep(5);
+      setError('Please accept the Terms of Service and Privacy Policy before continuing.');
+      return;
+    }
+
     if (
       window.confirm(
         'Are you sure you want to skip personalization? You can update your profile later in settings.'
@@ -640,10 +646,10 @@ export default function OnboardingPage() {
               >
                 <div className="space-y-2">
                   <h2 className="text-3xl font-black text-white tracking-tight">
-                    Terms & Email Verification
+                    Terms & Optional Verification
                   </h2>
                   <p className="text-neutral-500">
-                    Please accept our terms and verify your email. Document upload is optional and can be done later if you want a verified badge.
+                    Please accept our terms to continue. Email and document verification can be completed later when you want a verified badge.
                   </p>
                 </div>
 
@@ -786,14 +792,6 @@ export default function OnboardingPage() {
               }}
               disabled={
                 loading ||
-                (step === 1 &&
-                  (isNew
-                    ? !surveyData.role
-                    : isTrader
-                      ? !surveyData.businessType
-                      : !surveyData.shoppingHabit)) ||
-                (step === 2 &&
-                  (isTrader ? !surveyData.businessSize : surveyData.savingsGoal === undefined)) ||
                 (step === 5 && !surveyData.termsAccepted)
               }
               className="flex-1 py-4 bg-orange-600 text-white rounded-2xl font-bold hover:bg-orange-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-orange-900/20"
@@ -865,7 +863,7 @@ function SurveyQuestions({ onComplete }: { onComplete: () => void }) {
     }
   };
 
-  const canSubmit = questions.every((q) => !q.required || responses[q.id] !== undefined);
+  const canSubmit = true;
 
   if (loading) {
     return (
@@ -897,7 +895,9 @@ function SurveyQuestions({ onComplete }: { onComplete: () => void }) {
         <div key={question.id} className="space-y-3">
           <label className="block text-lg font-bold text-white">
             {question.question}
-            {question.required && <span className="text-red-500 ml-1">*</span>}
+            <span className="text-neutral-500 ml-2 text-xs font-bold uppercase tracking-widest">
+              Optional
+            </span>
           </label>
 
           {question.questionType === 'text' && (

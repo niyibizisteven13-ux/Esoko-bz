@@ -22,6 +22,7 @@ import { cn } from '../../lib/utils';
 import { emailService } from '../../services/emailService';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { isAccountVerified } from '../../lib/verification';
+import TrustVerificationPanel from '../profile/TrustVerificationPanel';
 
 interface CustomerProfileProps {
   userData: any;
@@ -177,6 +178,10 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
               </span>
             </div>
           </div>
+        </div>
+
+        <div className="px-8 pt-8">
+          <TrustVerificationPanel userData={userData} role="customer" />
         </div>
 
         <form onSubmit={handleSave} className="p-8 space-y-8">

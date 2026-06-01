@@ -3945,6 +3945,9 @@ app.post('/api/verification/request', authenticate, (req: any, res): any => {
     deliveryNeeds: req.body.deliveryNeeds || null,
     referralSource: req.body.referralSource || null,
     licenseStatus: req.body.licenseStatus || null,
+    whatsappNumber: req.body.whatsappNumber || req.body.phone || req.user.phone || null,
+    whatsappCheckCode: req.body.whatsappCheckCode || null,
+    contactVerification: req.body.contactVerification || null,
   };
 
   const values = [
