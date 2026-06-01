@@ -3374,6 +3374,10 @@ app.get('/api/health', (_req, res) => {
     status: database === 'connected' ? 'ok' : 'degraded',
     app: 'Esoko Nexus',
     database,
+    storage: {
+      dataDir: path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data')),
+      uploadDir,
+    },
     backend: 'express',
     firebase: false,
     email: {

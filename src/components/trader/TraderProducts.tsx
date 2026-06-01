@@ -195,15 +195,36 @@ export default function TraderProducts({
   const startLiveCamera = async () => {
     setLiveError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setLiveError('Camera is not available in this browser. Use HTTPS and allow camera permission.');
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
+
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        audioStream.getAudioTracks().forEach((track) => stream.addTrack(track));
+        setLiveMicOn(true);
+      } catch {
+        setLiveMicOn(false);
+      }
+
       liveStreamRef.current = stream;
       if (liveVideoRef.current) liveVideoRef.current.srcObject = stream;
       setLiveCameraOn(true);
-      setLiveMicOn(true);
-    } catch (error) {
-      setLiveError(
-        error instanceof Error ? error.message : 'Camera or microphone permission was blocked.'
-      );
+    } catch (error: any) {
+      const name = error?.name || '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        setLiveError('Camera permission was blocked. Allow camera access in your browser settings and try again.');
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        setLiveError('No camera was found on this device.');
+      } else {
+        setLiveError(error instanceof Error ? error.message : 'Camera could not be opened.');
+      }
     }
   };
 

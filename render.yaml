@@ -20,6 +20,8 @@ services:
         value: https://esoko-bz-1.onrender.com
       - key: FRONTEND_URLS
         value: https://esoko-bz-1.onrender.com
+      - key: DATA_DIR
+        value: /app/data
       - key: UPLOAD_DIR
         value: /app/data/uploads
       - key: JWT_SECRET
