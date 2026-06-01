@@ -142,6 +142,9 @@ const idempotency = createIdempotencyStore(db, isProduction);
 const app = express();
 const port = config.port;
 const LOAN_WHATSAPP_NUMBER = env.LOAN_WHATSAPP_NUMBER || '+250795806631';
+const WHATSAPP_OTP_SENDER = env.WHATSAPP_OTP_SENDER || env.VITE_SUPPORT_WHATSAPP || '+250795806631';
+const WHATSAPP_OTP_PROVIDER_URL = env.WHATSAPP_OTP_PROVIDER_URL || '';
+const WHATSAPP_OTP_PROVIDER_TOKEN = env.WHATSAPP_OTP_PROVIDER_TOKEN || '';
 let activeServer: Server | null = null;
 let isShuttingDown = false;
 let loanReminderInterval: NodeJS.Timeout | null = null;
@@ -253,7 +256,7 @@ app.use(
   })
 );
 
-const uploadDir = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
+const uploadDir = path.resolve(env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -3033,6 +3036,133 @@ function buildEmailVerificationUrl(req: any, token: string, email: string) {
   return `${appBaseUrl(req)}/verify-email?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
 }
 
+function createContactOtp(userId: string, channel: 'email' | 'whatsapp', destination: string) {
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  db.prepare(
+    `
+    UPDATE contact_verification_otps
+    SET verifiedAt = COALESCE(verifiedAt, CURRENT_TIMESTAMP), updatedAt = CURRENT_TIMESTAMP
+    WHERE userId = ? AND channel = ? AND destination = ? AND verifiedAt IS NULL
+  `
+  ).run(userId, channel, destination);
+  db.prepare(
+    `
+    INSERT INTO contact_verification_otps
+      (id, userId, channel, destination, otpHash, expiresAt, metadata, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `
+  ).run(
+    uuidv4(),
+    userId,
+    channel,
+    destination,
+    hashToken(otp),
+    expiresAt,
+    JSON.stringify({ sender: channel === 'whatsapp' ? WHATSAPP_OTP_SENDER : SMTP_FROM })
+  );
+  return { otp, expiresAt };
+}
+
+async function sendContactEmailOtp(user: any, otp: string) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 560px; margin: auto; padding: 24px; color: #1f2937;">
+      <h1 style="color:#ea580c;margin:0 0 12px;">Your ESOKO verification code</h1>
+      <p>Hello ${escapeHtml(user.name || 'there')},</p>
+      <p>Enter this code in your ESOKO profile to verify your email for your badge.</p>
+      <div style="font-size:34px;font-weight:800;letter-spacing:0.18em;color:#111827;background:#fff7ed;border:1px solid #fed7aa;border-radius:14px;padding:18px;text-align:center;margin:20px 0;">${otp}</div>
+      <p>This code expires in 10 minutes. If you did not request it, ignore this message.</p>
+    </div>
+  `;
+  await sendAppEmail({
+    from: SMTP_FROM,
+    to: user.email,
+    subject: 'Your ESOKO verification code',
+    html,
+    text: `Your ESOKO verification code is ${otp}. It expires in 10 minutes.`,
+  });
+}
+
+async function sendWhatsAppOtp(destination: string, otp: string, user: any) {
+  const message = `Your ESOKO verification OTP is ${otp}. It expires in 10 minutes.`;
+  const to = destination.replace(/[^\d+]/g, '');
+  const sender = WHATSAPP_OTP_SENDER.replace(/[^\d+]/g, '');
+
+  if (WHATSAPP_OTP_PROVIDER_URL) {
+    const response = await fetch(WHATSAPP_OTP_PROVIDER_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(WHATSAPP_OTP_PROVIDER_TOKEN
+          ? { Authorization: `Bearer ${WHATSAPP_OTP_PROVIDER_TOKEN}` }
+          : {}),
+      },
+      body: JSON.stringify({
+        from: sender,
+        to,
+        message,
+        otp,
+        userId: user.id,
+        template: 'esoko_verification_otp',
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || payload?.message || `WhatsApp provider failed: ${response.status}`);
+    }
+    return { autoSent: true, sender, providerResponse: payload };
+  }
+
+  const support = sender.replace(/[^\d]/g, '');
+  const handoffText = [
+    'ESOKO OTP send request',
+    `User: ${user.name || user.email}`,
+    `User phone: ${destination}`,
+    'Please send this verification OTP to the user:',
+    otp,
+  ].join('\n');
+  return {
+    autoSent: false,
+    sender,
+    whatsappUrl: support
+      ? `https://wa.me/${support}?text=${encodeURIComponent(handoffText)}`
+      : null,
+    setupRequired: true,
+  };
+}
+
+function syncAuthenticatedVerification(userId: string) {
+  const identity = db
+    .prepare('SELECT phoneVerified, emailVerified FROM identity_verifications WHERE userId = ?')
+    .get(userId) as any;
+  if (!identity?.phoneVerified || !identity?.emailVerified) {
+    return { verified: false, identity };
+  }
+
+  db.prepare(
+    `
+    UPDATE users
+    SET verificationStatus = 'verified',
+        verifiedAt = COALESCE(verifiedAt, CURRENT_TIMESTAMP),
+        updatedAt = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `
+  ).run(userId);
+  db.prepare(
+    `
+    UPDATE user_accounts
+    SET verificationStatus = 'verified',
+        status = 'active',
+        updatedAt = CURRENT_TIMESTAMP
+    WHERE userId = ?
+  `
+  ).run(userId);
+  return {
+    verified: true,
+    user: db.prepare('SELECT * FROM users WHERE id = ?').get(userId),
+  };
+}
+
 async function sendLoginNotificationEmail(req: any, user: any) {
   if (!SMTP_USER || !SMTP_PASS) {
     throw new Error('SMTP is not configured for login notifications');
@@ -3375,7 +3505,7 @@ app.get('/api/health', (_req, res) => {
     app: 'Esoko Nexus',
     database,
     storage: {
-      dataDir: path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data')),
+      dataDir: path.resolve(env.DATA_DIR || path.join(process.cwd(), 'data')),
       uploadDir,
     },
     backend: 'express',
@@ -3829,6 +3959,131 @@ app.post('/api/accounts/create-role', authenticate, (req: any, res): any => {
     account,
     user: publicUserWithAccess(req, selectedUser),
     redirectTo: selectedUser.onboardingComplete ? `/${selectedUser.role}` : '/onboarding',
+  });
+});
+
+app.get('/api/verification/contact-status', authenticate, (req: any, res): any => {
+  const identity = db
+    .prepare('SELECT * FROM identity_verifications WHERE userId = ?')
+    .get(req.user.id) as any;
+  res.json({
+    success: true,
+    emailVerified: Boolean(req.user.emailVerified || identity?.emailVerified),
+    whatsappVerified: Boolean(identity?.phoneVerified),
+    verificationStatus: req.user.verificationStatus || 'pending',
+  });
+});
+
+app.post('/api/verification/email-otp/request', authenticate, async (req: any, res): Promise<any> => {
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
+    if (!user?.email) return res.status(400).json({ error: 'Your account has no email address' });
+    const { otp, expiresAt } = createContactOtp(user.id, 'email', user.email);
+    await sendContactEmailOtp(user, otp);
+    res.json({ success: true, message: 'Email OTP sent', destination: user.email, expiresAt });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to send email OTP', details: error.message });
+  }
+});
+
+app.post('/api/verification/whatsapp-otp/request', authenticate, async (req: any, res): Promise<any> => {
+  const phone = String(req.body.phone || req.user.phone || '').trim();
+  if (!phone) return res.status(400).json({ error: 'WhatsApp number is required' });
+  try {
+    db.prepare('UPDATE users SET phone = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').run(
+      phone,
+      req.user.id
+    );
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
+    const { otp, expiresAt } = createContactOtp(user.id, 'whatsapp', phone);
+    const delivery = await sendWhatsAppOtp(phone, otp, user);
+    res.json({
+      success: true,
+      message: delivery.autoSent
+        ? 'WhatsApp OTP sent'
+        : 'WhatsApp OTP created. Configure a WhatsApp provider for automatic sending.',
+      destination: phone,
+      expiresAt,
+      sender: delivery.sender,
+      autoSent: delivery.autoSent,
+      whatsappUrl: delivery.whatsappUrl,
+      setupRequired: delivery.setupRequired,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to send WhatsApp OTP', details: error.message });
+  }
+});
+
+app.post('/api/verification/otp/verify', authenticate, (req: any, res): any => {
+  const channel = String(req.body.channel || '').trim().toLowerCase();
+  const destination = String(req.body.destination || '').trim();
+  const otp = String(req.body.otp || '').trim();
+  if (!['email', 'whatsapp'].includes(channel)) {
+    return res.status(400).json({ error: 'Verification channel must be email or whatsapp' });
+  }
+  if (!destination || !otp) return res.status(400).json({ error: 'Destination and OTP are required' });
+
+  const record = db
+    .prepare(
+      `
+      SELECT * FROM contact_verification_otps
+      WHERE userId = ? AND channel = ? AND destination = ?
+      ORDER BY createdAt DESC
+      LIMIT 1
+    `
+    )
+    .get(req.user.id, channel, destination) as any;
+  if (!record) return res.status(400).json({ error: 'No active OTP found. Request a new code.' });
+  if (record.verifiedAt) return res.json({ success: true, message: 'Already verified' });
+  if (new Date(record.expiresAt).getTime() < Date.now()) {
+    return res.status(400).json({ error: 'OTP expired. Request a new code.' });
+  }
+  if (Number(record.attempts || 0) >= 5) {
+    return res.status(429).json({ error: 'Too many attempts. Request a new code.' });
+  }
+  if (record.otpHash !== hashToken(otp)) {
+    db.prepare(
+      'UPDATE contact_verification_otps SET attempts = attempts + 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(record.id);
+    return res.status(400).json({ error: 'Invalid OTP' });
+  }
+
+  db.transaction(() => {
+    db.prepare(
+      'UPDATE contact_verification_otps SET verifiedAt = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(record.id);
+    db.prepare(
+      `
+      INSERT INTO identity_verifications
+        (id, userId, status, phoneVerified, emailVerified, createdAt, updatedAt)
+      VALUES (?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(userId) DO UPDATE SET
+        phoneVerified = CASE WHEN ? = 'whatsapp' THEN 1 ELSE phoneVerified END,
+        emailVerified = CASE WHEN ? = 'email' THEN 1 ELSE emailVerified END,
+        updatedAt = CURRENT_TIMESTAMP
+    `
+    ).run(
+      uuidv4(),
+      req.user.id,
+      channel === 'whatsapp' ? 1 : 0,
+      channel === 'email' ? 1 : 0,
+      channel,
+      channel
+    );
+    if (channel === 'email') {
+      db.prepare(
+        'UPDATE users SET emailVerified = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?'
+      ).run(req.user.id);
+    }
+  })();
+
+  const result = syncAuthenticatedVerification(req.user.id);
+  const user = (result.user || db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) as any;
+  res.json({
+    success: true,
+    channel,
+    verified: result.verified,
+    user: publicUserWithAccess(req, user),
   });
 });
 

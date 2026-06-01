@@ -16,6 +16,7 @@ import {
   Building2,
   MapPin,
   Mail,
+  Hash,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLanguage } from '../../context/LanguageContext';

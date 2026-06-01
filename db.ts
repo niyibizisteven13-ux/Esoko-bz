@@ -2,9 +2,8 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-const dataDir = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(process.cwd(), 'data');
+const env = process.env as unknown as Record<string, string | undefined>;
+const dataDir = env.DATA_DIR ? path.resolve(env.DATA_DIR) : path.join(process.cwd(), 'data');
 const dbPath = path.join(dataDir, 'esoko.db');
 
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
@@ -434,6 +433,21 @@ export default function initializeDatabase() {
       expiresAt DATETIME NOT NULL,
       verifiedAt DATETIME,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_verification_otps (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      otpHash TEXT NOT NULL,
+      expiresAt DATETIME NOT NULL,
+      verifiedAt DATETIME,
+      attempts INTEGER DEFAULT 0,
+      metadata TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -1116,6 +1130,8 @@ export default function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_system_logs_createdAt ON system_logs(createdAt);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_tokenHash ON password_reset_tokens(tokenHash);
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_userId ON password_reset_tokens(userId);
+    CREATE INDEX IF NOT EXISTS idx_contact_verification_otps_userId ON contact_verification_otps(userId);
+    CREATE INDEX IF NOT EXISTS idx_contact_verification_otps_lookup ON contact_verification_otps(userId, channel, destination);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_tokenHash ON refresh_tokens(tokenHash);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_userId ON refresh_tokens(userId);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expiresAt ON refresh_tokens(expiresAt);
