@@ -17,6 +17,7 @@ import {
   MapPin,
   Mail,
   Hash,
+  FileText,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLanguage } from '../../context/LanguageContext';
@@ -29,7 +30,7 @@ import { cn } from '../../lib/utils';
 import { getCurrentCoordinates } from '../../lib/locationUtils';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { isAccountVerified } from '../../lib/verification';
-import TrustVerificationPanel from '../profile/TrustVerificationPanel';
+import { apiPost } from '../../services/apiClient';
 
 interface TraderProfileProps {
   userData: any;
@@ -38,10 +39,16 @@ interface TraderProfileProps {
 export default function TraderProfile({ userData }: TraderProfileProps) {
   const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const proofInputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const accountVerified = isAccountVerified(userData);
+  const [verificationSubmitting, setVerificationSubmitting] = useState(false);
+  const [verificationSuccess, setVerificationSuccess] = useState('');
+  const [verificationError, setVerificationError] = useState('');
+  const [businessProof, setBusinessProof] = useState<File | null>(null);
+  const [businessProofType, setBusinessProofType] = useState('rdb_certificate');
 
   const [formData, setFormData] = useState({
     name: userData?.name || '',
@@ -140,6 +147,60 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
     }
   };
 
+  const submitBusinessProof = async () => {
+    setVerificationError('');
+    setVerificationSuccess('');
+
+    if (accountVerified) {
+      setVerificationSuccess('Your trader badge is already active.');
+      return;
+    }
+
+    if (!businessProof) {
+      setVerificationError('Choose one business proof document first.');
+      return;
+    }
+
+    setVerificationSubmitting(true);
+    try {
+      const request = await apiPost<any>('/api/verification/request', {
+        role: 'trader',
+        legalName: formData.businessName || formData.name || undefined,
+        businessName: formData.businessName || undefined,
+        businessCategory: formData.businessCategory || undefined,
+        businessAddress: formData.businessAddress || undefined,
+        tin: formData.tin || undefined,
+        businessActivity: formData.businessCategory || undefined,
+      });
+
+      const uploadData = new FormData();
+      uploadData.append('file', businessProof);
+      uploadData.append('purpose', 'verification_document');
+      const uploaded = await apiPost<any>('/api/upload', uploadData);
+
+      await apiPost('/api/verification/documents', {
+        verificationRequestId: request.request?.id,
+        type: businessProofType,
+        licenseTypeId: businessProofType,
+        fileUrl: uploaded.url,
+        metadata: {
+          businessName: formData.businessName,
+          licenseNumber: formData.tin,
+          authority: businessProofType === 'rdb_certificate' ? 'RDB' : undefined,
+          source: 'trader_profile',
+        },
+      });
+
+      setBusinessProof(null);
+      if (proofInputRef.current) proofInputRef.current.value = '';
+      setVerificationSuccess('Business proof sent. Admin can now approve your trader badge.');
+    } catch (err: any) {
+      setVerificationError(err.message || 'Could not send business proof.');
+    } finally {
+      setVerificationSubmitting(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
       <motion.div
@@ -171,7 +232,78 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
         </div>
 
         <div className="px-8 pt-8">
-          <TrustVerificationPanel userData={userData} role="trader" />
+          <div className="rounded-[2rem] border border-orange-200 dark:border-orange-900/30 bg-orange-50 dark:bg-orange-900/10 p-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-orange-600 text-white flex items-center justify-center">
+                    {accountVerified ? <ShieldCheck size={22} /> : <FileText size={22} />}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-neutral-900 dark:text-white">
+                      Trader Verification
+                    </h3>
+                    <p className="text-xs font-bold text-neutral-500 dark:text-neutral-400">
+                      {accountVerified
+                        ? 'Your business proof is approved and your badge is active.'
+                        : 'Upload one business proof. Admin reviews it and gives the badge.'}
+                    </p>
+                  </div>
+                </div>
+                {verificationError && (
+                  <p className="text-sm font-bold text-red-600 dark:text-red-400">
+                    {verificationError}
+                  </p>
+                )}
+                {verificationSuccess && (
+                  <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                    {verificationSuccess}
+                  </p>
+                )}
+              </div>
+
+              {!accountVerified && (
+                <div className="w-full lg:w-[360px] space-y-3">
+                  <select
+                    value={businessProofType}
+                    onChange={(event) => setBusinessProofType(event.target.value)}
+                    className="w-full rounded-2xl border border-orange-200 dark:border-orange-900/30 bg-white dark:bg-neutral-900 px-4 py-3 text-sm font-bold text-neutral-900 dark:text-white outline-none"
+                  >
+                    <option value="rdb_certificate">RDB certificate</option>
+                    <option value="patente">Patente</option>
+                    <option value="tax_clearance">Tax certificate</option>
+                    <option value="business_license">Business license</option>
+                    <option value="other_business_proof">Other business proof</option>
+                  </select>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <button
+                      type="button"
+                      onClick={() => proofInputRef.current?.click()}
+                      className="rounded-2xl border border-orange-200 dark:border-orange-900/30 bg-white dark:bg-neutral-900 px-4 py-3 text-left text-xs font-black text-neutral-600 dark:text-neutral-300 truncate"
+                    >
+                      {businessProof ? businessProof.name : 'Choose document'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitBusinessProof}
+                      disabled={verificationSubmitting}
+                      className="rounded-2xl bg-orange-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-orange-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {verificationSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                      Send
+                    </button>
+                  </div>
+                  <input
+                    ref={proofInputRef}
+                    type="file"
+                    accept="image/*,.pdf"
+                    className="hidden"
+                    onChange={(event) => setBusinessProof(event.target.files?.[0] || null)}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <form onSubmit={handleSave} className="p-8 space-y-8">

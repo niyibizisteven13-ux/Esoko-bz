@@ -15,6 +15,7 @@ import {
   Hash,
   Award,
   Mail,
+  KeyRound,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLanguage } from '../../context/LanguageContext';
@@ -22,7 +23,8 @@ import { cn } from '../../lib/utils';
 import { emailService } from '../../services/emailService';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { isAccountVerified } from '../../lib/verification';
-import TrustVerificationPanel from '../profile/TrustVerificationPanel';
+import { apiPost } from '../../services/apiClient';
+import { updateStoredAuthUser } from '../../services/sessionService';
 
 interface CustomerProfileProps {
   userData: any;
@@ -47,6 +49,14 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const [emailSending, setEmailSending] = useState(false);
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [localEmailVerified, setLocalEmailVerified] = useState(Boolean(userData?.emailVerified));
+  const emailVerified = localEmailVerified || Boolean(userData?.emailVerified);
+  const profileVerified = accountVerified || emailVerified;
 
   const handleSendWelcomeGuide = async () => {
     if (!userData?.email || emailSending) return;
@@ -76,6 +86,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
       photoURL: userData?.photoURL || '',
       category: userData?.category || 'individual',
     });
+    setLocalEmailVerified(Boolean(userData?.emailVerified));
   }, [userData]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -124,6 +135,50 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
     }
   };
 
+  const requestEmailOtp = async () => {
+    setError('');
+    setVerificationMessage('');
+    setOtpSending(true);
+    try {
+      const response = await apiPost<any>('/api/verification/email-otp/request', {});
+      setOtpSent(true);
+      setVerificationMessage(`OTP sent to ${response.destination || userData?.email || 'your email'}.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send verification OTP.');
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const verifyEmailOtp = async () => {
+    if (!otp.trim()) {
+      setError('Enter the OTP from your email.');
+      return;
+    }
+
+    setError('');
+    setVerificationMessage('');
+    setOtpVerifying(true);
+    try {
+      const response = await apiPost<any>('/api/verification/otp/verify', {
+        channel: 'email',
+        destination: userData?.email,
+        otp: otp.trim(),
+      });
+      if (response?.user) updateStoredAuthUser(response.user);
+      setLocalEmailVerified(true);
+      setOtp('');
+      setOtpSent(false);
+      setVerificationMessage('Email verified. Your customer badge is now active.');
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      setError(err.message || 'Could not verify OTP.');
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
       <motion.div
@@ -140,7 +195,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                   <p className="text-lg font-black text-white tracking-tight">
                     {userData?.name || 'Customer'}
                   </p>
-                  {accountVerified && (
+                  {profileVerified && (
                     <VerifiedBadge
                       level={getCustomerBadgeLevel(userData?.category)}
                       size="xs"
@@ -151,7 +206,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                   )}
                 </div>
               </div>
-              {accountVerified ? (
+              {profileVerified ? (
                 <VerifiedBadge
                   level={getCustomerBadgeLevel(userData?.category)}
                   size="sm"
@@ -169,7 +224,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
               Manage your personal information and account preferences
             </p>
             <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-neutral-400 font-black">
-              <span>{userData?.emailVerified ? 'Email confirmed' : 'Email not confirmed'}</span>
+              <span>{emailVerified ? 'Email confirmed' : 'Email not confirmed'}</span>
               <span className="text-neutral-600">•</span>
               <span>
                 {userData?.category
@@ -181,7 +236,59 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
         </div>
 
         <div className="px-8 pt-8">
-          <TrustVerificationPanel userData={userData} role="customer" />
+          <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-orange-600 text-white flex items-center justify-center">
+                    {emailVerified || accountVerified ? <ShieldCheck size={22} /> : <Mail size={22} />}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-white">Customer Verification</h3>
+                    <p className="text-xs font-bold text-neutral-500">
+                      {emailVerified || accountVerified
+                        ? 'Email verified. Your customer badge is active.'
+                        : 'Verify by email OTP only. No document needed.'}
+                    </p>
+                  </div>
+                </div>
+                {verificationMessage && (
+                  <p className="text-sm font-bold text-emerald-400">{verificationMessage}</p>
+                )}
+              </div>
+
+              {!emailVerified && !accountVerified && (
+                <div className="w-full lg:w-[360px] space-y-3">
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <input
+                      value={otp}
+                      onChange={(event) => setOtp(event.target.value)}
+                      placeholder={otpSent ? 'Enter email OTP' : 'Request OTP first'}
+                      className="rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-sm font-bold text-white outline-none focus:border-orange-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={verifyEmailOtp}
+                      disabled={otpVerifying || !otp.trim()}
+                      className="rounded-2xl bg-orange-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-orange-700 disabled:opacity-40 flex items-center gap-2"
+                    >
+                      {otpVerifying ? <Loader2 className="animate-spin" size={16} /> : <KeyRound size={16} />}
+                      Verify
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={requestEmailOtp}
+                    disabled={otpSending}
+                    className="w-full rounded-2xl border border-white/10 bg-white text-black px-5 py-3 text-xs font-black uppercase tracking-widest hover:bg-orange-500 hover:text-white disabled:opacity-40 flex items-center justify-center gap-2"
+                  >
+                    {otpSending ? <Loader2 className="animate-spin" size={16} /> : <Mail size={16} />}
+                    Send OTP
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <form onSubmit={handleSave} className="p-8 space-y-8">

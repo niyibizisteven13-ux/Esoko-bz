@@ -6,5 +6,8 @@ export const ACCOUNT_VERIFIED_STATUSES = new Set([
 ]);
 
 export function isAccountVerified(user: any) {
-  return ACCOUNT_VERIFIED_STATUSES.has(String(user?.verificationStatus || '').toLowerCase());
+  return (
+    ACCOUNT_VERIFIED_STATUSES.has(String(user?.verificationStatus || '').toLowerCase()) ||
+    Boolean(user?.emailVerified)
+  );
 }
