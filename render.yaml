@@ -26,6 +26,8 @@ services:
         value: /app/data/uploads
       - key: JWT_SECRET
         generateValue: true
+      - key: EMAIL_PROVIDER
+        value: smtp
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT

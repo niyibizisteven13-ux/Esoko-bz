@@ -55,13 +55,16 @@ const configuredSmtpSecure = config.smtp.secure;
 const RESEND_API_KEY = env.RESEND_API_KEY || '';
 const RESEND_FROM = env.RESEND_FROM || SMTP_FROM;
 const SMTP_REQUIRE_AUTH = env.SMTP_REQUIRE_AUTH !== 'false';
+const EMAIL_PROVIDER = String(env.EMAIL_PROVIDER || 'smtp').toLowerCase();
 const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
 const SMTP_SECURE = shouldUseGmailStartTls ? false : SMTP_PORT === 465 ? true : configuredSmtpSecure;
 const SMTP_AUTH_CONFIGURED = Boolean(SMTP_USER && SMTP_PASS);
 const SMTP_CONFIGURED = Boolean(SMTP_HOST && SMTP_FROM && (!SMTP_REQUIRE_AUTH || SMTP_AUTH_CONFIGURED));
-const EMAIL_CONFIGURED = Boolean(RESEND_API_KEY || SMTP_CONFIGURED);
+const RESEND_CONFIGURED = Boolean(RESEND_API_KEY);
+const EMAIL_CONFIGURED =
+  EMAIL_PROVIDER === 'resend' ? RESEND_CONFIGURED : Boolean(SMTP_CONFIGURED || RESEND_CONFIGURED);
 const JWT_SECRET = config.jwtSecret;
 
 dns.setDefaultResultOrder('ipv4first');
@@ -103,6 +106,44 @@ async function sendAppEmail(mailOptions: {
   text?: string;
   [key: string]: any;
 }) {
+  const sendViaResend = async () => {
+    if (!RESEND_CONFIGURED) throw new Error('Resend is not configured');
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM || mailOptions.from,
+        to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        text: mailOptions.text,
+        ...(mailOptions.attachments
+          ? {
+              attachments: mailOptions.attachments.map((attachment: any) => ({
+                filename: attachment.filename,
+                content:
+                  typeof attachment.content === 'string'
+                    ? attachment.content
+                    : Buffer.isBuffer(attachment.content)
+                      ? attachment.content.toString('base64')
+                      : attachment.content,
+                content_type: attachment.contentType || attachment.content_type,
+              })),
+            }
+          : {}),
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.message || payload?.error || `Resend API failed: ${response.status}`);
+    }
+    return payload;
+  };
+
   const sendViaSmtp = async () => {
     assertEmailConfigured('SMTP email');
     if (!SMTP_CONFIGURED) throw new Error('SMTP is not configured');
@@ -113,44 +154,17 @@ async function sendAppEmail(mailOptions: {
     });
   };
 
-  if (RESEND_API_KEY) {
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: RESEND_FROM || mailOptions.from,
-          to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
-          subject: mailOptions.subject,
-          html: mailOptions.html,
-          text: mailOptions.text,
-          ...(mailOptions.attachments
-            ? {
-                attachments: mailOptions.attachments.map((attachment: any) => ({
-                  filename: attachment.filename,
-                  content:
-                    typeof attachment.content === 'string'
-                      ? attachment.content
-                      : Buffer.isBuffer(attachment.content)
-                        ? attachment.content.toString('base64')
-                        : attachment.content,
-                  content_type: attachment.contentType || attachment.content_type,
-                })),
-              }
-            : {}),
-        }),
-      });
+  if (EMAIL_PROVIDER === 'resend') {
+    return sendViaResend();
+  }
 
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(
-          payload?.message || payload?.error || `Resend API failed: ${response.status}`
-        );
-      }
-      return payload;
+  if (EMAIL_PROVIDER === 'auto' && RESEND_CONFIGURED && !SMTP_CONFIGURED) {
+    return sendViaResend();
+  }
+
+  if (EMAIL_PROVIDER === 'auto' && RESEND_CONFIGURED) {
+    try {
+      return await sendViaResend();
     } catch (resendError: any) {
       if (!SMTP_CONFIGURED) throw resendError;
       console.warn(
@@ -168,7 +182,20 @@ async function sendAppEmail(mailOptions: {
     }
   }
 
-  return sendViaSmtp();
+  try {
+    return await sendViaSmtp();
+  } catch (smtpError: any) {
+    if (EMAIL_PROVIDER !== 'auto' || !RESEND_CONFIGURED) throw smtpError;
+    try {
+      return await sendViaResend();
+    } catch (resendError: any) {
+      throw new Error(
+        `SMTP failed: ${smtpError.message || smtpError}; Resend failed: ${
+          resendError.message || resendError
+        }`
+      );
+    }
+  }
 }
 
 const db = initializeDatabase();
@@ -3792,8 +3819,8 @@ app.get('/api/health', (_req, res) => {
     firebase: false,
     email: {
       configured: EMAIL_CONFIGURED,
-      provider: RESEND_API_KEY ? 'resend-with-smtp-fallback' : 'smtp',
-      resendConfigured: Boolean(RESEND_API_KEY),
+      provider: EMAIL_PROVIDER,
+      resendConfigured: RESEND_CONFIGURED,
       smtpConfigured: SMTP_CONFIGURED,
       smtpAuthConfigured: SMTP_AUTH_CONFIGURED,
       smtpRequireAuth: SMTP_REQUIRE_AUTH,
