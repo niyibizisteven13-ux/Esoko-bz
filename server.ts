@@ -63,6 +63,7 @@ const SMTP_TLS_SERVERNAME = env.SMTP_TLS_SERVERNAME || SMTP_HOST;
 const SMTP_CONNECTION_TIMEOUT_MS = Number(env.SMTP_CONNECTION_TIMEOUT_MS || 60000);
 const SMTP_GREETING_TIMEOUT_MS = Number(env.SMTP_GREETING_TIMEOUT_MS || 60000);
 const SMTP_SOCKET_TIMEOUT_MS = Number(env.SMTP_SOCKET_TIMEOUT_MS || 120000);
+const SMTP_FORCE_IPV4 = env.SMTP_FORCE_IPV4 !== 'false';
 const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
@@ -76,15 +77,27 @@ const JWT_SECRET = config.jwtSecret;
 
 dns.setDefaultResultOrder('ipv4first');
 
+function smtpLookup(hostname: string, options: any, callback: any) {
+  if (!SMTP_FORCE_IPV4) {
+    return dns.lookup(hostname, { ...options, family: Number(env.SMTP_FAMILY || 4), all: false }, callback);
+  }
+
+  dns.resolve4(hostname, (resolveError, addresses) => {
+    if (!resolveError && addresses?.length) {
+      return callback(null, addresses[0], 4);
+    }
+
+    dns.lookup(hostname, { ...options, family: 4, all: false }, callback);
+  });
+}
+
 const emailTransporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_SECURE,
   requireTLS: SMTP_REQUIRE_TLS,
   family: Number(env.SMTP_FAMILY || 4),
-  lookup: (hostname: string, options: any, callback: any) => {
-    dns.lookup(hostname, { ...options, family: Number(env.SMTP_FAMILY || 4), all: false }, callback);
-  },
+  lookup: smtpLookup,
   tls: {
     servername: SMTP_TLS_SERVERNAME,
     rejectUnauthorized: env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
