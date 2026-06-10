@@ -24,6 +24,14 @@ import { createOriginGuard, isTrustedDynamicPublicOrigin } from './lib/originGua
 import { createRevenueService } from './lib/revenueService.ts';
 import { normalizeRole } from './lib/roles.ts';
 import { hashPassword, hashToken, verifyPassword } from './lib/security.ts';
+import {
+  bootstrapSqliteAccountsFromPostgres,
+  hydrateSqliteUserFromPostgres,
+  isPostgresAccountStoreEnabled,
+  mirrorAccountToPostgres,
+  mirrorUserAccountsToPostgres,
+  mirrorUserToPostgres,
+} from './lib/postgresAccountStore.ts';
 import { LoginSchema, RegisterSchema } from './src/lib/validation.ts';
 import type { Request, Response, NextFunction, CookieOptions } from 'express';
 import type { Server } from 'http';
@@ -131,6 +139,27 @@ async function sendAppEmail(mailOptions: {
 }
 
 const db = initializeDatabase();
+const accountStoreBackend = isPostgresAccountStoreEnabled() ? 'sqlite+postgres-accounts' : 'sqlite';
+
+function mirrorAccountState(userId: string) {
+  void mirrorUserAccountsToPostgres(db as any, userId).catch((error) => {
+    console.error('Postgres account mirror failed:', error);
+  });
+}
+
+void bootstrapSqliteAccountsFromPostgres(db as any)
+  .then((result) => {
+    if (result.users || result.accounts) {
+      console.log(
+        `Postgres account bootstrap restored ${result.users} users and ${result.accounts} account modes`
+      );
+    }
+  })
+  .catch((error) => {
+    if (isPostgresAccountStoreEnabled()) {
+      console.error('Postgres account bootstrap failed:', error);
+    }
+  });
 const {
   adjustRevenueAccount,
   recordLedgerEntry,
@@ -1328,7 +1357,11 @@ function createAccountMode(userId: string, role: string, data: Record<string, an
     data.category || null
   );
 
-  return normalizeUserAccount(db.prepare('SELECT * FROM user_accounts WHERE id = ?').get(id));
+  const account = normalizeUserAccount(db.prepare('SELECT * FROM user_accounts WHERE id = ?').get(id));
+  void mirrorAccountToPostgres(account).catch((error) => {
+    console.error('Postgres account-mode mirror failed:', error);
+  });
+  return account;
 }
 
 function selectAccountMode(req: any, res: Response, user: any, account: any) {
@@ -1372,6 +1405,7 @@ function selectAccountMode(req: any, res: Response, user: any, account: any) {
   res.cookie('nexus_account_mode', normalizedAccount.id, accountModeCookieOptions);
   res.clearCookie('nexus_team_access', teamAccessCookieOptions);
   const freshUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+  mirrorAccountState(user.id);
   return applyAccountModeToUser(freshUser, normalizedAccount);
 }
 
@@ -3372,6 +3406,7 @@ function syncAuthenticatedVerification(userId: string) {
     WHERE userId = ?
   `
   ).run(userId);
+  mirrorAccountState(userId);
   return {
     verified: true,
     user: db.prepare('SELECT * FROM users WHERE id = ?').get(userId),
@@ -3719,6 +3754,7 @@ app.get('/api/health', (_req, res) => {
     status: database === 'connected' ? 'ok' : 'degraded',
     app: 'Esoko Nexus',
     database,
+    accountStore: accountStoreBackend,
     storage: {
       dataDir: path.resolve(env.DATA_DIR || path.join(process.cwd(), 'data')),
       uploadDir,
@@ -3847,6 +3883,7 @@ app.post('/api/auth/register', validateRequest(RegisterSchema), (req: any, res):
 
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     const activeAccount = getAccountModes(id).find((account: any) => account.role === role);
+    mirrorAccountState(id);
     const selectedUser = selectAccountMode(req, res, user, activeAccount);
     const { accessToken } = issueAuthCookies(req, res, selectedUser);
     const publicUserData = publicUserWithAccess(req, selectedUser);
@@ -3890,13 +3927,16 @@ app.post('/api/auth/register', validateRequest(RegisterSchema), (req: any, res):
   }
 });
 
-app.post('/api/auth/login', validateRequest(LoginSchema), (req: any, res): any => {
+app.post('/api/auth/login', validateRequest(LoginSchema), async (req: any, res): Promise<any> => {
   try {
     const email = String(req.body.email || '')
       .trim()
       .toLowerCase();
     const password = String(req.body.password || '');
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    if (!user) {
+      user = await hydrateSqliteUserFromPostgres(db as any, email);
+    }
 
     if (!user || !verifyPassword(password, user.password)) {
       logSystem(`Failed login attempt for ${email}`, 'warn', 'auth');
@@ -3916,6 +3956,7 @@ app.post('/api/auth/login', validateRequest(LoginSchema), (req: any, res): any =
         user.id
       );
       revokeUserRefreshSessions(user.id);
+      mirrorAccountState(user.id);
     }
 
     let freshUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
@@ -4728,6 +4769,7 @@ app.post('/api/admin/verification-requests/:id/approve', requireRole(['admin', '
     nextStatus,
     note: req.body.note || null,
   });
+  mirrorAccountState(request.userId);
   res.json({ success: true, request: db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id) });
 });
 
@@ -4752,6 +4794,7 @@ app.post('/api/admin/verification-requests/:id/reject', requireRole(['admin', 'm
     ).run(request.accountId);
   }
   recordVerificationAudit(request.userId, request.id, req.user.id, 'admin_rejected', { reason });
+  mirrorAccountState(request.userId);
   res.json({ success: true, request: db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id) });
 });
 
@@ -5689,6 +5732,7 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
   }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  mirrorAccountState(req.params.id);
   res.json({ success: true, user: publicUserWithAccess(req, user) });
 });
 

@@ -6,14 +6,18 @@ export interface ReceiptData {
   transactionId: string;
   date: string;
   amount: number;
-  type: string;
-  method: string;
+  type?: string;
+  method?: string;
   status: string;
   receiptNumber?: string;
   customerName?: string;
   customerEmail?: string;
   traderName?: string;
   traderEmail?: string;
+  traderTin?: string;
+  traderPhone?: string;
+  traderAddress?: string;
+  customerPhone?: string;
   items?: Array<{
     name: string;
     quantity: number;
@@ -60,8 +64,8 @@ export const generateReceipt = (data: ReceiptData, options: { save?: boolean } =
   const details = [
     ['Receipt ID:', data.transactionId],
     ['Date:', data.date],
-    ['Type:', data.type.toUpperCase()],
-    ['Method:', data.method.replace('_', ' ').toUpperCase()],
+    ['Type:', (data.type || 'sale').toUpperCase()],
+    ['Method:', (data.method || data.paymentMethod || 'cash').replace('_', ' ').toUpperCase()],
     ['Status:', data.status.toUpperCase()],
   ];
 
@@ -81,9 +85,13 @@ export const generateReceipt = (data: ReceiptData, options: { save?: boolean } =
   doc.setFont('helvetica', 'bold');
   doc.text('Parties', 20, finalY);
 
-  const parties = [];
-  if (data.businessName) parties.push(['Merchant:', data.businessName]);
-  if (data.tin) parties.push(['TIN:', data.tin]);
+  const parties: string[][] = [];
+  if (data.businessName || data.traderName) parties.push(['Merchant:', data.businessName || data.traderName || '']);
+  if (data.tin || data.traderTin) parties.push(['TIN:', data.tin || data.traderTin || '']);
+  if (data.traderPhone) parties.push(['Merchant phone:', data.traderPhone]);
+  if (data.traderAddress) parties.push(['Merchant address:', data.traderAddress]);
+  if (data.customerName) parties.push(['Customer:', data.customerName]);
+  if (data.customerPhone) parties.push(['Customer phone:', data.customerPhone]);
   if (data.senderName) parties.push(['From:', data.senderName]);
   if (data.recipientName) parties.push(['To:', data.recipientName]);
 
