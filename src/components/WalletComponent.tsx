@@ -696,7 +696,8 @@ Thank you for using the platform.
         userId,
         amount,
         withdrawMethod,
-        `WTH-${Date.now()}`
+        `WTH-${Date.now()}`,
+        { skipBiometric: true }
       );
 
       setGatewayStatus('success');

@@ -572,10 +572,10 @@ export function Marketplace({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
         <div>
           <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
-            Global Marketplace
+            Market
           </h2>
-          <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
-            Direct nexus to verified traders, local shops, and premium supply clusters.
+          <p className="text-neutral-500 font-medium text-sm tracking-tight">
+            Shop, pay, chat, live.
           </p>
         </div>
         <div className="flex bg-[#0a0a0a] p-1 rounded-2xl border border-white/5 shadow-inner shrink-0">
@@ -604,74 +604,85 @@ export function Marketplace({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <button
           type="button"
           onClick={() => setNearPaymentTarget({})}
-          className="p-5 rounded-[2rem] bg-orange-600 text-white text-left shadow-xl shadow-orange-900/30 hover:bg-orange-700 transition-all flex items-center justify-between gap-4"
+          className="p-4 rounded-2xl bg-orange-600 text-white text-left shadow-xl shadow-orange-900/30 hover:bg-orange-700 transition-all flex items-center justify-between gap-3"
         >
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-white/60 mb-2">
-              Near Payment
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/60">
+              Pay
             </p>
-            <h3 className="text-xl font-black leading-tight">Pay by NFC, QR, MoMo, Airtel, code</h3>
-            <p className="text-xs font-bold text-white/70 mt-1">
-              One self-contained payment doorway for every phone and every merchant setup.
-            </p>
+            <h3 className="mt-1 text-sm md:text-base font-black leading-tight">Near Pay</h3>
           </div>
-          <div className="w-14 h-14 rounded-2xl bg-black/20 flex items-center justify-center shrink-0">
-            <Nfc size={28} />
+          <div className="w-11 h-11 rounded-xl bg-black/20 flex items-center justify-center shrink-0">
+            <Nfc size={22} />
           </div>
         </button>
         <button
           type="button"
           onClick={openTraderMap}
-          className="p-5 rounded-[2rem] bg-blue-600 text-white text-left hover:bg-blue-700 transition-all flex items-center justify-between gap-4 shadow-xl shadow-blue-950/30"
+          className="p-4 rounded-2xl bg-blue-600 text-white text-left hover:bg-blue-700 transition-all flex items-center justify-between gap-3 shadow-xl shadow-blue-950/30"
         >
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-white/60 mb-2">
-              Find Traders
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/60">
+              Map
             </p>
-            <h3 className="text-lg font-black leading-tight">Map & directions</h3>
-            <p className="text-xs font-bold text-white/70 mt-1">
-              See nearby mapped shops and navigate.
-            </p>
+            <h3 className="mt-1 text-sm md:text-base font-black leading-tight">Nearby</h3>
           </div>
-          <MapIcon size={28} className="shrink-0" />
+          <MapIcon size={22} className="shrink-0" />
         </button>
         <button
           type="button"
           onClick={() => setSearchMode('shops')}
-          className="p-5 rounded-[2rem] bg-[#0a0a0a] border border-white/5 text-left hover:border-orange-500/30 transition-all flex items-center justify-between gap-4"
+          className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-orange-500/30 transition-all flex items-center justify-between gap-3"
         >
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-orange-500 mb-2">
-              Live Market
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-500">
+              Live
             </p>
-            <h3 className="text-lg font-black text-white leading-tight">Join trader streams</h3>
-            <p className="text-xs font-bold text-neutral-500 mt-1">
-              Chat, view, call, and buy live.
-            </p>
+            <h3 className="mt-1 text-sm md:text-base font-black text-white leading-tight">
+              {liveSessions.length} online
+            </h3>
           </div>
-          <Radio size={28} className="text-orange-500 shrink-0" />
+          <Radio size={22} className="text-orange-500 shrink-0" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowScanner(true)}
+          className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-emerald-500/30 transition-all flex items-center justify-between gap-3"
+        >
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-400">
+              Scan
+            </p>
+            <h3 className="mt-1 text-sm md:text-base font-black text-white leading-tight">QR</h3>
+          </div>
+          <ShoppingCart size={22} className="text-emerald-400 shrink-0" />
         </button>
       </div>
 
       {liveSessions.length > 0 && (
-        <div className="rounded-[2rem] bg-red-500/10 border border-red-500/20 p-4 md:p-5">
+        <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4 md:p-5">
           <div className="flex items-center justify-between gap-3 mb-4">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-red-400">
-                Live now
-              </p>
-              <h3 className="text-lg font-black text-white">Traders selling live</h3>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="h-10 w-10 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0">
+                <Radio size={20} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-400">
+                  Live now
+                </p>
+                <h3 className="text-base font-black text-white truncate">Tap to join</h3>
+              </div>
             </div>
             <span className="flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white">
               <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
               {liveSessions.length} live
             </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
             {liveSessions.map((session) => {
               const trader = traders[session.traderId] || session;
               const pinnedProduct = products.find((item) => item.id === session.pinnedProductId);
@@ -687,7 +698,7 @@ export function Marketplace({
                       products: getTraderProducts(session.traderId),
                     })
                   }
-                  className="text-left rounded-2xl bg-black/40 border border-white/10 p-4 hover:border-red-400/50 transition-all"
+                  className="min-w-[260px] max-w-[320px] flex-1 text-left rounded-2xl bg-black/40 border border-white/10 p-4 hover:border-red-400/50 transition-all"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">

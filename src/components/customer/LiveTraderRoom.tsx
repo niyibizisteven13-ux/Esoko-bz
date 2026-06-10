@@ -17,6 +17,7 @@ import { cn, formatCurrency } from '../../lib/utils';
 import { auth } from '../../firebase';
 import { addDoc, collection, serverTimestamp } from '../../services/firestoreBridge';
 import { subscribeToLiveUpdates } from '../../services/liveSyncService';
+import { useNotifications } from '../../context/NotificationContext';
 
 const db = undefined;
 
@@ -44,12 +45,14 @@ export default function LiveTraderRoom({
   onClose,
   onBuy,
 }: LiveTraderRoomProps) {
+  const { showToast } = useNotifications();
   const videoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const signalCursorRef = useRef('');
+  const showToastRef = useRef(showToast);
   const [cameraOn, setCameraOn] = useState(false);
   const [watching, setWatching] = useState(false);
   const [remoteConnected, setRemoteConnected] = useState(false);
@@ -65,6 +68,11 @@ export default function LiveTraderRoom({
       createdAt: new Date().toISOString(),
     },
   ]);
+  const [joinedLiveRoom, setJoinedLiveRoom] = useState(false);
+
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   const featuredProducts =
     product || products.length === 0 ? [product].filter(Boolean) : products.slice(0, 4);
@@ -241,10 +249,14 @@ export default function LiveTraderRoom({
   useEffect(() => {
     if (!session?.id) return;
     const joinRoom = async () => {
-      await fetch(`/api/live/sessions/${session.id}/participants`, {
+      const res = await fetch(`/api/live/sessions/${session.id}/participants`, {
         method: 'POST',
         credentials: 'include',
       });
+      if (res.ok) {
+        setJoinedLiveRoom(true);
+        showToastRef.current('Joined live room. You can chat now.', 'success');
+      }
     };
     joinRoom();
     loadLiveMessages();
@@ -348,8 +360,8 @@ export default function LiveTraderRoom({
                 {traderName}
               </h3>
               <p className="mt-4 max-w-md text-sm text-neutral-400 font-medium leading-relaxed">
-                Start camera and microphone to join the live trader call. When the trader accepts,
-                both sides can see and hear each other.
+                You are inside the room now. Chat instantly, watch the trader, or turn on camera
+                when you want to speak face to face.
               </p>
               {cameraError && (
                 <p className="mt-4 max-w-md rounded-2xl bg-red-500/10 border border-red-500/20 p-3 text-xs font-bold text-red-400">
@@ -362,7 +374,7 @@ export default function LiveTraderRoom({
                   onClick={startWatching}
                   className="mt-5 rounded-2xl bg-red-600 px-6 py-4 text-xs font-black uppercase tracking-widest text-white shadow-xl shadow-red-900/40 hover:bg-red-700"
                 >
-                  Watch trader live
+                  Watch live
                 </button>
               )}
             </div>
@@ -372,7 +384,7 @@ export default function LiveTraderRoom({
             <div className="absolute inset-x-0 top-24 mx-auto max-w-md rounded-2xl bg-black/70 border border-white/10 p-4 text-center">
               <p className="text-sm font-black text-white">Waiting for trader video...</p>
               <p className="text-xs text-neutral-400 mt-1">
-                Keep this room open while the trader accepts your live call.
+                Chat is live already. Video appears as soon as the trader stream is available.
               </p>
             </div>
           )}
@@ -381,7 +393,7 @@ export default function LiveTraderRoom({
             <div className="flex items-center gap-2 rounded-2xl bg-black/60 backdrop-blur border border-white/10 px-4 py-2">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               <span className="text-[10px] font-black uppercase tracking-widest text-white">
-                Live shop
+                {joinedLiveRoom ? 'Joined live' : 'Live shop'}
               </span>
               <span className="text-[10px] font-bold text-neutral-400 flex items-center gap-1">
                 <Users size={12} /> {participants.length || session?.participantCount || 1}

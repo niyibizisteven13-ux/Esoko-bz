@@ -6,6 +6,11 @@ export interface EmailPayload {
     subject: string;
     text?: string;
     html: string;
+    attachments?: Array<{
+      filename: string;
+      contentBase64: string;
+      contentType: string;
+    }>;
   };
   metadata?: any;
 }

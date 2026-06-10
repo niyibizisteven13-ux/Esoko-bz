@@ -176,12 +176,14 @@ export const walletService = {
     userId: string,
     amount: number,
     method: string,
-    reference?: string
+    reference?: string,
+    options?: { skipBiometric?: boolean }
   ): Promise<WithdrawalResponse> => {
-    // Authenticate with biometric first
-    const bioResult = await walletService.authenticateBiometricForTransaction();
-    if (!bioResult.authenticated) {
-      throw new Error(bioResult.error || 'Biometric authentication required for withdrawal');
+    if (!options?.skipBiometric) {
+      const bioResult = await walletService.authenticateBiometricForTransaction();
+      if (!bioResult.authenticated) {
+        throw new Error(bioResult.error || 'Biometric authentication required for withdrawal');
+      }
     }
 
     const idempotencyKey = reference || `withdraw-${userId}-${Date.now()}`;

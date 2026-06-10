@@ -207,6 +207,39 @@ function publishLiveSync(payload: Record<string, any>) {
   }
 }
 
+function createNotificationForUser(input: {
+  userId: string;
+  title?: string | null;
+  message: string;
+  type?: string;
+  subType?: string;
+  metadata?: Record<string, any> | null;
+}) {
+  const id = uuidv4();
+  db.prepare(
+    `
+    INSERT INTO notifications (id, userId, title, message, type, subType, data, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `
+  ).run(
+    id,
+    input.userId,
+    input.title || null,
+    input.message,
+    input.type || 'info',
+    input.subType || 'system',
+    input.metadata ? JSON.stringify(input.metadata) : null
+  );
+  publishLiveSync({
+    method: 'POST',
+    path: '/api/notifications',
+    collection: 'notifications',
+    actorUserId: input.userId,
+    notificationId: id,
+  });
+  return id;
+}
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -296,14 +329,14 @@ const upload = multer({
   },
 });
 
-app.use(
-  '/uploads',
-  express.static(uploadDir, {
-    maxAge: isProduction ? '7d' : 0,
-    etag: true,
-    lastModified: true,
-  })
-);
+app.get('/uploads/:filename', (req, res): any => {
+  const filename = path.basename(String(req.params.filename || ''));
+  if (!filename || !isPublicUpload(filename)) {
+    return res.status(403).json({ error: 'This upload requires authenticated access' });
+  }
+  res.setHeader('Cache-Control', isProduction ? 'public, max-age=604800' : 'no-cache');
+  sendUploadFile(res, filename);
+});
 
 // Security middleware
 app.use(
@@ -506,6 +539,28 @@ function publicUser(user: any) {
   };
 }
 
+function publicDirectoryUser(user: any) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    uid: user.id,
+    name: user.name,
+    displayName: user.name,
+    role: user.role,
+    businessName: user.businessName || null,
+    businessCategory: user.businessCategory || user.category || null,
+    category: user.category || null,
+    verificationStatus: user.verificationStatus || 'pending',
+    tier: user.tier || 'free',
+    profilePhoto: user.profilePhoto || null,
+    location: user.location || null,
+  };
+}
+
+function canManageUsers(user: any) {
+  return ['admin', 'manager'].includes(user?.role);
+}
+
 function stableHash(value: string) {
   return crypto.createHash('sha256').update(value.trim().toLowerCase()).digest('hex');
 }
@@ -516,10 +571,65 @@ function maskSensitive(value: string) {
   return `${clean.slice(0, 2)}${'*'.repeat(Math.max(4, clean.length - 6))}${clean.slice(-4)}`;
 }
 
+function uploadFilenameFromUrl(fileUrl: string) {
+  if (!fileUrl || (!fileUrl.startsWith('/uploads/') && !fileUrl.startsWith('/api/uploads/'))) {
+    return null;
+  }
+  return path.basename(fileUrl);
+}
+
 function localUploadPath(fileUrl: string) {
-  if (!fileUrl || !fileUrl.startsWith('/uploads/')) return null;
-  const filename = path.basename(fileUrl);
+  const filename = uploadFilenameFromUrl(fileUrl);
+  if (!filename) return null;
   return path.join(uploadDir, filename);
+}
+
+function isPublicUpload(filename: string) {
+  const ext = path.extname(filename).toLowerCase();
+  return ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.webm', '.ogg'].includes(ext);
+}
+
+function userCanAccessUpload(req: any, filename: string) {
+  if (canManageUsers(req.user)) return true;
+  const publicPath = `/uploads/${filename}`;
+  const privatePath = `/api/uploads/${filename}`;
+  const row = db
+    .prepare(
+      `
+      SELECT id FROM verification_documents
+      WHERE (fileUrl = ? OR fileUrl = ?) AND userId = ?
+      LIMIT 1
+    `
+    )
+    .get(publicPath, privatePath, req.user.id) as any;
+  return Boolean(row);
+}
+
+function privateUploadUrl(filenameOrUrl: string) {
+  const filename = uploadFilenameFromUrl(filenameOrUrl) || path.basename(filenameOrUrl);
+  return `/api/uploads/${filename}`;
+}
+
+function publicUploadUrl(filename: string) {
+  return `/uploads/${filename}`;
+}
+
+function sendUploadFile(res: Response, filename: string) {
+  const filePath = path.join(uploadDir, path.basename(filename));
+  if (!fs.existsSync(filePath)) {
+    res.status(404).json({ error: 'File not found' });
+    return;
+  }
+  res.sendFile(filePath);
+}
+
+function normalizeVerificationFileUrl(fileUrl: string) {
+  if (!fileUrl || (!fileUrl.startsWith('/uploads/') && !fileUrl.startsWith('/api/uploads/'))) {
+    return null;
+  }
+  const filename = uploadFilenameFromUrl(fileUrl);
+  if (!filename || !fs.existsSync(path.join(uploadDir, filename))) return null;
+  return privateUploadUrl(filename);
 }
 
 function fileHashForUrl(fileUrl: string) {
@@ -851,6 +961,60 @@ function recomputeVerificationRequest(requestId: string) {
   const flags: any[] = [];
   let score = 20;
 
+  if (request.role === 'trader' || request.role === 'organization') {
+    if (documents.length === 0) {
+      flags.push({
+        severity: 'high',
+        code: 'missing_business_proof',
+        message: 'Upload one business proof document such as RDB certificate, Patente, tax certificate, license, or other official business proof.',
+      });
+      score = 30;
+    } else {
+      const documentAverage = documents.reduce((sum, doc) => sum + Number(doc.autoScore || 0), 0) / documents.length;
+      score = Math.max(60, Math.min(84, Math.round(55 + documentAverage * 0.35)));
+      const duplicateDoc = documents.find((doc) =>
+        parseMetadata(doc.autoReasons).some((reason: string) =>
+          String(reason).toLowerCase().includes('same file has already been uploaded')
+        )
+      );
+      if (duplicateDoc) {
+        flags.push({
+          severity: 'high',
+          code: 'duplicate_business_proof',
+          message: 'The uploaded business proof appears to match a file already submitted elsewhere.',
+        });
+        score = Math.min(score, 50);
+      }
+    }
+
+    const autoDecision = flags.some((flag) => flag.severity === 'high')
+      ? 'needs_review'
+      : 'needs_review';
+    const riskStatus = 'pending';
+    replaceRiskFlags(request.userId, requestId, flags);
+    db.prepare(
+      `
+      UPDATE verification_requests
+      SET autoScore = ?, autoDecision = ?, riskStatus = ?, status = CASE
+            WHEN status = 'approved' THEN status
+            WHEN ? = 0 THEN 'submitted'
+            ELSE 'needs_review'
+          END,
+          updatedAt = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `
+    ).run(score, autoDecision, riskStatus, documents.length, requestId);
+
+    recordVerificationAudit(request.userId, requestId, null, 'auto_scored', {
+      score,
+      autoDecision,
+      riskStatus,
+      flags: flags.map((flag) => flag.code),
+      simplifiedTraderReview: true,
+    });
+    return db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(requestId);
+  }
+
   if (request.identityNumberHash) {
     score += 15;
     const duplicateIdentity = db
@@ -1140,7 +1304,7 @@ function createAccountMode(userId: string, role: string, data: Record<string, an
   const id = uuidv4();
   const verificationStatus = 'pending';
   const status = 'active';
-  const onboardingComplete = normalizedRole === 'agent' ? 1 : 0;
+  const onboardingComplete = 1;
 
   db.prepare(
     `
@@ -2432,6 +2596,9 @@ app.post('/api/live/sessions/:id/participants', authenticate, (req: any, res): a
   if (!session) return res.status(404).json({ error: 'Live session not found' });
   const role = req.user.id === session.traderId ? 'trader' : 'viewer';
   const displayName = req.user.businessName || req.user.name || req.user.email || 'Guest';
+  const existingParticipant = db
+    .prepare('SELECT id FROM live_participants WHERE sessionId = ? AND userId = ?')
+    .get(req.params.id, req.user.id);
   db.prepare(
     `
     INSERT INTO live_participants (id, sessionId, userId, displayName, role, joinedAt, lastSeenAt)
@@ -2456,6 +2623,20 @@ app.post('/api/live/sessions/:id/participants', authenticate, (req: any, res): a
     collection: 'live_participants',
     actorUserId: req.user.id,
   });
+  if (role === 'viewer' && !existingParticipant) {
+    createNotificationForUser({
+      userId: session.traderId,
+      title: 'New live customer',
+      message: `${displayName} joined your live market room.`,
+      type: 'info',
+      subType: 'live',
+      metadata: {
+        sessionId: req.params.id,
+        viewerId: req.user.id,
+        href: `/trader?tab=chat&liveSession=${req.params.id}`,
+      },
+    });
+  }
   res.json({
     success: true,
     participant: { sessionId: req.params.id, userId: req.user.id, displayName, role },
@@ -2532,6 +2713,21 @@ app.post('/api/live/sessions/:id/messages', authenticate, (req: any, res): any =
     collection: 'live_messages',
     actorUserId: req.user.id,
   });
+  if (req.user.id !== (session as any).traderId) {
+    const senderName = req.user.businessName || req.user.name || req.user.email || 'Customer';
+    createNotificationForUser({
+      userId: (session as any).traderId,
+      title: 'Live message',
+      message: `${senderName}: ${message.slice(0, 120)}`,
+      type: 'info',
+      subType: 'live',
+      metadata: {
+        sessionId: req.params.id,
+        senderId: req.user.id,
+        href: `/trader?tab=chat&liveSession=${req.params.id}`,
+      },
+    });
+  }
   res.json({
     success: true,
     message: {
@@ -3559,7 +3755,7 @@ app.post('/api/auth/register', validateRequest(RegisterSchema), (req: any, res):
     const id = uuidv4();
     const appNumber = generateAppNumber();
     const verificationStatus = 'pending';
-    const onboardingComplete = role === 'agent' ? 1 : 0;
+    const onboardingComplete = 1;
 
     const surveyResponses = Array.isArray(req.body.surveyResponses) ? req.body.surveyResponses : [];
 
@@ -3968,6 +4164,7 @@ app.get('/api/verification/contact-status', authenticate, (req: any, res): any =
     .get(req.user.id) as any;
   res.json({
     success: true,
+    email: req.user.email || identity?.email || null,
     emailVerified: Boolean(req.user.emailVerified || identity?.emailVerified),
     whatsappVerified: Boolean(identity?.phoneVerified),
     verificationStatus: req.user.verificationStatus || 'pending',
@@ -4289,7 +4486,8 @@ app.post('/api/verification/documents', authenticate, (req: any, res): any => {
   const requestId = String(req.body.verificationRequestId || '').trim();
   const type = String(req.body.type || '').trim();
   const licenseTypeId = String(req.body.licenseTypeId || req.body.licenseType || type || '').trim();
-  const fileUrl = String(req.body.fileUrl || req.body.url || '').trim();
+  const rawFileUrl = String(req.body.fileUrl || req.body.url || '').trim();
+  const fileUrl = normalizeVerificationFileUrl(rawFileUrl);
   if (!type) return res.status(400).json({ error: 'Document type is required' });
   if (!fileUrl) return res.status(400).json({ error: 'Document file URL is required' });
 
@@ -5177,6 +5375,10 @@ app.post('/api/transaction-email', authenticate, async (req: any, res): Promise<
 });
 
 app.get('/api/users', authenticate, (req: any, res): any => {
+  if (!canManageUsers(req.user)) {
+    return res.status(403).json({ error: 'User listing requires admin or manager access' });
+  }
+
   const { limit, offset } = parseLimitOffset(req.query);
   const role = req.query.role ? normalizeRole(req.query.role) : null;
   const status =
@@ -5238,24 +5440,35 @@ app.get('/api/users/search', authenticate, (req: any, res): any => {
   const term = String(req.query.query || req.query.q || '').trim();
   if (!term) return res.json({ success: true, users: [] });
   const like = `%${term}%`;
+  const isPrivileged = canManageUsers(req.user);
   const users = db
     .prepare(
       `
     SELECT * FROM users
-    WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? OR appNumber LIKE ?
+    WHERE (name LIKE ? OR email LIKE ? OR phone LIKE ? OR appNumber LIKE ?)
+      ${isPrivileged ? '' : "AND role = 'trader'"}
     ORDER BY name ASC
     LIMIT 20
   `
     )
     .all(like, like, like, like)
-    .map(publicUser);
+    .map(isPrivileged ? publicUser : publicDirectoryUser);
   res.json({ success: true, users });
 });
 
 app.get('/api/users/:id', authenticate, async (req: any, res): Promise<any> => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  if (req.user.id === req.params.id) {
+  const isSelf = req.user.id === req.params.id;
+  const isPrivileged = canManageUsers(req.user) || req.user.role === 'agent';
+  if (!isSelf && !isPrivileged) {
+    const publicProfile = publicDirectoryUser(user);
+    if (publicProfile?.role === 'trader') {
+      return res.json({ success: true, user: publicProfile });
+    }
+    return res.status(403).json({ error: 'You can only view your own account' });
+  }
+  if (isSelf) {
     void maybeSendVerificationReminder(req, user).catch((emailError) => {
       console.error('Verification reminder failed:', emailError);
     });
@@ -5280,7 +5493,12 @@ app.post('/api/upload', authenticate, (req: any, res): any => {
       return;
     }
 
-    const fileUrl = `/uploads/${req.file.filename}`;
+    const purpose = String(req.body.purpose || req.query.purpose || '').toLowerCase();
+    const isVerificationUpload =
+      purpose.includes('verification') || req.file.mimetype === 'application/pdf';
+    const fileUrl = isVerificationUpload
+      ? privateUploadUrl(req.file.filename)
+      : publicUploadUrl(req.file.filename);
     res.json({
       success: true,
       url: fileUrl,
@@ -5293,6 +5511,15 @@ app.post('/api/upload', authenticate, (req: any, res): any => {
   });
 });
 
+app.get('/api/uploads/:filename', authenticate, (req: any, res): any => {
+  const filename = path.basename(String(req.params.filename || ''));
+  if (!filename) return res.status(400).json({ error: 'File name is required' });
+  if (!userCanAccessUpload(req, filename)) {
+    return res.status(403).json({ error: 'You are not authorized to access this upload' });
+  }
+  sendUploadFile(res, filename);
+});
+
 app.put('/api/users/:id', authenticate, (req: any, res): any => {
   if (req.user.id !== req.params.id && !['admin', 'manager', 'agent'].includes(req.user.role)) {
     return res.status(403).json({ error: 'You can only update your own account' });
@@ -5302,7 +5529,27 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
   if (!existingUser) return res.status(404).json({ error: 'User not found' });
 
   const rawBody = req.body.data || req.body || {};
-  const body = applyFieldTransforms(publicUser(existingUser) || {}, rawBody);
+  const isPrivilegedUpdate = canManageUsers(req.user);
+  const requestedRole = String(rawBody.role || '').trim();
+  const canSelfChooseRole =
+    req.user.id === req.params.id &&
+    ['unregistered', ''].includes(String(existingUser.role || '').trim()) &&
+    ['customer', 'trader'].includes(requestedRole);
+  const protectedFields = new Set([
+    'tier',
+    'role',
+    'verificationStatus',
+    'walletBalance',
+    'loyaltyPoints',
+    'status',
+    'maintenanceMode',
+    'emailVerified',
+  ]);
+  if (canSelfChooseRole) protectedFields.delete('role');
+  const sanitizedBody = isPrivilegedUpdate
+    ? rawBody
+    : Object.fromEntries(Object.entries(rawBody).filter(([key]) => !protectedFields.has(key)));
+  const body = applyFieldTransforms(publicUser(existingUser) || {}, sanitizedBody);
   const knownFields = new Set([
     'name',
     'phone',
@@ -5323,7 +5570,7 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
   ]);
   const metadataUpdates = Object.fromEntries(
     Object.entries(rawBody).filter(
-      ([key]) => !knownFields.has(key) && key !== 'uid' && key !== 'id'
+      ([key]) => !knownFields.has(key) && key !== 'uid' && key !== 'id' && !protectedFields.has(key)
     )
   );
   const nextMetadata = {
@@ -5363,11 +5610,11 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
     body.location ?? null,
     body.tin ?? null,
     body.category ?? null,
-    body.tier ?? null,
-    body.role ?? null,
-    body.verificationStatus ?? null,
-    body.walletBalance ?? null,
-    body.loyaltyPoints ?? null,
+    isPrivilegedUpdate ? (body.tier ?? null) : null,
+    isPrivilegedUpdate || canSelfChooseRole ? (body.role ?? null) : null,
+    isPrivilegedUpdate ? (body.verificationStatus ?? null) : null,
+    isPrivilegedUpdate ? (body.walletBalance ?? null) : null,
+    isPrivilegedUpdate ? (body.loyaltyPoints ?? null) : null,
     body.onboardingComplete === undefined ? null : Number(Boolean(body.onboardingComplete)),
     body.transactionPin ?? null,
     body.biometricEnabled === undefined ? null : Number(Boolean(body.biometricEnabled)),
@@ -5377,7 +5624,7 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
   );
 
   if (req.user.id === req.params.id) {
-    const targetRole = body.role ? normalizeRole(body.role) : null;
+    const targetRole = (isPrivilegedUpdate || canSelfChooseRole) && body.role ? normalizeRole(body.role) : null;
     let account =
       (targetRole
         ? (db
@@ -6081,18 +6328,18 @@ app.get('/api/transactions', authenticate, (req: any, res): any => {
     String(req.query.sortOrder || req.query.order).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const conditions: string[] = [];
   const params: any[] = [];
+  const isPrivileged = canManageUsers(req.user);
+  const requestedUserId = req.query.userId ? String(req.query.userId) : req.user.id;
 
-  if (req.query.userId) {
+  if (!isPrivileged && requestedUserId !== req.user.id) {
+    return res.status(403).json({ error: 'You can only view your own transactions' });
+  }
+
+  if (!isPrivileged || req.query.userId) {
     conditions.push(
       '(userId = ? OR senderId = ? OR recipientId = ? OR customerId = ? OR traderId = ?)'
     );
-    params.push(
-      req.query.userId,
-      req.query.userId,
-      req.query.userId,
-      req.query.userId,
-      req.query.userId
-    );
+    params.push(requestedUserId, requestedUserId, requestedUserId, requestedUserId, requestedUserId);
   }
   if (req.query.type) {
     conditions.push('type = ?');
@@ -6254,6 +6501,7 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
   if (amount <= 0) return res.status(400).json({ error: 'Amount must be positive' });
 
   const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+  if (!user) return res.status(404).json({ error: 'User not found' });
   const userTier = user?.tier || 'free';
   const feeCalc = calculateFeeAmount('deposit', amount, userTier);
   if (feeCalc.netAmount < 0)
@@ -6261,6 +6509,50 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
 
   const walletTransactionId = uuidv4();
   const transactionRecordId = uuidv4();
+  const canCreditImmediately = ['admin', 'agent'].includes(req.user.role);
+  if (!canCreditImmediately) {
+    const result = db.transaction(() => {
+      db.prepare(
+        `
+        INSERT INTO wallet_transactions (id, userId, type, amount, description, status, createdAt)
+        VALUES (?, ?, 'deposit', ?, ?, 'pending', CURRENT_TIMESTAMP)
+      `
+      ).run(
+        walletTransactionId,
+        userId,
+        amount,
+        `Pending deposit via ${req.body.method || 'external'}`
+      );
+      db.prepare(
+        `
+        INSERT INTO transactions (id, userId, amount, type, status, description, reference, transactionCode, feeAmount, netAmount, createdAt, updatedAt, timestamp)
+        VALUES (?, ?, ?, 'deposit', 'pending', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+      ).run(
+        transactionRecordId,
+        userId,
+        amount,
+        `Pending deposit via ${req.body.method || 'external'}`,
+        req.body.reference || walletTransactionId,
+        txCode('DEP'),
+        feeCalc.totalFee,
+        feeCalc.netAmount
+      );
+      return {
+        success: true,
+        pending: true,
+        transactionId: transactionRecordId,
+        grossAmount: amount,
+        fee: feeCalc.totalFee,
+        netAmount: feeCalc.netAmount,
+        message: 'Deposit recorded as pending. Funds will be credited after confirmation.',
+      };
+    })();
+
+    idempotency.saveResponse(userId, idemKey, req.originalUrl, result);
+    return res.status(202).json(result);
+  }
+
   const result = db.transaction(() => {
     const balanceUpdate = db
       .prepare(
@@ -7434,21 +7726,14 @@ app.get('/api/notifications', authenticate, (req: any, res): any => {
 });
 
 app.post('/api/notifications', authenticate, (req: any, res): any => {
-  const id = uuidv4();
-  db.prepare(
-    `
-    INSERT INTO notifications (id, userId, title, message, type, subType, data, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `
-  ).run(
-    id,
-    req.body.userId || req.user.id,
-    req.body.title || null,
-    req.body.message,
-    req.body.type || 'info',
-    req.body.subType || 'system',
-    req.body.metadata ? JSON.stringify(req.body.metadata) : null
-  );
+  const id = createNotificationForUser({
+    userId: req.body.userId || req.user.id,
+    title: req.body.title || null,
+    message: req.body.message,
+    type: req.body.type || 'info',
+    subType: req.body.subType || 'system',
+    metadata: req.body.metadata || null,
+  });
   res.json({ success: true, id });
 });
 
@@ -8806,6 +9091,9 @@ app.post('/api/emails', authenticate, async (req: any, res): Promise<any> => {
   const subject = String(req.body.message?.subject || '').trim();
   const html = String(req.body.message?.html || '').trim();
   const text = req.body.message?.text ? String(req.body.message.text).trim() : undefined;
+  const rawAttachments = Array.isArray(req.body.message?.attachments)
+    ? req.body.message.attachments
+    : [];
 
   // Email validation regex
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -8826,12 +9114,27 @@ app.post('/api/emails', authenticate, async (req: any, res): Promise<any> => {
   }
 
   try {
+    const attachments = rawAttachments.slice(0, 3).map((attachment: any) => {
+      const filename = path.basename(String(attachment.filename || 'attachment.pdf'));
+      const contentBase64 = String(attachment.contentBase64 || attachment.content || '').trim();
+      const contentType = String(attachment.contentType || 'application/octet-stream');
+      const content = Buffer.from(contentBase64, 'base64');
+      if (!content.length || content.length > 5 * 1024 * 1024) {
+        throw new Error('Each email attachment must be between 1 byte and 5MB.');
+      }
+      return {
+        filename,
+        content,
+        contentType,
+      };
+    });
     const mailOptions = {
       from: SMTP_FROM,
       to,
       subject,
       html,
       ...(text ? { text } : {}),
+      ...(attachments.length ? { attachments } : {}),
     };
 
     const info = await sendAppEmail(mailOptions);

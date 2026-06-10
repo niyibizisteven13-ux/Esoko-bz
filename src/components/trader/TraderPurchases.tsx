@@ -37,6 +37,18 @@ import { emailService, sendEmail } from '../../services/emailService';
 import { autoReceiptService } from '../../services/autoReceiptService';
 import { createPurchase } from '../../services/purchaseService';
 
+async function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',')[1] : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 const QRCodeSVG = React.lazy(() =>
   import('qrcode.react').then((module) => ({ default: module.QRCodeSVG }))
 );
@@ -48,6 +60,7 @@ interface Purchase {
   productId: string;
   quantity: number;
   amount: number;
+  totalAmount?: number;
   vat: number;
   status: 'pending' | 'approved' | 'rejected';
   deliveryStatus?: 'Pending' | 'Shipped' | 'Delivered' | 'N/A';
@@ -383,15 +396,44 @@ export default function TraderPurchases({
     setError(null);
     try {
       const text = receiptText(purchase);
+      const { generateReceipt } = await import('../../lib/pdfGenerator');
+      const receiptBlob = generateReceipt(
+        {
+          transactionId: purchase.id,
+          receiptNumber: `RCP-${purchase.id.slice(-8).toUpperCase()}`,
+          date: toDate(purchase.timestamp).toLocaleString(),
+          traderName: traderName || 'ESOKO trader',
+          traderTin,
+          traderPhone,
+          traderAddress,
+          customerName: purchase.customerName || 'Customer',
+          customerPhone: purchase.customerPhone,
+          customerEmail: purchase.customerEmail,
+          productName: purchase.productName || 'Manual sale',
+          quantity: purchase.quantity,
+          amount: Number(purchase.amount || purchase.totalAmount || 0),
+          paymentMethod: purchase.paymentMethod || 'cash',
+          status: purchase.status,
+        },
+        { save: false }
+      );
+      const contentBase64 = await blobToBase64(receiptBlob);
       await sendEmail({
         to: purchase.customerEmail,
         message: {
           subject: `Receipt from ${traderName || 'ESOKO trader'} - ${purchase.id.slice(0, 8)}`,
           text,
           html: `<pre style="font-family:Arial,sans-serif;white-space:pre-wrap;line-height:1.6">${text}</pre>`,
+          attachments: [
+            {
+              filename: `ESOKO_Receipt_${purchase.id}.pdf`,
+              contentBase64,
+              contentType: 'application/pdf',
+            },
+          ],
         },
       });
-      showToast('Receipt emailed to customer.', 'success');
+      showToast('Receipt emailed to customer with PDF attached.', 'success');
     } catch (err: any) {
       setError(err.message || 'Failed to send receipt email.');
     } finally {
@@ -441,6 +483,26 @@ export default function TraderPurchases({
 
       if (saleForm.wantsReceipt && saleForm.customerPhone) {
         handleSendWhatsApp({
+          id: response.purchaseId || response.id || 'receipt',
+          customerId: '',
+          traderId: '',
+          productId: selectedProduct.id,
+          quantity: saleQuantity,
+          amount: saleTotal,
+          vat: 0,
+          status: 'approved',
+          paymentMethod: saleForm.paymentMethod,
+          timestamp: new Date().toISOString(),
+          customerName: saleForm.customerName || 'Walk-in customer',
+          customerPhone: saleForm.customerPhone,
+          customerEmail: saleForm.customerEmail,
+          productName: selectedProduct.name,
+          discountAmount: saleDiscount,
+          recordedBy: 'trader',
+        });
+      }
+      if (saleForm.wantsReceipt && saleForm.customerEmail) {
+        await handleSendEmailReceipt({
           id: response.purchaseId || response.id || 'receipt',
           customerId: '',
           traderId: '',
