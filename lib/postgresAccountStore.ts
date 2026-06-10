@@ -91,6 +91,84 @@ export async function initializePostgresAccountStore() {
       "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       UNIQUE("userId", role)
     );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY,
+      "traderId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      category TEXT NOT NULL,
+      price REAL NOT NULL,
+      discount REAL DEFAULT 0,
+      stock INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'available',
+      image TEXT,
+      images TEXT,
+      code TEXT UNIQUE,
+      rating REAL DEFAULT 0,
+      "reviewCount" INTEGER DEFAULT 0,
+      metadata TEXT,
+      "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_requests (
+      id TEXT PRIMARY KEY,
+      "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "accountId" TEXT,
+      role TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      "riskStatus" TEXT DEFAULT 'pending',
+      "legalName" TEXT,
+      "identityType" TEXT,
+      "identityNumberHash" TEXT,
+      "identityNumberMasked" TEXT,
+      phone TEXT,
+      "businessName" TEXT,
+      "businessCategory" TEXT,
+      "businessAddress" TEXT,
+      district TEXT,
+      sector TEXT,
+      cell TEXT,
+      tin TEXT,
+      "annualTurnoverRange" TEXT,
+      "hasVatRegistration" INTEGER DEFAULT 0,
+      "usesEbm" INTEGER DEFAULT 0,
+      latitude REAL,
+      longitude REAL,
+      "autoScore" REAL DEFAULT 0,
+      "autoDecision" TEXT,
+      "submittedAt" TIMESTAMPTZ,
+      "reviewedBy" TEXT,
+      "reviewedAt" TIMESTAMPTZ,
+      "rejectionReason" TEXT,
+      metadata TEXT,
+      "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS verification_documents (
+      id TEXT PRIMARY KEY,
+      "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "accountId" TEXT,
+      type TEXT NOT NULL,
+      "fileUrl" TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      "licenseTypeId" TEXT,
+      "fileHash" TEXT,
+      "extractedText" TEXT,
+      "extractedFields" TEXT,
+      "autoScore" REAL DEFAULT 0,
+      "autoDecision" TEXT,
+      "autoReasons" TEXT,
+      "expiryDate" TEXT,
+      "reviewedBy" TEXT,
+      "reviewedAt" TIMESTAMPTZ,
+      "rejectionReason" TEXT,
+      metadata TEXT,
+      "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   initialized = true;
@@ -247,6 +325,211 @@ export async function mirrorUserAccountsToPostgres(sqlite: SqliteDb, userId: str
   }
 }
 
+export async function mirrorProductToPostgres(product: any) {
+  const client = getPool();
+  if (!client || !product?.id) return;
+  await initializePostgresAccountStore();
+
+  await client.query(
+    `
+    INSERT INTO products (
+      id, "traderId", name, description, category, price, discount, stock, status,
+      image, images, code, rating, "reviewCount", metadata, "createdAt", "updatedAt"
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16::timestamptz, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+    ON CONFLICT (id) DO UPDATE SET
+      "traderId" = EXCLUDED."traderId",
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      category = EXCLUDED.category,
+      price = EXCLUDED.price,
+      discount = EXCLUDED.discount,
+      stock = EXCLUDED.stock,
+      status = EXCLUDED.status,
+      image = EXCLUDED.image,
+      images = EXCLUDED.images,
+      code = EXCLUDED.code,
+      rating = EXCLUDED.rating,
+      "reviewCount" = EXCLUDED."reviewCount",
+      metadata = EXCLUDED.metadata,
+      "updatedAt" = CURRENT_TIMESTAMP
+  `,
+    [
+      product.id,
+      product.traderId,
+      product.name,
+      product.description,
+      product.category || 'General',
+      Number(product.price || 0),
+      Number(product.discount || 0),
+      Number(product.stock || 0),
+      value(product, 'status', 'available'),
+      value(product, 'image'),
+      value(product, 'images'),
+      value(product, 'code'),
+      Number(product.rating || 0),
+      Number(product.reviewCount || 0),
+      value(product, 'metadata'),
+      value(product, 'createdAt'),
+    ]
+  );
+}
+
+export async function deleteProductFromPostgres(productId: string) {
+  const client = getPool();
+  if (!client || !productId) return;
+  await initializePostgresAccountStore();
+  await client.query('DELETE FROM products WHERE id = $1', [productId]);
+}
+
+export async function mirrorVerificationRequestToPostgres(request: any) {
+  const client = getPool();
+  if (!client || !request?.id) return;
+  await initializePostgresAccountStore();
+
+  await client.query(
+    `
+    INSERT INTO verification_requests (
+      id, "userId", "accountId", role, status, "riskStatus", "legalName", "identityType",
+      "identityNumberHash", "identityNumberMasked", phone, "businessName", "businessCategory",
+      "businessAddress", district, sector, cell, tin, "annualTurnoverRange", "hasVatRegistration",
+      "usesEbm", latitude, longitude, "autoScore", "autoDecision", "submittedAt", "reviewedBy",
+      "reviewedAt", "rejectionReason", metadata, "createdAt", "updatedAt"
+    )
+    VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8,
+      $9, $10, $11, $12, $13,
+      $14, $15, $16, $17, $18, $19, $20,
+      $21, $22, $23, $24, $25, $26, $27,
+      $28, $29, $30, COALESCE($31::timestamptz, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      "accountId" = EXCLUDED."accountId",
+      role = EXCLUDED.role,
+      status = EXCLUDED.status,
+      "riskStatus" = EXCLUDED."riskStatus",
+      "legalName" = EXCLUDED."legalName",
+      "identityType" = EXCLUDED."identityType",
+      "identityNumberHash" = EXCLUDED."identityNumberHash",
+      "identityNumberMasked" = EXCLUDED."identityNumberMasked",
+      phone = EXCLUDED.phone,
+      "businessName" = EXCLUDED."businessName",
+      "businessCategory" = EXCLUDED."businessCategory",
+      "businessAddress" = EXCLUDED."businessAddress",
+      district = EXCLUDED.district,
+      sector = EXCLUDED.sector,
+      cell = EXCLUDED.cell,
+      tin = EXCLUDED.tin,
+      "annualTurnoverRange" = EXCLUDED."annualTurnoverRange",
+      "hasVatRegistration" = EXCLUDED."hasVatRegistration",
+      "usesEbm" = EXCLUDED."usesEbm",
+      latitude = EXCLUDED.latitude,
+      longitude = EXCLUDED.longitude,
+      "autoScore" = EXCLUDED."autoScore",
+      "autoDecision" = EXCLUDED."autoDecision",
+      "submittedAt" = EXCLUDED."submittedAt",
+      "reviewedBy" = EXCLUDED."reviewedBy",
+      "reviewedAt" = EXCLUDED."reviewedAt",
+      "rejectionReason" = EXCLUDED."rejectionReason",
+      metadata = EXCLUDED.metadata,
+      "updatedAt" = CURRENT_TIMESTAMP
+  `,
+    [
+      request.id,
+      request.userId,
+      value(request, 'accountId'),
+      request.role || 'customer',
+      value(request, 'status', 'pending'),
+      value(request, 'riskStatus', 'pending'),
+      value(request, 'legalName'),
+      value(request, 'identityType'),
+      value(request, 'identityNumberHash'),
+      value(request, 'identityNumberMasked'),
+      value(request, 'phone'),
+      value(request, 'businessName'),
+      value(request, 'businessCategory'),
+      value(request, 'businessAddress'),
+      value(request, 'district'),
+      value(request, 'sector'),
+      value(request, 'cell'),
+      value(request, 'tin'),
+      value(request, 'annualTurnoverRange'),
+      Number(Boolean(value(request, 'hasVatRegistration', 0))),
+      Number(Boolean(value(request, 'usesEbm', 0))),
+      value(request, 'latitude'),
+      value(request, 'longitude'),
+      Number(value(request, 'autoScore', 0)),
+      value(request, 'autoDecision'),
+      value(request, 'submittedAt'),
+      value(request, 'reviewedBy'),
+      value(request, 'reviewedAt'),
+      value(request, 'rejectionReason'),
+      value(request, 'metadata'),
+      value(request, 'createdAt'),
+    ]
+  );
+}
+
+export async function mirrorVerificationDocumentToPostgres(document: any) {
+  const client = getPool();
+  if (!client || !document?.id) return;
+  await initializePostgresAccountStore();
+
+  await client.query(
+    `
+    INSERT INTO verification_documents (
+      id, "userId", "accountId", type, "fileUrl", status, "licenseTypeId", "fileHash",
+      "extractedText", "extractedFields", "autoScore", "autoDecision", "autoReasons",
+      "expiryDate", "reviewedBy", "reviewedAt", "rejectionReason", metadata, "createdAt", "updatedAt"
+    )
+    VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8,
+      $9, $10, $11, $12, $13,
+      $14, $15, $16, $17, $18, COALESCE($19::timestamptz, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      "accountId" = EXCLUDED."accountId",
+      type = EXCLUDED.type,
+      "fileUrl" = EXCLUDED."fileUrl",
+      status = EXCLUDED.status,
+      "licenseTypeId" = EXCLUDED."licenseTypeId",
+      "fileHash" = EXCLUDED."fileHash",
+      "extractedText" = EXCLUDED."extractedText",
+      "extractedFields" = EXCLUDED."extractedFields",
+      "autoScore" = EXCLUDED."autoScore",
+      "autoDecision" = EXCLUDED."autoDecision",
+      "autoReasons" = EXCLUDED."autoReasons",
+      "expiryDate" = EXCLUDED."expiryDate",
+      "reviewedBy" = EXCLUDED."reviewedBy",
+      "reviewedAt" = EXCLUDED."reviewedAt",
+      "rejectionReason" = EXCLUDED."rejectionReason",
+      metadata = EXCLUDED.metadata,
+      "updatedAt" = CURRENT_TIMESTAMP
+  `,
+    [
+      document.id,
+      document.userId,
+      value(document, 'accountId'),
+      document.type,
+      document.fileUrl,
+      value(document, 'status', 'pending'),
+      value(document, 'licenseTypeId'),
+      value(document, 'fileHash'),
+      value(document, 'extractedText'),
+      value(document, 'extractedFields'),
+      Number(value(document, 'autoScore', 0)),
+      value(document, 'autoDecision'),
+      value(document, 'autoReasons'),
+      value(document, 'expiryDate'),
+      value(document, 'reviewedBy'),
+      value(document, 'reviewedAt'),
+      value(document, 'rejectionReason'),
+      value(document, 'metadata'),
+      value(document, 'createdAt'),
+    ]
+  );
+}
+
 function insertSqliteUser(sqlite: SqliteDb, user: any) {
   sqlite
     .prepare(
@@ -325,6 +608,121 @@ function insertSqliteAccount(sqlite: SqliteDb, account: any) {
     );
 }
 
+function insertSqliteProduct(sqlite: SqliteDb, product: any) {
+  sqlite
+    .prepare(
+      `
+      INSERT OR IGNORE INTO products (
+        id, traderId, name, description, category, price, discount, stock, status, image,
+        images, code, rating, reviewCount, metadata, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+    `
+    )
+    .run(
+      product.id,
+      product.traderId,
+      product.name,
+      value(product, 'description'),
+      value(product, 'category', 'General'),
+      Number(value(product, 'price', 0)),
+      Number(value(product, 'discount', 0)),
+      Number(value(product, 'stock', 0)),
+      value(product, 'status', 'available'),
+      value(product, 'image'),
+      value(product, 'images'),
+      value(product, 'code'),
+      Number(value(product, 'rating', 0)),
+      Number(value(product, 'reviewCount', 0)),
+      value(product, 'metadata'),
+      value(product, 'createdAt'),
+      value(product, 'updatedAt')
+    );
+}
+
+function insertSqliteVerificationRequest(sqlite: SqliteDb, request: any) {
+  sqlite
+    .prepare(
+      `
+      INSERT OR IGNORE INTO verification_requests (
+        id, userId, accountId, role, status, riskStatus, legalName, identityType,
+        identityNumberHash, identityNumberMasked, phone, businessName, businessCategory,
+        businessAddress, district, sector, cell, tin, annualTurnoverRange, hasVatRegistration,
+        usesEbm, latitude, longitude, autoScore, autoDecision, submittedAt, reviewedBy,
+        reviewedAt, rejectionReason, metadata, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+    `
+    )
+    .run(
+      request.id,
+      request.userId,
+      value(request, 'accountId'),
+      request.role || 'customer',
+      value(request, 'status', 'pending'),
+      value(request, 'riskStatus', 'pending'),
+      value(request, 'legalName'),
+      value(request, 'identityType'),
+      value(request, 'identityNumberHash'),
+      value(request, 'identityNumberMasked'),
+      value(request, 'phone'),
+      value(request, 'businessName'),
+      value(request, 'businessCategory'),
+      value(request, 'businessAddress'),
+      value(request, 'district'),
+      value(request, 'sector'),
+      value(request, 'cell'),
+      value(request, 'tin'),
+      value(request, 'annualTurnoverRange'),
+      Number(Boolean(value(request, 'hasVatRegistration', 0))),
+      Number(Boolean(value(request, 'usesEbm', 0))),
+      value(request, 'latitude'),
+      value(request, 'longitude'),
+      Number(value(request, 'autoScore', 0)),
+      value(request, 'autoDecision'),
+      value(request, 'submittedAt'),
+      value(request, 'reviewedBy'),
+      value(request, 'reviewedAt'),
+      value(request, 'rejectionReason'),
+      value(request, 'metadata'),
+      value(request, 'createdAt'),
+      value(request, 'updatedAt')
+    );
+}
+
+function insertSqliteVerificationDocument(sqlite: SqliteDb, document: any) {
+  sqlite
+    .prepare(
+      `
+      INSERT OR IGNORE INTO verification_documents (
+        id, userId, accountId, type, fileUrl, status, licenseTypeId, fileHash,
+        extractedText, extractedFields, autoScore, autoDecision, autoReasons, expiryDate,
+        reviewedBy, reviewedAt, rejectionReason, metadata, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+    `
+    )
+    .run(
+      document.id,
+      document.userId,
+      value(document, 'accountId'),
+      document.type,
+      document.fileUrl,
+      value(document, 'status', 'pending'),
+      value(document, 'licenseTypeId'),
+      value(document, 'fileHash'),
+      value(document, 'extractedText'),
+      value(document, 'extractedFields'),
+      Number(value(document, 'autoScore', 0)),
+      value(document, 'autoDecision'),
+      value(document, 'autoReasons'),
+      value(document, 'expiryDate'),
+      value(document, 'reviewedBy'),
+      value(document, 'reviewedAt'),
+      value(document, 'rejectionReason'),
+      value(document, 'metadata'),
+      value(document, 'createdAt'),
+      value(document, 'updatedAt')
+    );
+}
+
 export async function hydrateSqliteUserFromPostgres(sqlite: SqliteDb, email: string) {
   const client = getPool();
   if (!client || !email) return null;
@@ -358,9 +756,13 @@ export async function bootstrapSqliteAccountsFromPostgres(sqlite: SqliteDb) {
   if (!client) return { users: 0, accounts: 0 };
   await initializePostgresAccountStore();
 
-  const [{ rows: users }, { rows: accounts }] = await Promise.all([
+  const [{ rows: users }, { rows: accounts }, { rows: products }, { rows: requests }, { rows: documents }] =
+    await Promise.all([
     client.query('SELECT * FROM users'),
     client.query('SELECT * FROM user_accounts'),
+    client.query('SELECT * FROM products'),
+    client.query('SELECT * FROM verification_requests'),
+    client.query('SELECT * FROM verification_documents'),
   ]);
 
   sqlite.transaction(() => {
@@ -373,9 +775,18 @@ export async function bootstrapSqliteAccountsFromPostgres(sqlite: SqliteDb) {
         .run(`pg-loyalty-${user.id}`, user.id);
     }
     for (const account of accounts) insertSqliteAccount(sqlite, account);
+    for (const product of products) insertSqliteProduct(sqlite, product);
+    for (const request of requests) insertSqliteVerificationRequest(sqlite, request);
+    for (const document of documents) insertSqliteVerificationDocument(sqlite, document);
   })();
 
-  return { users: users.length, accounts: accounts.length };
+  return {
+    users: users.length,
+    accounts: accounts.length,
+    products: products.length,
+    verificationRequests: requests.length,
+    verificationDocuments: documents.length,
+  };
 }
 
 export async function closePostgresAccountStore() {

@@ -26,11 +26,15 @@ import { normalizeRole } from './lib/roles.ts';
 import { hashPassword, hashToken, verifyPassword } from './lib/security.ts';
 import {
   bootstrapSqliteAccountsFromPostgres,
+  deleteProductFromPostgres,
   hydrateSqliteUserFromPostgres,
   isPostgresAccountStoreEnabled,
   mirrorAccountToPostgres,
+  mirrorProductToPostgres,
   mirrorUserAccountsToPostgres,
   mirrorUserToPostgres,
+  mirrorVerificationDocumentToPostgres,
+  mirrorVerificationRequestToPostgres,
 } from './lib/postgresAccountStore.ts';
 import { LoginSchema, RegisterSchema } from './src/lib/validation.ts';
 import type { Request, Response, NextFunction, CookieOptions } from 'express';
@@ -151,7 +155,7 @@ void bootstrapSqliteAccountsFromPostgres(db as any)
   .then((result) => {
     if (result.users || result.accounts) {
       console.log(
-        `Postgres account bootstrap restored ${result.users} users and ${result.accounts} account modes`
+        `Postgres bootstrap restored ${result.users} users, ${result.accounts} account modes, ${result.products || 0} products, ${result.verificationRequests || 0} verification requests, and ${result.verificationDocuments || 0} verification documents`
       );
     }
   })
@@ -4538,6 +4542,11 @@ app.post('/api/verification/request', authenticate, (req: any, res): any => {
     role,
   });
   const request = recomputeVerificationRequest(requestId);
+  if (request) {
+    void mirrorVerificationRequestToPostgres(request).catch((error) => {
+      console.error('Postgres verification request mirror failed:', error);
+    });
+  }
   res.json({ success: true, request });
 });
 
@@ -4632,11 +4641,20 @@ app.post('/api/verification/documents', authenticate, (req: any, res): any => {
       autoScore: autoCheck.score,
     });
     recomputeVerificationRequest(request.id);
+    const updatedRequest = db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id);
+    void mirrorVerificationRequestToPostgres(updatedRequest).catch((error) => {
+      console.error('Postgres verification request mirror failed:', error);
+    });
   }
+
+  const savedDocument = db.prepare('SELECT * FROM verification_documents WHERE id = ?').get(id);
+  void mirrorVerificationDocumentToPostgres(savedDocument).catch((error) => {
+    console.error('Postgres verification document mirror failed:', error);
+  });
 
   res.json({
     success: true,
-    document: db.prepare('SELECT * FROM verification_documents WHERE id = ?').get(id),
+    document: savedDocument,
   });
 });
 
@@ -4770,7 +4788,17 @@ app.post('/api/admin/verification-requests/:id/approve', requireRole(['admin', '
     note: req.body.note || null,
   });
   mirrorAccountState(request.userId);
-  res.json({ success: true, request: db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id) });
+  const updatedRequest = db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id);
+  const updatedDocuments = db.prepare('SELECT * FROM verification_documents WHERE userId = ?').all(request.userId);
+  void mirrorVerificationRequestToPostgres(updatedRequest).catch((error) => {
+    console.error('Postgres verification request mirror failed:', error);
+  });
+  for (const document of updatedDocuments) {
+    void mirrorVerificationDocumentToPostgres(document).catch((error) => {
+      console.error('Postgres verification document mirror failed:', error);
+    });
+  }
+  res.json({ success: true, request: updatedRequest });
 });
 
 app.post('/api/admin/verification-requests/:id/reject', requireRole(['admin', 'manager']), (req: any, res): any => {
@@ -4795,7 +4823,11 @@ app.post('/api/admin/verification-requests/:id/reject', requireRole(['admin', 'm
   }
   recordVerificationAudit(request.userId, request.id, req.user.id, 'admin_rejected', { reason });
   mirrorAccountState(request.userId);
-  res.json({ success: true, request: db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id) });
+  const updatedRequest = db.prepare('SELECT * FROM verification_requests WHERE id = ?').get(request.id);
+  void mirrorVerificationRequestToPostgres(updatedRequest).catch((error) => {
+    console.error('Postgres verification request mirror failed:', error);
+  });
+  res.json({ success: true, request: updatedRequest });
 });
 
 app.get('/api/admin/license-types', requireRole(['admin', 'manager']), (_req: any, res): any => {
@@ -5913,6 +5945,9 @@ app.post(
     );
 
     const savedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
+    void mirrorProductToPostgres(savedProduct).catch((error) => {
+      console.error('Postgres product mirror failed:', error);
+    });
     res.json({ success: true, id, product: transformProduct(savedProduct) });
   }
 );
@@ -5982,6 +6017,9 @@ app.put(
     const savedProduct = db
       .prepare('SELECT * FROM products WHERE id = ?')
       .get(req.params.id) as any;
+    void mirrorProductToPostgres(savedProduct).catch((error) => {
+      console.error('Postgres product mirror failed:', error);
+    });
     res.json({ success: true, product: transformProduct(savedProduct) });
   }
 );
@@ -5994,6 +6032,9 @@ app.delete('/api/products/:id', requireRole(['trader', 'admin']), (req: any, res
     return res.status(403).json({ error: 'You can only delete your own products' });
   }
   db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+  void deleteProductFromPostgres(req.params.id).catch((error) => {
+    console.error('Postgres product delete mirror failed:', error);
+  });
   res.json({ success: true });
 });
 
