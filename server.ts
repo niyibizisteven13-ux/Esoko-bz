@@ -56,6 +56,13 @@ const RESEND_API_KEY = env.RESEND_API_KEY || '';
 const RESEND_FROM = env.RESEND_FROM || SMTP_FROM;
 const SMTP_REQUIRE_AUTH = env.SMTP_REQUIRE_AUTH !== 'false';
 const EMAIL_PROVIDER = String(env.EMAIL_PROVIDER || 'smtp').toLowerCase();
+const SMTP_REQUIRE_TLS = env.SMTP_REQUIRE_TLS
+  ? env.SMTP_REQUIRE_TLS === 'true'
+  : configuredSmtpPort === 587;
+const SMTP_TLS_SERVERNAME = env.SMTP_TLS_SERVERNAME || SMTP_HOST;
+const SMTP_CONNECTION_TIMEOUT_MS = Number(env.SMTP_CONNECTION_TIMEOUT_MS || 60000);
+const SMTP_GREETING_TIMEOUT_MS = Number(env.SMTP_GREETING_TIMEOUT_MS || 60000);
+const SMTP_SOCKET_TIMEOUT_MS = Number(env.SMTP_SOCKET_TIMEOUT_MS || 120000);
 const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
@@ -73,16 +80,18 @@ const emailTransporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_SECURE,
+  requireTLS: SMTP_REQUIRE_TLS,
   family: Number(env.SMTP_FAMILY || 4),
   lookup: (hostname: string, options: any, callback: any) => {
     dns.lookup(hostname, { ...options, family: Number(env.SMTP_FAMILY || 4), all: false }, callback);
   },
   tls: {
-    servername: SMTP_HOST,
+    servername: SMTP_TLS_SERVERNAME,
+    rejectUnauthorized: env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
   },
-  connectionTimeout: 15000,
-  greetingTimeout: 15000,
-  socketTimeout: 30000,
+  connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+  greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
+  socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
   auth: SMTP_AUTH_CONFIGURED ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
 } as any);
 
@@ -185,12 +194,17 @@ async function sendAppEmail(mailOptions: {
   try {
     return await sendViaSmtp();
   } catch (smtpError: any) {
-    if (EMAIL_PROVIDER !== 'auto' || !RESEND_CONFIGURED) throw smtpError;
+    const smtpMessage = `SMTP failed for ${SMTP_HOST}:${SMTP_PORT} after ${SMTP_CONNECTION_TIMEOUT_MS}ms: ${
+      smtpError.message || smtpError
+    }`;
+    if (EMAIL_PROVIDER !== 'auto' || !RESEND_CONFIGURED) {
+      throw new Error(smtpMessage);
+    }
     try {
       return await sendViaResend();
     } catch (resendError: any) {
       throw new Error(
-        `SMTP failed: ${smtpError.message || smtpError}; Resend failed: ${
+        `${smtpMessage}; Resend failed: ${
           resendError.message || resendError
         }`
       );
@@ -3828,6 +3842,10 @@ app.get('/api/health', (_req, res) => {
       port: SMTP_PORT,
       secure: SMTP_SECURE,
       family: Number(env.SMTP_FAMILY || 4),
+      requireTls: SMTP_REQUIRE_TLS,
+      connectionTimeoutMs: SMTP_CONNECTION_TIMEOUT_MS,
+      greetingTimeoutMs: SMTP_GREETING_TIMEOUT_MS,
+      socketTimeoutMs: SMTP_SOCKET_TIMEOUT_MS,
       correctedMisconfiguredGmailPort: shouldUseGmailStartTls,
       forcedIpv4Lookup: true,
       from: SMTP_FROM ? 'configured' : 'missing',

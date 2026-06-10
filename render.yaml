@@ -36,6 +36,14 @@ services:
         value: "false"
       - key: SMTP_FAMILY
         value: "4"
+      - key: SMTP_REQUIRE_TLS
+        value: "true"
+      - key: SMTP_CONNECTION_TIMEOUT_MS
+        value: "60000"
+      - key: SMTP_GREETING_TIMEOUT_MS
+        value: "60000"
+      - key: SMTP_SOCKET_TIMEOUT_MS
+        value: "120000"
       - key: SMTP_REQUIRE_AUTH
         value: "true"
       - key: SMTP_USER
