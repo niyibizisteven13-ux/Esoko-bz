@@ -32,6 +32,8 @@ services:
         value: smtp.gmail.com
       - key: SMTP_PORT
         value: "587"
+      - key: SMTP_FALLBACK_PORTS
+        value: 2525,465
       - key: SMTP_SECURE
         value: "false"
       - key: SMTP_FAMILY

@@ -68,6 +68,10 @@ const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
 const SMTP_SECURE = shouldUseGmailStartTls ? false : SMTP_PORT === 465 ? true : configuredSmtpSecure;
+const SMTP_FALLBACK_PORTS = String(env.SMTP_FALLBACK_PORTS || '2525,465')
+  .split(',')
+  .map((port) => Number(port.trim()))
+  .filter((port) => Number.isFinite(port) && port > 0 && port !== SMTP_PORT);
 const SMTP_AUTH_CONFIGURED = Boolean(SMTP_USER && SMTP_PASS);
 const SMTP_CONFIGURED = Boolean(SMTP_HOST && SMTP_FROM && (!SMTP_REQUIRE_AUTH || SMTP_AUTH_CONFIGURED));
 const RESEND_CONFIGURED = Boolean(RESEND_API_KEY);
@@ -91,22 +95,34 @@ function smtpLookup(hostname: string, options: any, callback: any) {
   });
 }
 
-const emailTransporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_SECURE,
-  requireTLS: SMTP_REQUIRE_TLS,
-  family: Number(env.SMTP_FAMILY || 4),
-  lookup: smtpLookup,
-  tls: {
-    servername: SMTP_TLS_SERVERNAME,
-    rejectUnauthorized: env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
-  },
-  connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
-  greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
-  socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
-  auth: SMTP_AUTH_CONFIGURED ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-} as any);
+function smtpSecureForPort(port: number) {
+  if (port === SMTP_PORT) return SMTP_SECURE;
+  return port === 465;
+}
+
+function smtpRequireTlsForPort(port: number) {
+  if (port === 465) return false;
+  return SMTP_REQUIRE_TLS;
+}
+
+function createEmailTransporter(port = SMTP_PORT) {
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port,
+    secure: smtpSecureForPort(port),
+    requireTLS: smtpRequireTlsForPort(port),
+    family: Number(env.SMTP_FAMILY || 4),
+    lookup: smtpLookup,
+    tls: {
+      servername: SMTP_TLS_SERVERNAME,
+      rejectUnauthorized: env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
+    },
+    connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+    greetingTimeout: SMTP_GREETING_TIMEOUT_MS,
+    socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
+    auth: SMTP_AUTH_CONFIGURED ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+  } as any);
+}
 
 function assertEmailConfigured(feature = 'email') {
   if (!EMAIL_CONFIGURED) {
@@ -170,10 +186,33 @@ async function sendAppEmail(mailOptions: {
     assertEmailConfigured('SMTP email');
     if (!SMTP_CONFIGURED) throw new Error('SMTP is not configured');
 
-    return emailTransporter.sendMail({
-      ...mailOptions,
-      from: SMTP_FROM || mailOptions.from,
-    });
+    const ports = [SMTP_PORT, ...SMTP_FALLBACK_PORTS];
+    const errors: string[] = [];
+
+    for (const port of ports) {
+      try {
+        return await createEmailTransporter(port).sendMail({
+          ...mailOptions,
+          from: SMTP_FROM || mailOptions.from,
+        });
+      } catch (error: any) {
+        const message = `${SMTP_HOST}:${port} ${error.message || error}`;
+        errors.push(message);
+        const code = String(error?.code || '').toUpperCase();
+        const isConnectivityError =
+          code.includes('ETIMEDOUT') ||
+          code.includes('ENETUNREACH') ||
+          code.includes('ECONNREFUSED') ||
+          code.includes('ECONNRESET') ||
+          /timeout|timed out|network|unreach|refused/i.test(String(error?.message || error));
+
+        if (!isConnectivityError || port === ports[ports.length - 1]) {
+          throw new Error(errors.join('; '));
+        }
+      }
+    }
+
+    throw new Error(errors.join('; ') || 'SMTP send failed');
   };
 
   if (EMAIL_PROVIDER === 'resend') {
@@ -207,7 +246,7 @@ async function sendAppEmail(mailOptions: {
   try {
     return await sendViaSmtp();
   } catch (smtpError: any) {
-    const smtpMessage = `SMTP failed for ${SMTP_HOST}:${SMTP_PORT} after ${SMTP_CONNECTION_TIMEOUT_MS}ms: ${
+    const smtpMessage = `SMTP failed for ${SMTP_HOST}:${[SMTP_PORT, ...SMTP_FALLBACK_PORTS].join(',')} after ${SMTP_CONNECTION_TIMEOUT_MS}ms: ${
       smtpError.message || smtpError
     }`;
     if (EMAIL_PROVIDER !== 'auto' || !RESEND_CONFIGURED) {
@@ -3853,6 +3892,7 @@ app.get('/api/health', (_req, res) => {
       smtpRequireAuth: SMTP_REQUIRE_AUTH,
       host: SMTP_HOST,
       port: SMTP_PORT,
+      fallbackPorts: SMTP_FALLBACK_PORTS,
       secure: SMTP_SECURE,
       family: Number(env.SMTP_FAMILY || 4),
       requireTls: SMTP_REQUIRE_TLS,
