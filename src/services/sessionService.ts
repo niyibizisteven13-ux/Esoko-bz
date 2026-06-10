@@ -1,7 +1,10 @@
 import { apiGet, apiPost } from './apiClient';
 
 const AUTH_USER_KEY = 'auth_user';
+const AUTH_CHANNEL_NAME = 'esoko-auth-sync';
 const authListeners = new Set<(user: any) => void>();
+let authChannel: BroadcastChannel | null = null;
+let crossTabSyncStarted = false;
 
 function readStoredUser() {
   const userData = localStorage.getItem(AUTH_USER_KEY);
@@ -19,6 +22,28 @@ export function hasStoredAuthUser() {
   return Boolean(localStorage.getItem(AUTH_USER_KEY));
 }
 
+function getAuthChannel() {
+  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return null;
+  if (!authChannel) authChannel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+  return authChannel;
+}
+
+function startAuthCrossTabSync() {
+  if (crossTabSyncStarted || typeof window === 'undefined') return;
+  crossTabSyncStarted = true;
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === AUTH_USER_KEY) notifyAuthListeners();
+  });
+
+  const channel = getAuthChannel();
+  if (channel) {
+    channel.onmessage = (event) => {
+      if (event.data?.type === 'auth-user-updated') notifyAuthListeners();
+    };
+  }
+}
+
 function writeStoredUser(user: any) {
   if (user) {
     const safeUser = {
@@ -27,6 +52,10 @@ function writeStoredUser(user: any) {
       email: user.email,
       name: user.name,
       role: user.role,
+      activeRole: user.activeRole || user.role,
+      activeAccountId: user.activeAccountId || user.activeAccount?.id || null,
+      businessName: user.businessName || null,
+      walletBalance: user.walletBalance,
       tier: user.tier,
       onboardingComplete: user.onboardingComplete,
       verificationStatus: user.verificationStatus,
@@ -42,6 +71,7 @@ function writeStoredUser(user: any) {
   } else {
     localStorage.removeItem(AUTH_USER_KEY);
   }
+  getAuthChannel()?.postMessage({ type: 'auth-user-updated', userId: user?.id || null });
   notifyAuthListeners();
 }
 
@@ -163,6 +193,7 @@ export async function logoutUser() {
 }
 
 export function observeAuthState(callback: (user: any) => void) {
+  startAuthCrossTabSync();
   authListeners.add(callback);
   const localUser = readStoredUser();
   callback(localUser);
@@ -177,7 +208,7 @@ export function observeAuthState(callback: (user: any) => void) {
 }
 
 export async function getCurrentUser() {
-  return fetchUserFromServer();
+  return (await fetchUserFromServer()) || readStoredUser();
 }
 
 export async function getIdToken() {

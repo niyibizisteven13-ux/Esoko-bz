@@ -5693,9 +5693,13 @@ app.put('/api/users/:id', authenticate, (req: any, res): any => {
 });
 
 function transformProduct(product: any) {
+  const metadata = parseJsonObject(product.metadata);
   return {
+    ...metadata,
     ...product,
     imageUrl: product.image,
+    variants: Array.isArray(metadata.variants) ? metadata.variants : [],
+    qrCode: metadata.qrCode || product.qrCode || null,
     mediaItems: product.images
       ? (() => {
           try {
@@ -5801,6 +5805,9 @@ interface ProductPayload {
   images?: string;
   mediaItems?: any[];
   code?: string;
+  qrCode?: string;
+  variants?: any[];
+  metadata?: any;
 }
 
 app.post(
@@ -5824,6 +5831,11 @@ app.post(
     const code = body.code || `PRD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
     const mediaItemsJson =
       body.mediaItems && Array.isArray(body.mediaItems) ? JSON.stringify(body.mediaItems) : null;
+    const metadataJson = JSON.stringify({
+      ...parseJsonObject(body.metadata),
+      qrCode: body.qrCode || `esoko-product-${code}`,
+      variants: Array.isArray(body.variants) ? body.variants : [],
+    });
     const imageValue = req.file
       ? `/uploads/${req.file.filename}`
       : body.imageUrl || body.image || null;
@@ -5838,8 +5850,8 @@ app.post(
 
     db.prepare(
       `
-    INSERT INTO products (id, traderId, name, description, category, price, stock, status, image, images, code, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT INTO products (id, traderId, name, description, category, price, stock, status, image, images, code, metadata, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `
     ).run(
       id,
@@ -5852,7 +5864,8 @@ app.post(
       productStatus,
       imageValue,
       mediaItemsJson,
-      code
+      code,
+      metadataJson
     );
 
     const savedProduct = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as any;
@@ -5879,6 +5892,18 @@ app.put(
           ? JSON.stringify(body.mediaItems)
           : null
         : undefined;
+    const currentMetadata = parseJsonObject(product.metadata);
+    const metadataJson =
+      body.metadata !== undefined || body.qrCode !== undefined || body.variants !== undefined
+        ? JSON.stringify({
+            ...currentMetadata,
+            ...parseJsonObject(body.metadata),
+            ...(body.qrCode !== undefined ? { qrCode: body.qrCode } : {}),
+            ...(body.variants !== undefined
+              ? { variants: Array.isArray(body.variants) ? body.variants : [] }
+              : {}),
+          })
+        : undefined;
     const imageValue = req.file
       ? `/uploads/${req.file.filename}`
       : (body.imageUrl ?? body.image ?? null);
@@ -5893,6 +5918,7 @@ app.put(
         status = COALESCE(?, status),
         image = COALESCE(?, image),
         images = COALESCE(?, images),
+        metadata = COALESCE(?, metadata),
         updatedAt = CURRENT_TIMESTAMP
     WHERE id = ?
   `
@@ -5905,6 +5931,7 @@ app.put(
       body.status ?? null,
       imageValue,
       mediaItemsJson,
+      metadataJson,
       req.params.id
     );
 

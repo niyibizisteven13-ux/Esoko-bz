@@ -1042,6 +1042,7 @@ export default function initializeDatabase() {
     ['survey_questions', 'flowId', 'TEXT'],
     ['survey_questions', 'audience', "TEXT DEFAULT 'all'"],
     ['products', 'code', 'TEXT'],
+    ['products', 'metadata', 'TEXT'],
     ['system_config', 'registrationOpen', 'INTEGER DEFAULT 1'],
     ['transactions', 'feeAmount', 'REAL DEFAULT 0'],
     ['transactions', 'feeType', 'TEXT'],

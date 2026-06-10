@@ -55,7 +55,14 @@ import { useLanguage } from '../../context/LanguageContext';
 import { cn, formatCurrency, formatCurrencyInput, parseCurrencyInput } from '../../lib/utils';
 import { calculateDistance, getCurrentCoordinates, Coordinates } from '../../lib/locationUtils';
 import { subscribeToLiveUpdates } from '../../services/liveSyncService';
-import { createProduct, deleteProduct, updateProduct, upsertCachedProduct, removeCachedProduct } from '../../services/productService';
+import {
+  createProduct,
+  deleteProduct,
+  removeCachedProduct,
+  updateProduct,
+  uploadProductMedia,
+  upsertCachedProduct,
+} from '../../services/productService';
 import { createTransaction } from '../../services/transactionService';
 
 interface ProductVariant {
@@ -679,19 +686,13 @@ export default function TraderProducts({
     setUploading(true);
     setFormError(null);
     try {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, imageUrl: reader.result as string }));
-        setUploading(false);
-      };
-      reader.onerror = () => {
-        setFormError('Failed to read image file');
-        setUploading(false);
-      };
-      reader.readAsDataURL(file);
+      const response = await uploadProductMedia(file);
+      setFormData((prev) => ({ ...prev, imageUrl: response.url }));
     } catch (err) {
       console.error('Upload error:', err);
-      setFormError('Failed to process image. Please try again.');
+      setFormError('Failed to upload image. Please check your connection and try again.');
+    } finally {
+      if (e.target) e.target.value = '';
       setUploading(false);
     }
   };

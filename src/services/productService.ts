@@ -241,7 +241,18 @@ export async function updateProduct(productId: string, payload: Partial<ProductI
 }
 
 export async function deleteProduct(productId: string) {
-  return apiDelete(`/api/products/${productId}`, undefined, {
-    headers: authHeaders(),
-  });
+  try {
+    return await apiDelete(`/api/products/${productId}`, undefined, {
+      headers: authHeaders(),
+    });
+  } catch (error) {
+    if (!isLikelyNetworkError(error)) throw error;
+    await enqueueOfflineAction({
+      path: `/api/products/${productId}`,
+      method: 'DELETE',
+      body: {},
+      headers: authHeaders(),
+    });
+    return { success: true, pendingSync: true };
+  }
 }
