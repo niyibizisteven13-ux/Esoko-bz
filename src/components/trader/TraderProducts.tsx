@@ -44,13 +44,8 @@ import {
   where,
   getDocs,
   getDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
   doc,
   onSnapshot,
-  runTransaction,
-  serverTimestamp,
 } from '../../services/firestoreBridge';
 import Fuse from 'fuse.js';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -60,6 +55,8 @@ import { useLanguage } from '../../context/LanguageContext';
 import { cn, formatCurrency, formatCurrencyInput, parseCurrencyInput } from '../../lib/utils';
 import { calculateDistance, getCurrentCoordinates, Coordinates } from '../../lib/locationUtils';
 import { subscribeToLiveUpdates } from '../../services/liveSyncService';
+import { createProduct, deleteProduct, updateProduct, upsertCachedProduct, removeCachedProduct } from '../../services/productService';
+import { createTransaction } from '../../services/transactionService';
 
 interface ProductVariant {
   id: string;
@@ -79,6 +76,8 @@ interface Product {
   qrCode?: string;
   imageUrl?: string;
   category?: string;
+  status?: string;
+  pendingSync?: boolean;
   variants?: ProductVariant[];
   mediaItems?: Array<{
     id: string;
@@ -89,6 +88,7 @@ interface Product {
     isMain?: boolean;
     createdAt?: string;
   }>;
+  [key: string]: any;
 }
 
 interface TraderProductsProps {
@@ -104,6 +104,7 @@ interface TraderProductsProps {
   initialStockFilter?: 'all' | 'low' | 'in-stock' | 'out-of-stock';
   initialEditProductId?: string | null;
   setInitialEditProductId?: (id: string | null) => void;
+  onProductsChange?: (products: Product[]) => void;
 }
 
 function RemoteViewerTile({ stream, label }: { stream: MediaStream; label: string }) {
@@ -136,6 +137,7 @@ export default function TraderProducts({
   initialStockFilter = 'all',
   initialEditProductId = null,
   setInitialEditProductId,
+  onProductsChange,
 }: TraderProductsProps) {
   const db = undefined; // Used by firestoreBridge
   const { t } = useLanguage();
@@ -184,6 +186,10 @@ export default function TraderProducts({
 
   const qrRef = useRef<HTMLDivElement>(null);
   const productsListRef = useRef<HTMLDivElement>(null);
+
+  const updateVisibleProducts = (updater: (current: Product[]) => Product[]) => {
+    onProductsChange?.(updater(products));
+  };
 
   React.useEffect(() => {
     return () => {
@@ -624,28 +630,31 @@ export default function TraderProducts({
       const qty = Number(restockData.quantity);
       const cost = Number(parseCurrencyInput(restockData.cost));
 
-      await runTransaction(db, async (transaction) => {
-        const productRef = doc(db, 'products', restockData.productId);
-        const pDoc = await transaction.get(productRef);
-        if (!pDoc.exists()) throw new Error('Product not found');
+      const updatedProduct = {
+        ...product,
+        stock: Number(product.stock || 0) + qty,
+        updatedAt: new Date().toISOString(),
+      };
 
-        // Update stock
-        transaction.update(productRef, {
-          stock: (pDoc.data().stock || 0) + qty,
-        });
+      updateVisibleProducts((current) =>
+        current.map((item) => (item.id === product.id ? updatedProduct : item))
+      );
+      await upsertCachedProduct(updatedProduct as any);
 
-        // Record transaction
-        const txRef = doc(collection(db, 'transactions'));
-        transaction.set(txRef, {
-          userId: traderId,
-          amount: cost,
-          type: 'supply',
-          method: 'cash',
-          status: 'completed',
-          category: 'business',
-          description: `Restock: ${product.name} (+${qty})`,
-          timestamp: serverTimestamp(),
-        });
+      await updateProduct(product.id, {
+        traderId,
+        stock: updatedProduct.stock,
+      });
+
+      await createTransaction({
+        userId: traderId,
+        amount: cost,
+        type: 'supply',
+        method: 'cash',
+        status: 'completed',
+        category: 'business',
+        description: `Restock: ${product.name} (+${qty})`,
+        createdAt: new Date().toISOString(),
       });
 
       setIsRestocking(false);
@@ -740,9 +749,42 @@ export default function TraderProducts({
       };
 
       if (editingProduct) {
-        await updateDoc(doc(db, 'products', editingProduct.id), productData);
+        const optimisticProduct = {
+          ...editingProduct,
+          ...productData,
+          id: editingProduct.id,
+          updatedAt: new Date().toISOString(),
+        };
+        updateVisibleProducts((current) =>
+          current.map((item) => (item.id === editingProduct.id ? optimisticProduct : item))
+        );
+        await upsertCachedProduct(optimisticProduct as any);
+        const response = await updateProduct(editingProduct.id, productData);
+        if ((response as any)?.product) {
+          updateVisibleProducts((current) =>
+            current.map((item) =>
+              item.id === editingProduct.id ? ((response as any).product as Product) : item
+            )
+          );
+        }
       } else {
-        await addDoc(collection(db, 'products'), productData);
+        const optimisticProduct = {
+          ...productData,
+          id: `local-product-${Date.now()}`,
+          status: 'saving',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as Product;
+        updateVisibleProducts((current) => [optimisticProduct, ...current]);
+        await upsertCachedProduct(optimisticProduct as any);
+        const response = await createProduct(productData);
+        const savedProduct = (response as any)?.product as Product | undefined;
+        if (savedProduct) {
+          updateVisibleProducts((current) => [
+            savedProduct,
+            ...current.filter((item) => item.id !== optimisticProduct.id && item.id !== savedProduct.id),
+          ]);
+        }
       }
       setIsAdding(false);
       setEditingProduct(null);
@@ -769,7 +811,10 @@ export default function TraderProducts({
     if (!deletingProduct) return;
     setLoading(true);
     try {
-      await deleteDoc(doc(db, 'products', deletingProduct.id));
+      const deleted = deletingProduct;
+      updateVisibleProducts((current) => current.filter((item) => item.id !== deleted.id));
+      await removeCachedProduct(deleted.traderId || traderId, deleted.id);
+      await deleteProduct(deleted.id);
       setDeletingProduct(null);
     } catch (err) {
       console.error(err);

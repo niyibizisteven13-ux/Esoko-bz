@@ -1219,6 +1219,7 @@ export default function TraderDashboard() {
                     initialStockFilter={initialStockFilter}
                     initialEditProductId={initialEditProductId}
                     setInitialEditProductId={setInitialEditProductId}
+                    onProductsChange={setProducts}
                   />
                 )}
                 {activeTab === 'purchases' && (

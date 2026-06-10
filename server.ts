@@ -2420,6 +2420,25 @@ const { authenticate, requireRole } = createAuthMiddleware({
   clearAuthCookies,
 });
 
+app.use('/api', (req: any, res, next) => {
+  if (req.path === '/events' || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    next();
+    return;
+  }
+
+  res.on('finish', () => {
+    if (res.statusCode >= 400) return;
+    publishLiveSync({
+      method: req.method,
+      path: req.originalUrl,
+      collection: inferCollectionFromPath(req.originalUrl),
+      actorUserId: req.user?.id || null,
+    });
+  });
+
+  next();
+});
+
 app.get('/api/events', authenticate, (req: any, res): any => {
   const clientId = uuidv4();
 
