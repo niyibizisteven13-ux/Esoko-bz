@@ -57,7 +57,7 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
 
   const env = process.env as unknown as Record<string, string | undefined>;
   const isProduction = env.NODE_ENV === 'production';
-  const smtpPort = parsePositiveNumber(env.SMTP_PORT, 465, 'SMTP_PORT');
+  const smtpPort = parsePositiveNumber(env.SMTP_PORT || env.MAIL_PORT, 465, 'SMTP_PORT');
   const frontendUrls = parseUrls(env.FRONTEND_URLS, 'FRONTEND_URLS');
   const appUrl = env.APP_URL?.trim() || undefined;
 
@@ -108,10 +108,16 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
     console.warn('WARNING: COOKIE_SAMESITE=None usually needs TRUST_PROXY=1 behind a TLS proxy.');
   }
 
-  const smtpUser = env.SMTP_USER || '';
-  const smtpPass = env.SMTP_PASS || '';
-  if (isProduction && (!smtpUser || !smtpPass)) {
-    console.warn('WARNING: SMTP_USER and SMTP_PASS are not set. Email features will be disabled.');
+  const smtpUser = env.SMTP_USER || env.SMTP_USERNAME || env.MAIL_USER || env.MAIL_USERNAME || '';
+  const smtpPass =
+    env.SMTP_PASS || env.SMTP_PASSWORD || env.MAIL_PASS || env.MAIL_PASSWORD || '';
+  const smtpHost = env.SMTP_HOST || env.MAIL_HOST || '';
+  const smtpFrom = env.SMTP_FROM || env.MAIL_FROM || smtpUser;
+  const smtpRequireAuth = env.SMTP_REQUIRE_AUTH !== 'false';
+  if (isProduction && (!smtpHost || !smtpFrom || (smtpRequireAuth && (!smtpUser || !smtpPass)))) {
+    console.warn(
+      'WARNING: SMTP is not fully configured. Set SMTP_HOST, SMTP_FROM, and SMTP credentials, or set SMTP_REQUIRE_AUTH=false for trusted relay.'
+    );
   }
 
   return {
@@ -123,8 +129,8 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
     jwtSecret,
     port: parsePositiveNumber(env.PORT, 5173, 'PORT'),
     smtp: {
-      from: env.SMTP_FROM || smtpUser,
-      host: env.SMTP_HOST || 'smtp.gmail.com',
+      from: smtpFrom,
+      host: smtpHost || 'smtp.gmail.com',
       pass: smtpPass,
       port: smtpPort,
       secure: env.SMTP_SECURE ? env.SMTP_SECURE === 'true' : smtpPort === 465,

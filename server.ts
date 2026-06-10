@@ -54,10 +54,14 @@ const SMTP_FROM = config.smtp.from;
 const configuredSmtpSecure = config.smtp.secure;
 const RESEND_API_KEY = env.RESEND_API_KEY || '';
 const RESEND_FROM = env.RESEND_FROM || SMTP_FROM;
+const SMTP_REQUIRE_AUTH = env.SMTP_REQUIRE_AUTH !== 'false';
 const shouldUseGmailStartTls =
   SMTP_HOST === 'smtp.gmail.com' && configuredSmtpPort === 465 && configuredSmtpSecure === false;
 const SMTP_PORT = shouldUseGmailStartTls ? 587 : configuredSmtpPort;
 const SMTP_SECURE = shouldUseGmailStartTls ? false : SMTP_PORT === 465 ? true : configuredSmtpSecure;
+const SMTP_AUTH_CONFIGURED = Boolean(SMTP_USER && SMTP_PASS);
+const SMTP_CONFIGURED = Boolean(SMTP_HOST && SMTP_FROM && (!SMTP_REQUIRE_AUTH || SMTP_AUTH_CONFIGURED));
+const EMAIL_CONFIGURED = Boolean(RESEND_API_KEY || SMTP_CONFIGURED);
 const JWT_SECRET = config.jwtSecret;
 
 dns.setDefaultResultOrder('ipv4first');
@@ -76,8 +80,20 @@ const emailTransporter = nodemailer.createTransport({
   connectionTimeout: 15000,
   greetingTimeout: 15000,
   socketTimeout: 30000,
-  auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+  auth: SMTP_AUTH_CONFIGURED ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
 } as any);
+
+function assertEmailConfigured(feature = 'email') {
+  if (!EMAIL_CONFIGURED) {
+    throw new Error(
+      `${feature} is not configured. Set RESEND_API_KEY, or set SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASS on Render. For trusted SMTP relay, set SMTP_REQUIRE_AUTH=false.`
+    );
+  }
+}
+
+function isValidEmailAddress(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
 
 async function sendAppEmail(mailOptions: {
   from?: string;
@@ -88,9 +104,8 @@ async function sendAppEmail(mailOptions: {
   [key: string]: any;
 }) {
   const sendViaSmtp = async () => {
-    if (!SMTP_USER || !SMTP_PASS) {
-      throw new Error('SMTP is not configured');
-    }
+    assertEmailConfigured('SMTP email');
+    if (!SMTP_CONFIGURED) throw new Error('SMTP is not configured');
 
     return emailTransporter.sendMail({
       ...mailOptions,
@@ -112,6 +127,20 @@ async function sendAppEmail(mailOptions: {
           subject: mailOptions.subject,
           html: mailOptions.html,
           text: mailOptions.text,
+          ...(mailOptions.attachments
+            ? {
+                attachments: mailOptions.attachments.map((attachment: any) => ({
+                  filename: attachment.filename,
+                  content:
+                    typeof attachment.content === 'string'
+                      ? attachment.content
+                      : Buffer.isBuffer(attachment.content)
+                        ? attachment.content.toString('base64')
+                        : attachment.content,
+                  content_type: attachment.contentType || attachment.content_type,
+                })),
+              }
+            : {}),
         }),
       });
 
@@ -123,7 +152,7 @@ async function sendAppEmail(mailOptions: {
       }
       return payload;
     } catch (resendError: any) {
-      if (!SMTP_USER || !SMTP_PASS) throw resendError;
+      if (!SMTP_CONFIGURED) throw resendError;
       console.warn(
         `Resend email failed; falling back to SMTP: ${resendError.message || resendError}`
       );
@@ -3071,9 +3100,7 @@ function renderLoginAlertResponse(message: string, success = true) {
 }
 
 async function sendLoginAlertEmail(req: any, user: any, token: string) {
-  if (!SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
-    throw new Error('SMTP is not configured for login alert emails');
-  }
+  assertEmailConfigured('Login alert email');
 
   const time = new Date().toLocaleString();
   const userAgent = String(req.headers['user-agent'] || 'Unknown device');
@@ -3418,9 +3445,7 @@ function syncAuthenticatedVerification(userId: string) {
 }
 
 async function sendLoginNotificationEmail(req: any, user: any) {
-  if (!SMTP_USER || !SMTP_PASS) {
-    throw new Error('SMTP is not configured for login notifications');
-  }
+  assertEmailConfigured('Login notification email');
 
   const time = new Date().toLocaleString();
   const userAgent = String(req.headers['user-agent'] || 'Unknown device');
@@ -3473,10 +3498,10 @@ async function handlePasswordResetRequest(req: any, res: any) {
     });
   }
 
-  if (!SMTP_USER || !SMTP_PASS) {
+  if (!EMAIL_CONFIGURED) {
     return res
       .status(503)
-      .json({ error: 'SMTP is not configured. Set SMTP_USER and SMTP_PASS to send reset emails.' });
+      .json({ error: 'Email is not configured. Set SMTP or Resend env vars on Render.' });
   }
 
   const token = crypto.randomBytes(32).toString('hex');
@@ -3766,10 +3791,12 @@ app.get('/api/health', (_req, res) => {
     backend: 'express',
     firebase: false,
     email: {
-      configured: Boolean(SMTP_USER && SMTP_PASS && SMTP_FROM),
+      configured: EMAIL_CONFIGURED,
       provider: RESEND_API_KEY ? 'resend-with-smtp-fallback' : 'smtp',
       resendConfigured: Boolean(RESEND_API_KEY),
-      smtpConfigured: Boolean(SMTP_USER && SMTP_PASS),
+      smtpConfigured: SMTP_CONFIGURED,
+      smtpAuthConfigured: SMTP_AUTH_CONFIGURED,
+      smtpRequireAuth: SMTP_REQUIRE_AUTH,
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_SECURE,
@@ -3898,7 +3925,7 @@ app.post('/api/auth/register', validateRequest(RegisterSchema), (req: any, res):
     // Send verification email asynchronously (don't block registration)
     void (async () => {
       try {
-        if (SMTP_USER && SMTP_PASS) {
+        if (EMAIL_CONFIGURED) {
           const { token: verificationToken } = createEmailVerificationToken(id);
           const verificationUrl = buildEmailVerificationUrl(req, verificationToken, email);
           await sendEmailVerificationEmail(req, user, verificationUrl);
@@ -4118,9 +4145,7 @@ function createTeamInvitationEmail(req: any, invitation: any, token: string) {
 }
 
 async function sendTeamInvitationEmail(req: any, invitation: any, token: string) {
-  if (!SMTP_USER || !SMTP_PASS) {
-    throw new Error('SMTP is not configured for team invitation emails');
-  }
+  assertEmailConfigured('Team invitation email');
   const email = createTeamInvitationEmail(req, invitation, token);
   await sendAppEmail({
     from: SMTP_FROM,
@@ -5197,8 +5222,8 @@ app.post('/api/auth/send-verification-email', authenticate, async (req: any, res
       });
     }
 
-    if (!SMTP_USER || !SMTP_PASS) {
-      return res.status(500).json({ error: 'Email service is not configured' });
+    if (!EMAIL_CONFIGURED) {
+      return res.status(500).json({ error: 'Email service is not configured on this server' });
     }
 
     const { token } = createEmailVerificationToken(user.id);
@@ -5404,14 +5429,16 @@ app.post('/api/transaction-email', authenticate, async (req: any, res): Promise<
     const currentEmail = String(req.user?.email || '')
       .trim()
       .toLowerCase();
-    if (!isElevatedRole(req.user?.role) && requestedEmail !== currentEmail) {
+    const canSendCustomerReceipt =
+      isElevatedRole(req.user?.role) || ['trader', 'agent', 'manager'].includes(req.user?.role);
+    if (!canSendCustomerReceipt && requestedEmail !== currentEmail) {
       return res
         .status(403)
-        .json({ error: 'You can only send transaction emails to your own account email' });
+        .json({ error: 'Customers can only send transaction emails to their own account email' });
     }
 
-    if (!SMTP_USER || !SMTP_PASS) {
-      return res.status(500).json({ error: 'Email service is not configured' });
+    if (!EMAIL_CONFIGURED) {
+      return res.status(500).json({ error: 'Email service is not configured on this server' });
     }
 
     const html = `
@@ -9164,8 +9191,8 @@ app.post('/api/admin/send-email', requireRole(['admin']), async (req: any, res):
     return res.status(400).json({ error: 'No valid recipients found' });
   }
 
-  if (!SMTP_USER || !SMTP_PASS) {
-    return res.status(500).json({ error: 'SMTP configuration missing' });
+  if (!EMAIL_CONFIGURED) {
+    return res.status(500).json({ error: 'Email service is not configured on this server' });
   }
 
   try {
@@ -9237,11 +9264,9 @@ app.post('/api/emails', authenticate, async (req: any, res): Promise<any> => {
     return res.status(400).json({ error: 'Invalid email format for recipient' });
   }
 
-  if (!SMTP_USER || !SMTP_PASS) {
-    console.error(
-      'SMTP is not configured. Please set SMTP_USER and SMTP_PASS in .env or .env.example.'
-    );
-    return res.status(500).json({ error: 'SMTP configuration missing' });
+  if (!EMAIL_CONFIGURED) {
+    console.error('Email is not configured. Set SMTP or Resend env vars on Render.');
+    return res.status(500).json({ error: 'Email service is not configured on this server' });
   }
 
   try {
@@ -9295,9 +9320,9 @@ app.post('/api/welcome-email', authenticate, async (req: any, res): Promise<any>
     return res.status(400).json({ error: 'Valid email is required' });
   }
 
-  if (!SMTP_USER || !SMTP_PASS) {
-    logSystem(`Welcome email skipped for ${email}: SMTP not configured`, 'warn', 'email', req.user.id);
-    return res.status(503).json({ error: 'SMTP configuration missing' });
+  if (!EMAIL_CONFIGURED) {
+    logSystem(`Welcome email skipped for ${email}: email service not configured`, 'warn', 'email', req.user.id);
+    return res.status(503).json({ error: 'Email service is not configured on this server' });
   }
 
   try {
@@ -11615,11 +11640,12 @@ app.get('/api/admin/health/check', requireRole(['admin']), (_req: any, res) => {
 // Test SMTP connectivity
 app.post('/api/admin/smtp/test', requireRole(['admin']), async (req: any, res): Promise<any> => {
   try {
-    if (!SMTP_USER || !SMTP_PASS || !SMTP_HOST) {
+    if (!SMTP_CONFIGURED) {
       return res.status(400).json({
         success: false,
         error: 'SMTP is not configured',
-        details: 'Please set SMTP_USER, SMTP_PASS, and SMTP_HOST in environment variables',
+        details:
+          'Set SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASS in Render. For trusted SMTP relay, set SMTP_REQUIRE_AUTH=false.',
       });
     }
 
@@ -11689,8 +11715,9 @@ app.post('/api/admin/smtp/test', requireRole(['admin']), async (req: any, res): 
       error: 'SMTP test failed',
       details: error.message || error,
       suggestions: [
-        'Check SMTP credentials in environment variables',
+        'Check SMTP credentials in Render environment variables',
         'Verify SMTP host and port are correct',
+        'For Gmail, use an app password, not your normal Gmail password',
         'Ensure firewall allows outbound SMTP connections',
         'Check email service provider settings',
       ],
