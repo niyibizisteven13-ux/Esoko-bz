@@ -352,10 +352,10 @@ export default function ManagerDashboard() {
                               </div>
                               <div>
                                 <p className="font-bold text-neutral-900 dark:text-white text-sm">
-                                  Core Services
+                                  Data Sync
                                 </p>
                                 <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">
-                                  Operational
+                                  {loading ? 'Checking' : 'Connected'}
                                 </p>
                               </div>
                             </div>
@@ -369,10 +369,10 @@ export default function ManagerDashboard() {
                               </div>
                               <div>
                                 <p className="font-bold text-neutral-900 dark:text-white text-sm">
-                                  Database Load
+                                  Records Loaded
                                 </p>
                                 <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
-                                  Low (12%)
+                                  {users.length + transactions.length} total
                                 </p>
                               </div>
                             </div>
@@ -383,9 +383,13 @@ export default function ManagerDashboard() {
                       <div className="bg-neutral-900 dark:bg-orange-600/10 p-8 rounded-[2.5rem] shadow-xl shadow-neutral-200 dark:shadow-none border dark:border-orange-500/20">
                         <h3 className="text-xl font-bold text-white mb-6">Quick Actions</h3>
                         <div className="grid grid-cols-2 gap-3">
-                          <button className="p-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest hover:bg-white/10 transition-all flex flex-col items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="p-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white/50 uppercase tracking-widest transition-all flex flex-col items-center gap-2 cursor-not-allowed"
+                          >
                             <Download size={20} className="text-orange-600" />
-                            Reports
+                            Reports Beta
                           </button>
                           <button
                             onClick={() => setActiveTab('verification')}
@@ -401,9 +405,13 @@ export default function ManagerDashboard() {
                             <Settings size={20} className="text-purple-600" />
                             Config
                           </button>
-                          <button className="p-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest hover:bg-white/10 transition-all flex flex-col items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="p-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black text-white/50 uppercase tracking-widest transition-all flex flex-col items-center gap-2 cursor-not-allowed"
+                          >
                             <Users size={20} className="text-green-600" />
-                            Support
+                            Support Beta
                           </button>
                         </div>
                       </div>

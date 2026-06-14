@@ -22,19 +22,10 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { useLanguage } from '../../context/LanguageContext';
 import { cn, formatCurrency } from '../../lib/utils';
 import { generateAccountingReport } from '../../lib/pdfGenerator';
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  orderBy,
-  limit,
-  doc,
-  setDoc,
-  getDoc,
-} from '../../services/firestoreBridge';
+import { getTraderFinancials, saveTraderFinancials } from '../../services/accountingService';
+import { getTransactions } from '../../services/transactionService';
+import { getPurchases } from '../../services/purchaseService';
 import TraderUpgrade from './TraderUpgrade';
-const db = undefined; // Used by firestoreBridge
 import { format } from 'date-fns';
 
 type AccountingTab =
@@ -109,22 +100,17 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
   useEffect(() => {
     const loadFinancialData = async () => {
       try {
-        const docRef = doc(db, 'trader_financials', traderId);
-        const docSnap = await getDoc(docRef);
+        const response = await getTraderFinancials(traderId);
+        const data = response?.document || response?.data || response;
 
-        if (docSnap.exists()) {
-          const data = docSnap.data();
+        if (data && Object.keys(data).length > 0) {
           setFinancialData(data.financialData || financialData);
           setFixedAssets(data.fixedAssets || []);
           setTrialBalanceEntries(data.trialBalanceEntries || []);
           setFinancialDateModified(
-            data.updatedAt?.toDate?.()?.toISOString?.() ||
-              data.updatedAt ||
-              data.modifiedAt ||
-              new Date().toISOString()
+            data.updatedAt || data.modifiedAt || new Date().toISOString()
           );
         } else {
-          // Initialize with default empty data
           setFinancialData({
             assets: 0,
             liabilities: 0,
@@ -154,20 +140,15 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
   // Save financial data to Firestore
   const saveFinancialData = async (data: any) => {
     try {
-      const docRef = doc(db, 'trader_financials', traderId);
       const modifiedAt = new Date().toISOString();
-      await setDoc(
-        docRef,
-        {
-          traderId,
-          financialData: data.financialData || financialData,
-          fixedAssets: data.fixedAssets || fixedAssets,
-          trialBalanceEntries: data.trialBalanceEntries || trialBalanceEntries,
-          updatedAt: modifiedAt,
-          modifiedAt,
-        },
-        { merge: true }
-      );
+      await saveTraderFinancials(traderId, {
+        traderId,
+        financialData: data.financialData || financialData,
+        fixedAssets: data.fixedAssets || fixedAssets,
+        trialBalanceEntries: data.trialBalanceEntries || trialBalanceEntries,
+        updatedAt: modifiedAt,
+        modifiedAt,
+      });
       setFinancialDateModified(modifiedAt);
     } catch (error) {
       console.error('Error saving financial data:', error);
@@ -301,24 +282,15 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
       headers = ['Date', 'Description', 'Ref', 'Debit', 'Credit'];
       body = [['Sample Entry', 'Real data will be loaded from transactions', 'REF-001', '0', '0']];
     } else if (activeTab === 'sales') {
-      // Fetch real sales data
-      const q = query(
-        collection(db, 'purchases'),
-        where('traderId', '==', traderId),
-        orderBy('timestamp', 'desc'),
-        limit(50)
-      );
-      const snap = await getDocs(q);
+      const response = await getPurchases({ traderId, limit: 50 });
+      const salesData = response.purchases || [];
       headers = ['Date', 'Product', 'Customer', 'Amount (RWF)'];
-      body = snap.docs.map((doc: any) => {
-        const data = doc.data();
-        return [
-          data.timestamp?.toDate ? format(data.timestamp.toDate(), 'yyyy-MM-dd') : 'N/A',
-          data.productName || 'N/A',
-          data.customerName || 'N/A',
-          formatCurrency(data.amount),
-        ];
-      });
+      body = salesData.map((sale: any) => [
+        sale.timestamp ? format(new Date(sale.timestamp), 'yyyy-MM-dd') : 'N/A',
+        sale.productName || 'N/A',
+        sale.customerName || 'N/A',
+        formatCurrency(sale.amount),
+      ]);
     } else {
       headers = ['Data', 'Value'];
       body = [['Sample Data', 'Real data will be available after setup']];
@@ -535,12 +507,10 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
                         }
                       }}
                       onCancel={() => {
-                        // Reload data to reset changes
                         const loadData = async () => {
-                          const docRef = doc(db, 'trader_financials', traderId);
-                          const docSnap = await getDoc(docRef);
-                          if (docSnap.exists()) {
-                            const data = docSnap.data();
+                          const response = await getTraderFinancials(traderId);
+                          const data = response?.document || response?.data || response;
+                          if (data && Object.keys(data).length > 0) {
                             setFinancialData(data.financialData || financialData);
                           }
                         };
@@ -575,12 +545,10 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
                         }
                       }}
                       onCancel={() => {
-                        // Reload data to reset changes
                         const loadData = async () => {
-                          const docRef = doc(db, 'trader_financials', traderId);
-                          const docSnap = await getDoc(docRef);
-                          if (docSnap.exists()) {
-                            const data = docSnap.data();
+                          const response = await getTraderFinancials(traderId);
+                          const data = response?.document || response?.data || response;
+                          if (data && Object.keys(data).length > 0) {
                             setFixedAssets(data.fixedAssets || []);
                           }
                         };
@@ -605,12 +573,10 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
                         }
                       }}
                       onCancel={() => {
-                        // Reload data to reset changes
                         const loadData = async () => {
-                          const docRef = doc(db, 'trader_financials', traderId);
-                          const docSnap = await getDoc(docRef);
-                          if (docSnap.exists()) {
-                            const data = docSnap.data();
+                          const response = await getTraderFinancials(traderId);
+                          const data = response?.document || response?.data || response;
+                          if (data && Object.keys(data).length > 0) {
                             setTrialBalanceEntries(data.trialBalanceEntries || []);
                           }
                         };
@@ -804,14 +770,8 @@ function JournalView({ traderId, bookType }: { traderId: string; bookType: 'mana
   React.useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const q = query(
-          collection(db, 'transactions'),
-          where('userId', '==', traderId),
-          orderBy('timestamp', 'desc'),
-          limit(50)
-        );
-        const snap = await getDocs(q);
-        setTransactions(snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
+        const response = await getTransactions({ userId: traderId, sortBy: 'timestamp', sortOrder: 'desc', limit: 50 });
+        setTransactions(response.transactions || []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -896,14 +856,8 @@ function CashBookView({
   React.useEffect(() => {
     const fetchTransactions = async () => {
       try {
-        const q = query(
-          collection(db, 'transactions'),
-          where('userId', '==', traderId),
-          orderBy('timestamp', 'desc'),
-          limit(100)
-        );
-        const snap = await getDocs(q);
-        setTransactions(snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
+        const response = await getTransactions({ userId: traderId, sortBy: 'timestamp', sortOrder: 'desc', limit: 100 });
+        setTransactions(response.transactions || []);
       } catch (err) {
         console.error(err);
       } finally {
@@ -976,14 +930,8 @@ function SalesJournalView({
   React.useEffect(() => {
     const fetchSales = async () => {
       try {
-        const q = query(
-          collection(db, 'purchases'),
-          where('traderId', '==', traderId),
-          orderBy('timestamp', 'desc'),
-          limit(20)
-        );
-        const snap = await getDocs(q);
-        setSales(snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
+        const response = await getPurchases({ traderId, sortBy: 'timestamp', sortOrder: 'desc', limit: 20 });
+        setSales(response.purchases || []);
       } catch (err) {
         console.error(err);
       } finally {

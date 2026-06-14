@@ -164,9 +164,9 @@ function CommandCenter({ members }: { members: any[] }) {
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard label="Team Productivity" value="94%" trend="+5%" icon={Activity} color="text-blue-600 bg-blue-50" />
-        <StatCard label="Active Trades" value="12" trend="Live" icon={TrendingUp} color="text-green-600 bg-green-50" />
-        <StatCard label="Risk Level" value="Low" trend="Safe" icon={ShieldAlert} color="text-orange-600 bg-orange-50" />
+        <StatCard label="Team Productivity" value="--" trend="Beta" icon={Activity} color="text-blue-600 bg-blue-50" />
+        <StatCard label="Active Sales" value="--" trend="Beta" icon={TrendingUp} color="text-green-600 bg-green-50" />
+        <StatCard label="Risk Level" value="--" trend="Beta" icon={ShieldAlert} color="text-orange-600 bg-orange-50" />
         <StatCard label="Members" value={String(members.length)} trend="Active" icon={Users} color="text-purple-600 bg-purple-50" />
       </div>
       <div className="bg-white rounded-[3rem] border-2 border-neutral-100 shadow-xl shadow-neutral-100/50 overflow-hidden">

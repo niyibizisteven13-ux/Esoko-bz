@@ -223,7 +223,10 @@ export default function TraderIncentives({ traderId }: { traderId: string }) {
               Points Issued
             </p>
           </div>
-          <h3 className="text-3xl font-black text-orange-900 dark:text-neutral-100">12,450</h3>
+          <h3 className="text-3xl font-black text-orange-900 dark:text-neutral-100">--</h3>
+          <p className="mt-2 text-[10px] font-bold text-orange-700/70 dark:text-orange-300/70">
+            Connect loyalty ledger
+          </p>
         </div>
 
         <div className="card p-6 bg-purple-50/50 dark:bg-purple-900/10 border-purple-100 dark:border-purple-900/30">
@@ -235,7 +238,10 @@ export default function TraderIncentives({ traderId }: { traderId: string }) {
               Customers Enrolled
             </p>
           </div>
-          <h3 className="text-3xl font-black text-purple-900 dark:text-neutral-100">84</h3>
+          <h3 className="text-3xl font-black text-purple-900 dark:text-neutral-100">--</h3>
+          <p className="mt-2 text-[10px] font-bold text-purple-700/70 dark:text-purple-300/70">
+            Data needed
+          </p>
         </div>
       </div>
 

@@ -81,6 +81,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, formatCurrency } from '../lib/utils';
 import ThemeToggle from '../components/ThemeToggle';
+import ActionModal from '../components/ui/ActionModal';
+import { useNotifications } from '../context/NotificationContext';
 import { subscribeToLiveUpdates } from '../services/liveSyncService';
 import {
   fetchSubscriptionPlans as fetchSubscriptionPlansService,
@@ -308,6 +310,7 @@ interface SystemLog {
 type DatabaseStats = Record<string, number>;
 
 export default function AdminPortal() {
+  const { showToast } = useNotifications();
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -481,6 +484,43 @@ export default function AdminPortal() {
     experienceYears: 0,
     certifications: '',
   });
+  const [adminAction, setAdminAction] = useState<
+    | null
+    | {
+        type: 'wallet';
+        userId: string;
+        userName: string;
+        amount: string;
+        description: string;
+      }
+    | {
+        type: 'role';
+        userId: string;
+        role: string;
+        tier: string;
+      }
+    | {
+        type: 'refund';
+        transactionId: string;
+        reason: string;
+      }
+    | {
+        type: 'correct-transaction';
+        transactionId: string;
+        amount: string;
+        status: string;
+      }
+    | {
+        type: 'subscription-price';
+        subscription: any;
+        price: string;
+      }
+    | {
+        type: 'deactivate-subscription';
+        subscriptionId: string;
+      }
+  >(null);
+  const [adminActionLoading, setAdminActionLoading] = useState(false);
   const usersPageSize = 50;
   const transactionsPageSize = 50;
   const tradersPageSize = 50;
@@ -777,88 +817,17 @@ export default function AdminPortal() {
   };
 
   const handleWalletAdjustment = async (userId: string, userName: string) => {
-    const amountStr = prompt(
-      `Enter amount to adjust for ${userName}. Use negative values to debit, positive to credit.`,
-      '0'
-    );
-    if (!amountStr) return;
-
-    const amount = Number(amountStr);
-    if (Number.isNaN(amount) || amount === 0) {
-      alert('Enter a valid non-zero amount.');
-      return;
-    }
-
-    const description = prompt(
-      'Enter a description for the wallet adjustment:',
-      'Admin adjustment'
-    );
-    if (!description) return;
-
-    if (
-      !(await requireAdminOtpConfirmation(
-        `Confirm wallet adjustment of ${formatCurrency(amount)} for ${userName}?`
-      ))
-    ) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/admin/users/${userId}/wallet-adjust`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ amount, type: 'admin-adjustment', description }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(`Wallet adjustment failed: ${data.error || 'Unknown error'}`);
-        return;
-      }
-      await fetchUsers();
-      alert('Wallet adjustment completed successfully.');
-    } catch (err) {
-      console.error('Wallet adjustment failed:', err);
-      alert('Wallet adjustment failed.');
-    }
+    setAdminAction({
+      type: 'wallet',
+      userId,
+      userName,
+      amount: '',
+      description: 'Admin wallet adjustment',
+    });
   };
 
   const handleChangeUserRole = async (userId: string, currentRole: string) => {
-    const role = prompt('Enter new role (customer, trader, agent, manager, admin):', currentRole);
-    if (!role) return;
-    const normalized = role.trim().toLowerCase();
-    if (!['customer', 'trader', 'agent', 'manager', 'admin'].includes(normalized)) {
-      alert('Role must be one of customer, trader, agent, manager, or admin.');
-      return;
-    }
-
-    const tier = prompt('Enter tier (optional, e.g. premium, gold):', '');
-    if (
-      !(await requireAdminOtpConfirmation(
-        `Confirm role change for this user to ${normalized.toUpperCase()}?`
-      ))
-    ) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/admin/users/${userId}/change-role`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ role: normalized, tier: tier?.trim() || undefined }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        alert(`Role change failed: ${data.error || 'Unknown error'}`);
-        return;
-      }
-      await fetchUsers();
-      alert('User role updated successfully.');
-    } catch (err) {
-      console.error('Role update failed:', err);
-      alert('Role update failed.');
-    }
+    setAdminAction({ type: 'role', userId, role: currentRole || 'customer', tier: '' });
   };
 
   const handleExportUsers = () => exportUsersCsv();
@@ -1213,7 +1182,7 @@ export default function AdminPortal() {
   const submitSubscriptionModal = async () => {
     const price = Number(subscriptionForm.price);
     if (!subscriptionForm.name.trim() || Number.isNaN(price) || price <= 0) {
-      alert('A valid name and price are required.');
+      showToast('A valid name and price are required.', 'error');
       return;
     }
 
@@ -1226,7 +1195,7 @@ export default function AdminPortal() {
     try {
       limits = JSON.parse(subscriptionForm.limits);
     } catch (error) {
-      alert('Limits must be valid JSON.');
+      showToast('Limits must be valid JSON.', 'error');
       return;
     }
 
@@ -1253,12 +1222,13 @@ export default function AdminPortal() {
       await fetchSubscriptionPlans();
       await fetchBusinessModel();
       closeSubscriptionModal();
-      alert(
+      showToast(
         `Subscription ${subscriptionModalMode === 'create' ? 'created' : 'updated'} successfully.`
+        , 'success'
       );
     } catch (err: any) {
       console.error('Failed to save subscription:', err);
-      alert(`Failed to save subscription: ${err?.message || 'Unknown error'}`);
+      showToast(`Failed to save subscription: ${err?.message || 'Unknown error'}`, 'error');
     } finally {
       setSubscriptionModalLoading(false);
     }
@@ -1273,16 +1243,7 @@ export default function AdminPortal() {
   };
 
   const handleDeactivateSubscription = async (subscriptionId: string) => {
-    if (!confirm('Deactivate this subscription plan?')) return;
-    try {
-      await deactivateSubscriptionPlan(subscriptionId);
-      await fetchSubscriptionPlans();
-      await fetchBusinessModel();
-      alert('Subscription deactivated successfully.');
-    } catch (err: any) {
-      console.error('Failed to deactivate subscription:', err);
-      alert(`Failed to deactivate subscription: ${err?.message || 'Unknown error'}`);
-    }
+    setAdminAction({ type: 'deactivate-subscription', subscriptionId });
   };
 
   const openFeeRuleModal = () => {
@@ -1309,7 +1270,7 @@ export default function AdminPortal() {
       Number.isNaN(fixedAmount) ||
       fixedAmount < 0
     ) {
-      alert('Please provide valid fee type, percentage, and fixed amount.');
+      showToast('Please provide valid fee type, percentage, and fixed amount.', 'error');
       return;
     }
 
@@ -1317,7 +1278,7 @@ export default function AdminPortal() {
     try {
       conditions = JSON.parse(feeRuleForm.conditions);
     } catch (error) {
-      alert('Conditions must be valid JSON.');
+      showToast('Conditions must be valid JSON.', 'error');
       return;
     }
 
@@ -1331,10 +1292,10 @@ export default function AdminPortal() {
       });
       await fetchBusinessModel();
       closeFeeRuleModal();
-      alert('Dynamic fee rule added successfully.');
+      showToast('Dynamic fee rule added successfully.', 'success');
     } catch (err: any) {
       console.error('Failed to add dynamic fee:', err);
-      alert(`Failed to add fee rule: ${err?.message || 'Unknown error'}`);
+      showToast(`Failed to add fee rule: ${err?.message || 'Unknown error'}`, 'error');
     } finally {
       setFeeRuleModalLoading(false);
     }
@@ -1345,25 +1306,11 @@ export default function AdminPortal() {
   };
 
   const handleUpdateFeePricing = async (subscription: any) => {
-    const price = Number(prompt('New subscription price in RWF:', String(subscription.price || 0)));
-    if (Number.isNaN(price) || price <= 0) {
-      alert('Enter a valid price.');
-      return;
-    }
-    try {
-      await updateSubscriptionPricing(
-        subscription.id,
-        price,
-        subscription.features || [],
-        subscription.limits || {}
-      );
-      await fetchBusinessModel();
-      await fetchSubscriptionPlans();
-      alert('Subscription pricing updated successfully.');
-    } catch (err: any) {
-      console.error('Failed to update subscription pricing:', err);
-      alert(`Failed to update pricing: ${err?.message || 'Unknown error'}`);
-    }
+    setAdminAction({
+      type: 'subscription-price',
+      subscription,
+      price: String(subscription.price || ''),
+    });
   };
 
   const openTraderDetailModal = async (trader: any) => {
@@ -1838,60 +1785,16 @@ export default function AdminPortal() {
   };
 
   const handleCorrectTransaction = async (transactionId: string) => {
-    const newAmount = prompt('Enter corrected amount:');
-    const newStatus = prompt('Enter new status (completed/failed/pending):');
-    if (!newAmount || !newStatus) return;
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/admin/transactions/${transactionId}/correct`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ amount: Number(newAmount), status: newStatus }),
-      });
-      if (res.ok) {
-        await fetchTransactionsList();
-        refreshData();
-        alert('Transaction corrected successfully');
-      } else {
-        const data = await res.json();
-        alert(`Failed to correct transaction: ${data.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Failed to correct transaction:', err);
-      alert('Failed to correct transaction.');
-    }
+    setAdminAction({
+      type: 'correct-transaction',
+      transactionId,
+      amount: '',
+      status: 'completed',
+    });
   };
 
   const handleRefundTransaction = async (transactionId: string) => {
-    const reason = prompt('Enter refund reason:', 'Admin refund');
-    if (!reason) return;
-
-    if (!(await requireAdminOtpConfirmation('Confirm this transaction refund?'))) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/admin/transactions/${transactionId}/refund`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': makeIdempotencyKey(),
-        },
-        credentials: 'include',
-        body: JSON.stringify({ reason }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        await fetchTransactionsList();
-        refreshData();
-        alert('Transaction refunded successfully.');
-      } else {
-        alert(`Failed to refund transaction: ${data.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Failed to refund transaction:', err);
-      alert('Failed to refund transaction.');
-    }
+    setAdminAction({ type: 'refund', transactionId, reason: 'Admin refund' });
   };
 
   const handleMaintenanceToggle = async (enabled: boolean) => {
@@ -1917,6 +1820,172 @@ export default function AdminPortal() {
     } catch (err) {
       console.error('Failed to toggle maintenance mode:', err);
       alert('Failed to update maintenance mode.');
+    }
+  };
+
+  const updateAdminAction = (updates: Record<string, unknown>) => {
+    setAdminAction((current) => (current ? ({ ...current, ...updates } as typeof current) : current));
+  };
+
+  const confirmAdminAction = async () => {
+    if (!adminAction) return;
+    setAdminActionLoading(true);
+
+    try {
+      if (adminAction.type === 'wallet') {
+        const amount = Number(adminAction.amount);
+        if (Number.isNaN(amount) || amount === 0) {
+          showToast('Enter a valid non-zero wallet amount.', 'error');
+          return;
+        }
+        if (!adminAction.description.trim()) {
+          showToast('A reason is required for wallet adjustments.', 'error');
+          return;
+        }
+        if (
+          !(await requireAdminOtpConfirmation(
+            `Confirm wallet adjustment of ${formatCurrency(amount)} for ${adminAction.userName}?`
+          ))
+        ) {
+          return;
+        }
+
+        const res = await fetch(`${apiBaseUrl}/api/admin/users/${adminAction.userId}/wallet-adjust`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            amount,
+            type: 'admin-adjustment',
+            description: adminAction.description.trim(),
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Wallet adjustment failed');
+        }
+        await fetchUsers();
+        showToast('Wallet adjustment completed.', 'success');
+      }
+
+      if (adminAction.type === 'role') {
+        const normalized = adminAction.role.trim().toLowerCase();
+        if (!['customer', 'trader', 'agent', 'manager', 'admin'].includes(normalized)) {
+          showToast('Role must be customer, trader, agent, manager, or admin.', 'error');
+          return;
+        }
+        if (
+          !(await requireAdminOtpConfirmation(
+            `Confirm role change for this user to ${normalized.toUpperCase()}?`
+          ))
+        ) {
+          return;
+        }
+
+        const res = await fetch(`${apiBaseUrl}/api/admin/users/${adminAction.userId}/change-role`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            role: normalized,
+            tier: adminAction.tier.trim() || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Role change failed');
+        }
+        await fetchUsers();
+        showToast('User role updated.', 'success');
+      }
+
+      if (adminAction.type === 'refund') {
+        if (!adminAction.reason.trim()) {
+          showToast('A refund reason is required.', 'error');
+          return;
+        }
+        if (!(await requireAdminOtpConfirmation('Confirm this transaction refund?'))) {
+          return;
+        }
+
+        const res = await fetch(`${apiBaseUrl}/api/admin/transactions/${adminAction.transactionId}/refund`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey(),
+          },
+          credentials: 'include',
+          body: JSON.stringify({ reason: adminAction.reason.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || 'Refund failed');
+        }
+        await fetchTransactionsList();
+        refreshData();
+        showToast('Transaction refunded.', 'success');
+      }
+
+      if (adminAction.type === 'correct-transaction') {
+        const amount = Number(adminAction.amount);
+        const status = adminAction.status.trim().toLowerCase();
+        if (Number.isNaN(amount) || amount <= 0) {
+          showToast('Enter a valid corrected amount.', 'error');
+          return;
+        }
+        if (!['completed', 'failed', 'pending'].includes(status)) {
+          showToast('Status must be completed, failed, or pending.', 'error');
+          return;
+        }
+
+        const res = await fetch(`${apiBaseUrl}/api/admin/transactions/${adminAction.transactionId}/correct`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ amount, status }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Transaction correction failed');
+        }
+        await fetchTransactionsList();
+        refreshData();
+        showToast('Transaction corrected.', 'success');
+      }
+
+      if (adminAction.type === 'subscription-price') {
+        const price = Number(adminAction.price);
+        if (Number.isNaN(price) || price <= 0) {
+          showToast('Enter a valid subscription price.', 'error');
+          return;
+        }
+        await updateSubscriptionPricing(
+          adminAction.subscription.id,
+          price,
+          adminAction.subscription.features || [],
+          adminAction.subscription.limits || {}
+        );
+        await fetchBusinessModel();
+        await fetchSubscriptionPlans();
+        showToast('Subscription pricing updated.', 'success');
+      }
+
+      if (adminAction.type === 'deactivate-subscription') {
+        if (!(await requireAdminOtpConfirmation('Confirm subscription plan deactivation?'))) {
+          return;
+        }
+        await deactivateSubscriptionPlan(adminAction.subscriptionId);
+        await fetchSubscriptionPlans();
+        await fetchBusinessModel();
+        showToast('Subscription deactivated.', 'success');
+      }
+
+      setAdminAction(null);
+    } catch (err: any) {
+      console.error('Admin action failed:', err);
+      showToast(err?.message || 'Admin action failed.', 'error');
+    } finally {
+      setAdminActionLoading(false);
     }
   };
 
@@ -2371,26 +2440,190 @@ export default function AdminPortal() {
   }
 
   const tabs = [
-    { id: 'dashboard', label: 'Control Center', icon: BarChart3 },
-    { id: 'health', label: 'System Health', icon: Server },
+    { id: 'dashboard', label: 'Control', icon: BarChart3 },
+    { id: 'health', label: 'Health', icon: Server },
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'traders', label: 'Trader Oversight', icon: Store },
-    { id: 'analysts', label: 'Business Analysts', icon: UserCheck },
-    { id: 'subscriptions', label: 'Subscriptions', icon: Zap },
-    { id: 'fees', label: 'Fee Collection', icon: Wallet },
+    { id: 'traders', label: 'Traders', icon: Store },
+    { id: 'analysts', label: 'Analysts', icon: UserCheck },
+    { id: 'subscriptions', label: 'Plans', icon: Zap },
+    { id: 'fees', label: 'Fees', icon: Wallet },
     { id: 'transactions', label: 'Transactions', icon: DollarSign },
     { id: 'screening', label: 'Screening', icon: ShieldCheck },
     { id: 'security', label: 'Security', icon: ShieldCheck },
     { id: 'verification', label: 'Verification', icon: UserCheck },
-    { id: 'support', label: 'Support Center', icon: LifeBuoy },
-    { id: 'email', label: 'Email Center', icon: Mail },
-    { id: 'surveys', label: 'Survey Analytics', icon: BarChart3 },
-    { id: 'database', label: 'Database Control', icon: Database },
+    { id: 'support', label: 'Support', icon: LifeBuoy },
+    { id: 'email', label: 'Email', icon: Mail },
+    { id: 'surveys', label: 'Surveys', icon: BarChart3 },
+    { id: 'database', label: 'Database', icon: Database },
     { id: 'logs', label: 'Logs', icon: Terminal },
   ];
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <ActionModal
+        open={Boolean(adminAction)}
+        title={
+          adminAction?.type === 'wallet'
+            ? 'Adjust Wallet'
+            : adminAction?.type === 'role'
+              ? 'Change User Role'
+              : adminAction?.type === 'refund'
+                ? 'Refund Transaction'
+                : adminAction?.type === 'correct-transaction'
+                  ? 'Correct Transaction'
+                  : adminAction?.type === 'subscription-price'
+                    ? 'Update Price'
+                    : 'Deactivate Plan'
+        }
+        description={
+          adminAction?.type === 'wallet'
+            ? 'Credits and debits affect real balances. Add a clear reason for the audit trail.'
+            : adminAction?.type === 'role'
+              ? 'Role changes affect permissions immediately.'
+              : adminAction?.type === 'refund'
+                ? 'Refunds are high-risk money actions and require a reason.'
+                : adminAction?.type === 'correct-transaction'
+                  ? 'Corrections should only be used for audited operational fixes.'
+                  : adminAction?.type === 'subscription-price'
+                    ? 'This changes the plan price shown to traders.'
+                    : 'This plan will no longer be offered to traders.'
+        }
+        tone={
+          adminAction?.type === 'refund' ||
+          adminAction?.type === 'wallet' ||
+          adminAction?.type === 'deactivate-subscription'
+            ? 'danger'
+            : 'default'
+        }
+        confirmLabel={
+          adminAction?.type === 'deactivate-subscription'
+            ? 'Deactivate'
+            : adminAction?.type === 'refund'
+              ? 'Refund'
+              : 'Confirm'
+        }
+        loading={adminActionLoading}
+        onClose={() => setAdminAction(null)}
+        onConfirm={confirmAdminAction}
+      >
+        {adminAction?.type === 'wallet' && (
+          <>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                Amount
+              </span>
+              <input
+                type="number"
+                value={adminAction.amount}
+                onChange={(e) => updateAdminAction({ amount: e.target.value })}
+                placeholder="Positive to credit, negative to debit"
+                className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                Reason
+              </span>
+              <textarea
+                value={adminAction.description}
+                onChange={(e) => updateAdminAction({ description: e.target.value })}
+                rows={3}
+                className="w-full resize-none rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              />
+            </label>
+          </>
+        )}
+
+        {adminAction?.type === 'role' && (
+          <>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                New Role
+              </span>
+              <select
+                value={adminAction.role}
+                onChange={(e) => updateAdminAction({ role: e.target.value })}
+                className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              >
+                <option value="customer">Customer</option>
+                <option value="trader">Trader</option>
+                <option value="agent">Agent</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                Tier
+              </span>
+              <input
+                value={adminAction.tier}
+                onChange={(e) => updateAdminAction({ tier: e.target.value })}
+                placeholder="Optional"
+                className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              />
+            </label>
+          </>
+        )}
+
+        {adminAction?.type === 'refund' && (
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+              Refund Reason
+            </span>
+            <textarea
+              value={adminAction.reason}
+              onChange={(e) => updateAdminAction({ reason: e.target.value })}
+              rows={3}
+              className="w-full resize-none rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+            />
+          </label>
+        )}
+
+        {adminAction?.type === 'correct-transaction' && (
+          <>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                Corrected Amount
+              </span>
+              <input
+                type="number"
+                value={adminAction.amount}
+                onChange={(e) => updateAdminAction({ amount: e.target.value })}
+                className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+                Status
+              </span>
+              <select
+                value={adminAction.status}
+                onChange={(e) => updateAdminAction({ status: e.target.value })}
+                className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+              >
+                <option value="completed">Completed</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+          </>
+        )}
+
+        {adminAction?.type === 'subscription-price' && (
+          <label className="block">
+            <span className="mb-2 block text-[10px] font-black uppercase tracking-widest text-neutral-500">
+              New Price (RWF)
+            </span>
+            <input
+              type="number"
+              value={adminAction.price}
+              onChange={(e) => updateAdminAction({ price: e.target.value })}
+              className="w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-neutral-900 outline-none focus:ring-2 focus:ring-orange-500 dark:border-white/10 dark:bg-black dark:text-white"
+            />
+          </label>
+        )}
+      </ActionModal>
       {/* Header */}
       <div className="border-b border-white/5 bg-[#111] sticky top-0 z-50">
         <div className="px-6 py-4 flex items-center justify-between">
@@ -5335,9 +5568,15 @@ export default function AdminPortal() {
             >
               <div className="flex flex-col xl:flex-row justify-between gap-4 mb-6">
                 <div>
-                  <h3 className="text-lg font-black text-white">Database Control</h3>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-lg font-black text-white">Database</h3>
+                    <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-yellow-300">
+                      Restricted
+                    </span>
+                  </div>
                   <p className="text-sm text-neutral-500">
-                    Inspect table counts, view rows, and manage system config directly from SQLite.
+                    Inspect table counts and recent rows. Keep production changes behind audited
+                    server actions.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-3">
@@ -5353,6 +5592,21 @@ export default function AdminPortal() {
                   >
                     <Database className="w-4 h-4" /> Download Backup
                   </button>
+                </div>
+              </div>
+
+              <div className="mb-6 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4 text-yellow-100">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-yellow-300" />
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-widest">
+                      Production safety
+                    </p>
+                    <p className="mt-1 text-sm text-yellow-100/80">
+                      Direct database tools should stay read-only in production unless the action is
+                      logged, reviewed and reversible.
+                    </p>
+                  </div>
                 </div>
               </div>
 

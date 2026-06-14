@@ -1,14 +1,4 @@
-import {
-  collection,
-  addDoc,
-  doc,
-  updateDoc,
-  getDoc,
-  query,
-  where,
-  getDocs,
-} from 'firebase/firestore';
-import { db } from '../firebase';
+import { apiGet, apiPost, apiPut } from './apiClient';
 import { generateReceipt, ReceiptData } from '../lib/pdfGenerator';
 import { sendEmail } from '../services/emailService';
 
@@ -19,7 +9,8 @@ interface PurchaseData {
   productName: string;
   amount: number;
   quantity: number;
-  timestamp: any;
+  timestamp?: any;
+  createdAt?: any;
   status: string;
   customerEmail?: string;
   customerName?: string;
@@ -44,7 +35,6 @@ class AutoReceiptService {
   async processApprovedPurchase(purchaseData: PurchaseData): Promise<void> {
     const purchaseId = purchaseData.id;
 
-    // Prevent duplicate processing
     if (this.processingQueue.has(purchaseId)) {
       console.log(`Receipt already being processed for purchase ${purchaseId}`);
       return;
@@ -54,13 +44,15 @@ class AutoReceiptService {
 
     try {
       console.log(`Processing receipt for approved purchase: ${purchaseId}`);
-
-      // Get customer and trader details if not provided
       const enrichedData = await this.enrichPurchaseData(purchaseData);
 
-      // Generate receipt PDF
       const receiptDate =
-        enrichedData.timestamp?.toDate?.() || new Date(enrichedData.timestamp || Date.now());
+        enrichedData.timestamp instanceof Date
+          ? enrichedData.timestamp
+          : enrichedData.timestamp?.toDate?.() instanceof Date
+          ? enrichedData.timestamp.toDate()
+          : new Date(enrichedData.timestamp || enrichedData.createdAt || Date.now());
+
       const receiptData: ReceiptData = {
         receiptNumber: `RCP-${purchaseId.slice(-8).toUpperCase()}`,
         date: receiptDate.toLocaleString(),
@@ -72,7 +64,7 @@ class AutoReceiptService {
           {
             name: enrichedData.productName,
             quantity: enrichedData.quantity,
-            price: enrichedData.amount / enrichedData.quantity,
+            price: enrichedData.amount / Math.max(1, enrichedData.quantity),
             total: enrichedData.amount,
           },
         ],
@@ -91,68 +83,62 @@ class AutoReceiptService {
         transactionId: purchaseId,
       };
 
-      // Generate PDF
       const pdfBlob = generateReceipt(receiptData, { save: false });
-
-      // Store receipt in database
       await this.storeReceipt(purchaseId, receiptData, pdfBlob);
 
-      // Send email receipt if customer email is available
       if (enrichedData.customerEmail) {
         await this.sendEmailReceipt(enrichedData.customerEmail, receiptData, pdfBlob);
       }
 
-      // Update purchase with receipt status
-      await updateDoc(doc(db, 'purchases', purchaseId), {
-        receiptGenerated: true,
-        receiptGeneratedAt: new Date(),
+      await apiPut(`/api/purchases/${encodeURIComponent(purchaseId)}`, {
+        receiptGenerated: 1,
+        receiptGeneratedAt: new Date().toISOString(),
         receiptId: `receipt_${purchaseId}`,
       });
 
       console.log(`Receipt processed successfully for purchase: ${purchaseId}`);
     } catch (error) {
       console.error(`Failed to process receipt for purchase ${purchaseId}:`, error);
-
-      // Mark as failed but don't retry automatically
-      await updateDoc(doc(db, 'purchases', purchaseId), {
-        receiptGenerationFailed: true,
-        receiptError: error instanceof Error ? error.message : 'Unknown receipt generation error',
-        receiptErrorAt: new Date(),
-      });
+      try {
+        await apiPut(`/api/purchases/${encodeURIComponent(purchaseId)}`, {
+          receiptGenerationFailed: 1,
+          receiptError: error instanceof Error ? error.message : 'Unknown receipt generation error',
+          receiptErrorAt: new Date().toISOString(),
+        });
+      } catch (updateError) {
+        console.error(`Failed to mark receipt failure for purchase ${purchaseId}:`, updateError);
+      }
     } finally {
       this.processingQueue.delete(purchaseId);
     }
   }
 
-  /**
-   * Enrich purchase data with customer and trader information
-   */
   private async enrichPurchaseData(purchaseData: PurchaseData): Promise<PurchaseData> {
     const enriched = { ...purchaseData };
 
-    // Get customer data
     if (purchaseData.customerId && !enriched.customerEmail) {
       try {
-        const customerDoc = await getDoc(doc(db, 'users', purchaseData.customerId));
-        if (customerDoc.exists()) {
-          const customerData = customerDoc.data();
-          enriched.customerEmail = customerData.email;
-          enriched.customerName = customerData.displayName || customerData.name;
+        const customerResponse = await apiGet<{ user: any }>(
+          `/api/users/${encodeURIComponent(purchaseData.customerId)}`
+        );
+        if (customerResponse?.user) {
+          enriched.customerEmail = customerResponse.user.email;
+          enriched.customerName = customerResponse.user.displayName || customerResponse.user.name;
         }
       } catch (error) {
         console.warn('Failed to fetch customer data:', error);
       }
     }
 
-    // Get trader data
     if (purchaseData.traderId && !enriched.traderEmail) {
       try {
-        const traderDoc = await getDoc(doc(db, 'users', purchaseData.traderId));
-        if (traderDoc.exists()) {
-          const traderData = traderDoc.data();
-          enriched.traderEmail = traderData.email;
+        const traderResponse = await apiGet<{ user: any }>(
+          `/api/users/${encodeURIComponent(purchaseData.traderId)}`
+        );
+        if (traderResponse?.user) {
+          enriched.traderEmail = traderResponse.user.email;
           enriched.traderName =
-            traderData.businessName || traderData.displayName || traderData.name;
+            traderResponse.user.businessName || traderResponse.user.displayName || traderResponse.user.name;
         }
       } catch (error) {
         console.warn('Failed to fetch trader data:', error);
@@ -162,49 +148,47 @@ class AutoReceiptService {
     return enriched;
   }
 
-  /**
-   * Store receipt data in database
-   */
   private async storeReceipt(purchaseId: string, receiptData: any, pdfBlob: Blob): Promise<void> {
-    // Convert PDF blob to base64 for storage (in production, consider cloud storage)
     const pdfBase64 = await this.blobToBase64(pdfBlob);
+    const contentBase64 = pdfBase64.includes(',') ? pdfBase64.split(',')[1] : pdfBase64;
 
-    await addDoc(collection(db, 'receipts'), {
+    await apiPost('/api/receipts', {
       purchaseId,
       receiptData,
-      pdfData: pdfBase64,
-      generatedAt: new Date(),
+      pdfData: contentBase64,
+      generatedAt: new Date().toISOString(),
       status: 'generated',
     });
   }
 
-  /**
-   * Send receipt via email
-   */
   private async sendEmailReceipt(email: string, receiptData: any, pdfBlob: Blob): Promise<void> {
     try {
       const subject = `Receipt for your purchase - ${receiptData.receiptNumber}`;
       const htmlBody = this.generateReceiptEmailHTML(receiptData);
+      const pdfBase64 = await this.blobToBase64(pdfBlob);
+      const contentBase64 = pdfBase64.includes(',') ? pdfBase64.split(',')[1] : pdfBase64;
 
-      // In a real implementation, you'd upload the PDF to cloud storage and include a download link
-      // For now, we'll send the email without attachment
       await sendEmail({
         to: email,
-        subject,
-        html: htmlBody,
-        // attachment: pdfBlob would be added here in production
+        message: {
+          subject,
+          html: htmlBody,
+          attachments: [
+            {
+              filename: `ESOKO_Receipt_${receiptData.transactionId}.pdf`,
+              contentBase64,
+              contentType: 'application/pdf',
+            },
+          ],
+        },
       });
 
       console.log(`Receipt email sent to ${email}`);
     } catch (error) {
       console.error('Failed to send receipt email:', error);
-      // Don't throw - email failure shouldn't stop the process
     }
   }
 
-  /**
-   * Generate HTML email template for receipt
-   */
   private generateReceiptEmailHTML(receiptData: any): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -217,7 +201,7 @@ class AutoReceiptService {
           <div style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
             <h2 style="margin: 0 0 10px 0; color: #374151;">Receipt Details</h2>
             <p style="margin: 5px 0;"><strong>Receipt Number:</strong> ${receiptData.receiptNumber}</p>
-            <p style="margin: 5px 0;"><strong>Date:</strong> ${receiptData.date.toLocaleDateString()}</p>
+            <p style="margin: 5px 0;"><strong>Date:</strong> ${receiptData.date}</p>
             <p style="margin: 5px 0;"><strong>Merchant:</strong> ${receiptData.traderName}</p>
           </div>
 
@@ -257,20 +241,11 @@ class AutoReceiptService {
               <strong>Transaction ID:</strong> ${receiptData.transactionId}
             </p>
           </div>
-
-          <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-            <p style="margin: 0; color: #6b7280; font-size: 14px;">
-              Thank you for shopping with ESOKO! Visit us again soon.
-            </p>
-          </div>
         </div>
       </div>
     `;
   }
 
-  /**
-   * Convert blob to base64 string
-   */
   private blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -280,32 +255,23 @@ class AutoReceiptService {
     });
   }
 
-  /**
-   * Get receipt for a purchase
-   */
   async getReceipt(purchaseId: string): Promise<any> {
-    const q = query(collection(db, 'receipts'), where('purchaseId', '==', purchaseId));
-    const querySnapshot = await getDocs(q);
-
-    if (!querySnapshot.empty) {
-      const doc = querySnapshot.docs[0];
-      return { id: doc.id, ...doc.data() };
-    }
-
-    return null;
+    const response = await apiGet<{ receipts: any[] }>('/api/receipts', {
+      params: { purchaseId },
+    });
+    return (response.receipts || [])[0] || null;
   }
 
-  /**
-   * Manually trigger receipt generation for a purchase
-   */
   async generateReceiptManually(purchaseId: string): Promise<void> {
-    const purchaseDoc = await getDoc(doc(db, 'purchases', purchaseId));
+    const response = await apiGet<{ purchase: PurchaseData }>(
+      `/api/purchases/${encodeURIComponent(purchaseId)}`
+    );
 
-    if (!purchaseDoc.exists()) {
+    const purchaseData = response.purchase;
+    if (!purchaseData) {
       throw new Error('Purchase not found');
     }
 
-    const purchaseData = { id: purchaseId, ...purchaseDoc.data() } as PurchaseData;
     await this.processApprovedPurchase(purchaseData);
   }
 }

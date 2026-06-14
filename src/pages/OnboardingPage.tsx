@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, Monitor, ShoppingBag, Smartphone, Store } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  Monitor,
+  ShoppingBag,
+  Smartphone,
+  Store,
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
 import { getCurrentUser } from '../services/sessionService';
@@ -10,10 +19,22 @@ type Role = 'customer' | 'trader';
 type Step = 1 | 2 | 3;
 
 const traderPurposeOptions = ['Retail shop', 'Wholesale', 'Food and grocery', 'Services', 'Other'];
-const customerPurposeOptions = ['Buy for home', 'Buy for business', 'Find deals', 'Track receipts', 'Other'];
+const customerPurposeOptions = [
+  'Buy for home',
+  'Buy for business',
+  'Find deals',
+  'Track receipts',
+  'Other',
+];
 
 const traderGoals = ['Sell faster', 'Track stock', 'Send receipts', 'Get verified', 'Backup sales'];
-const customerGoals = ['Find nearby shops', 'Save receipts', 'Pay quickly', 'Compare prices', 'Offline access'];
+const customerGoals = [
+  'Find nearby shops',
+  'Save receipts',
+  'Pay quickly',
+  'Compare prices',
+  'Offline access',
+];
 
 export default function OnboardingPage() {
   const navigate = useNavigate();
@@ -29,7 +50,7 @@ export default function OnboardingPage() {
 
   const purposeOptions = role === 'trader' ? traderPurposeOptions : customerPurposeOptions;
   const goalOptions = role === 'trader' ? traderGoals : customerGoals;
-  const dashboardPath = role === 'trader' ? '/trader' : '/customer';
+  const dashboardPath = role === 'trader' ? '/trader' : '/customer?tab=marketplace';
 
   const title = useMemo(() => {
     if (step === 1) return role === 'trader' ? 'What do you sell?' : 'How will you use ESOKO?';
@@ -174,7 +195,9 @@ export default function OnboardingPage() {
                 />
               ))}
             </div>
-            <p className="text-xs font-black uppercase tracking-widest text-orange-500">Step {step} of 3</p>
+            <p className="text-xs font-black uppercase tracking-widest text-orange-500">
+              Step {step} of 3
+            </p>
             <h1 className="mt-2 text-2xl md:text-4xl font-black tracking-tight">{title}</h1>
             <p className="mt-3 max-w-xl text-sm text-neutral-400">
               {role === 'trader'
@@ -192,7 +215,11 @@ export default function OnboardingPage() {
           {step === 1 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {purposeOptions.map((option) => (
-                <OptionButton key={option} active={purpose === option} onClick={() => setPurpose(option)}>
+                <OptionButton
+                  key={option}
+                  active={purpose === option}
+                  onClick={() => setPurpose(option)}
+                >
                   {role === 'trader' ? <Store size={20} /> : <ShoppingBag size={20} />}
                   <span>{option}</span>
                 </OptionButton>
@@ -202,11 +229,17 @@ export default function OnboardingPage() {
 
           {step === 2 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <OptionButton active={primaryDevice === 'Smartphone'} onClick={() => setPrimaryDevice('Smartphone')}>
+              <OptionButton
+                active={primaryDevice === 'Smartphone'}
+                onClick={() => setPrimaryDevice('Smartphone')}
+              >
                 <Smartphone size={22} />
                 <span>Smartphone</span>
               </OptionButton>
-              <OptionButton active={primaryDevice === 'Computer'} onClick={() => setPrimaryDevice('Computer')}>
+              <OptionButton
+                active={primaryDevice === 'Computer'}
+                onClick={() => setPrimaryDevice('Computer')}
+              >
                 <Monitor size={22} />
                 <span>Computer</span>
               </OptionButton>
@@ -216,7 +249,11 @@ export default function OnboardingPage() {
           {step === 3 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {goalOptions.map((goal) => (
-                <OptionButton key={goal} active={interests.includes(goal)} onClick={() => toggleInterest(goal)}>
+                <OptionButton
+                  key={goal}
+                  active={interests.includes(goal)}
+                  onClick={() => toggleInterest(goal)}
+                >
                   <CheckCircle2 size={20} />
                   <span>{goal}</span>
                 </OptionButton>
@@ -227,7 +264,11 @@ export default function OnboardingPage() {
           <div className="mt-8 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
             <button
               type="button"
-              onClick={() => (step === 1 ? navigate(dashboardPath, { replace: true }) : setStep((step - 1) as Step))}
+              onClick={() =>
+                step === 1
+                  ? navigate(dashboardPath, { replace: true })
+                  : setStep((step - 1) as Step)
+              }
               className="h-12 px-5 rounded-xl border border-white/10 text-sm font-black text-neutral-300 hover:bg-white/5 flex items-center justify-center gap-2"
             >
               <ArrowLeft size={18} />
@@ -250,7 +291,11 @@ export default function OnboardingPage() {
                 disabled={saving}
                 className="h-12 px-6 rounded-xl bg-orange-600 text-sm font-black text-white hover:bg-orange-500 disabled:opacity-60 flex items-center justify-center gap-2"
               >
-                {saving ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                {saving ? (
+                  <Loader2 className="animate-spin" size={18} />
+                ) : (
+                  <CheckCircle2 size={18} />
+                )}
                 Enter App
               </button>
             )}
@@ -286,7 +331,9 @@ function OptionButton({
           : 'border-white/10 bg-white/[0.03] text-neutral-300 hover:border-white/20 hover:bg-white/[0.06]'
       }`}
     >
-      <span className={`flex items-center gap-3 ${active ? 'text-orange-400' : 'text-neutral-500'}`}>
+      <span
+        className={`flex items-center gap-3 ${active ? 'text-orange-400' : 'text-neutral-500'}`}
+      >
         {children}
       </span>
     </button>

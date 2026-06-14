@@ -254,11 +254,81 @@ export default function initializeDatabase() {
       deliveryStatus TEXT DEFAULT 'pending',
       paymentStatus TEXT DEFAULT 'unpaid',
       notes TEXT,
+      receiptGenerated INTEGER DEFAULT 0,
+      receiptGeneratedAt DATETIME,
+      receiptId TEXT,
+      receiptGenerationFailed INTEGER DEFAULT 0,
+      receiptError TEXT,
+      receiptErrorAt DATETIME,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (customerId) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (productId) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS receipts (
+      id TEXT PRIMARY KEY,
+      purchaseId TEXT NOT NULL,
+      receiptData TEXT,
+      pdfData TEXT,
+      status TEXT DEFAULT 'generated',
+      generatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (purchaseId) REFERENCES purchases(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS bulk_requests (
+      id TEXT PRIMARY KEY,
+      traderId TEXT NOT NULL,
+      itemName TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      location TEXT,
+      notes TEXT,
+      status TEXT DEFAULT 'pending',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS group_orders (
+      id TEXT PRIMARY KEY,
+      itemKey TEXT NOT NULL,
+      itemName TEXT NOT NULL,
+      totalQuantity INTEGER DEFAULT 0,
+      participantCount INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'open',
+      wholesaleNote TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS credit_score_snapshots (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      grade TEXT NOT NULL,
+      bankPayload TEXT NOT NULL,
+      factors TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS voice_ledger_entries (
+      id TEXT PRIMARY KEY,
+      traderId TEXT NOT NULL,
+      ledgerEntryId TEXT,
+      rawText TEXT NOT NULL,
+      language TEXT DEFAULT 'rw',
+      entryType TEXT NOT NULL,
+      amount REAL NOT NULL,
+      description TEXT,
+      confidence REAL DEFAULT 0,
+      status TEXT DEFAULT 'posted',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (ledgerEntryId) REFERENCES ledger_entries(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS transactions (
@@ -1118,6 +1188,9 @@ export default function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_transactions_recipientId ON transactions(recipientId);
     CREATE INDEX IF NOT EXISTS idx_wallet_transactions_userId ON wallet_transactions(userId);
     CREATE INDEX IF NOT EXISTS idx_wallet_transactions_userId_createdAt ON wallet_transactions(userId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_group_orders_itemKey ON group_orders(itemKey);
+    CREATE INDEX IF NOT EXISTS idx_credit_score_snapshots_userId_createdAt ON credit_score_snapshots(userId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_voice_ledger_entries_traderId_createdAt ON voice_ledger_entries(traderId, createdAt DESC);
     CREATE INDEX IF NOT EXISTS idx_deliveries_traderId_status_createdAt ON deliveries(traderId, status, createdAt DESC);
     CREATE INDEX IF NOT EXISTS idx_deliveries_customerId_createdAt ON deliveries(customerId, createdAt DESC);
     CREATE INDEX IF NOT EXISTS idx_live_sessions_status_updatedAt ON live_sessions(status, updatedAt DESC);

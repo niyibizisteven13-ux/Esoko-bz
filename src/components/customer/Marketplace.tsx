@@ -305,83 +305,109 @@ export function Marketplace({
     if (coordinates) openGoogleMapsDirections(coordinates, userLocation || undefined);
   };
 
-  const filteredProducts = products.filter((product) => {
-    const queryTerms = searchQuery
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((t) => t);
-    const traderInfo = traders[product.traderId];
+  const getTraderDistance = (trader: any) => {
+    if (!userLocation) return null;
+    const coordinates = getTraderCoordinates(trader);
+    return coordinates ? calculateDistance(userLocation, coordinates) : null;
+  };
 
-    const matchesSearch = queryTerms.every(
-      (term) =>
-        product.name?.toLowerCase().includes(term) ||
-        product.description?.toLowerCase().includes(term) ||
-        product.category?.toLowerCase().includes(term) ||
-        traderInfo?.businessName?.toLowerCase().includes(term) ||
-        traderInfo?.businessAddress?.toLowerCase().includes(term) ||
-        traderInfo?.name?.toLowerCase().includes(term)
-    );
-    const matchesCategory =
-      selectedCategory === 'all' ||
-      product.category === selectedCategory ||
-      traderInfo?.businessCategory === selectedCategory;
-    const matchesPrice =
-      (product.price || 0) >= priceRange.min && (product.price || 0) <= priceRange.max;
+  const filteredProducts = products
+    .filter((product) => {
+      const queryTerms = searchQuery
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t);
+      const traderInfo = traders[product.traderId];
 
-    let matchesDistance = true;
-    if (nearbyOnly && userLocation) {
-      const traderCoordinates = getTraderCoordinates(traderInfo);
-      if (traderCoordinates) {
-        const dist = calculateDistance(userLocation, traderCoordinates);
-        matchesDistance = dist <= distanceFilter;
-      } else {
-        matchesDistance = false;
+      const matchesSearch = queryTerms.every(
+        (term) =>
+          product.name?.toLowerCase().includes(term) ||
+          product.description?.toLowerCase().includes(term) ||
+          product.category?.toLowerCase().includes(term) ||
+          traderInfo?.businessName?.toLowerCase().includes(term) ||
+          traderInfo?.businessAddress?.toLowerCase().includes(term) ||
+          traderInfo?.name?.toLowerCase().includes(term)
+      );
+      const matchesCategory =
+        selectedCategory === 'all' ||
+        product.category === selectedCategory ||
+        traderInfo?.businessCategory === selectedCategory;
+      const matchesPrice =
+        (product.price || 0) >= priceRange.min && (product.price || 0) <= priceRange.max;
+
+      let matchesDistance = true;
+      if (nearbyOnly && userLocation) {
+        const traderCoordinates = getTraderCoordinates(traderInfo);
+        if (traderCoordinates) {
+          const dist = calculateDistance(userLocation, traderCoordinates);
+          matchesDistance = dist <= distanceFilter;
+        } else {
+          matchesDistance = false;
+        }
       }
-    }
 
-    return matchesSearch && matchesCategory && matchesPrice && matchesDistance;
-  });
-
-  const filteredShops = Object.values(traders).filter((trader) => {
-    const queryTerms = searchQuery
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((t) => t);
-
-    const matchesSearch = queryTerms.every((term) => {
-      // Check if any product of this trader matches the term
-      const hasMatchingProduct = products.some(
-        (p) =>
-          p.traderId === trader.id &&
-          (p.name?.toLowerCase().includes(term) ||
-            p.description?.toLowerCase().includes(term) ||
-            p.category?.toLowerCase().includes(term))
-      );
-
-      return (
-        trader.businessName?.toLowerCase().includes(term) ||
-        trader.businessAddress?.toLowerCase().includes(term) ||
-        trader.category?.toLowerCase().includes(term) ||
-        trader.businessCategory?.toLowerCase().includes(term) ||
-        trader.name?.toLowerCase().includes(term) ||
-        hasMatchingProduct
-      );
+      return matchesSearch && matchesCategory && matchesPrice && matchesDistance;
+    })
+    .sort((a, b) => {
+      if (!userLocation) return 0;
+      const aDistance = getTraderDistance(traders[a.traderId]);
+      const bDistance = getTraderDistance(traders[b.traderId]);
+      if (aDistance === null && bDistance === null) return 0;
+      if (aDistance === null) return 1;
+      if (bDistance === null) return -1;
+      return aDistance - bDistance;
     });
-    const matchesCategory =
-      selectedCategory === 'all' || trader.businessCategory === selectedCategory;
 
-    let matchesDistance = true;
-    if (nearbyOnly && userLocation) {
-      const traderCoordinates = getTraderCoordinates(trader);
-      if (traderCoordinates) {
-        const dist = calculateDistance(userLocation, traderCoordinates);
-        matchesDistance = dist <= distanceFilter;
-      } else {
-        matchesDistance = false;
+  const filteredShops = Object.values(traders)
+    .filter((trader) => {
+      const queryTerms = searchQuery
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t);
+
+      const matchesSearch = queryTerms.every((term) => {
+        // Check if any product of this trader matches the term
+        const hasMatchingProduct = products.some(
+          (p) =>
+            p.traderId === trader.id &&
+            (p.name?.toLowerCase().includes(term) ||
+              p.description?.toLowerCase().includes(term) ||
+              p.category?.toLowerCase().includes(term))
+        );
+
+        return (
+          trader.businessName?.toLowerCase().includes(term) ||
+          trader.businessAddress?.toLowerCase().includes(term) ||
+          trader.category?.toLowerCase().includes(term) ||
+          trader.businessCategory?.toLowerCase().includes(term) ||
+          trader.name?.toLowerCase().includes(term) ||
+          hasMatchingProduct
+        );
+      });
+      const matchesCategory =
+        selectedCategory === 'all' || trader.businessCategory === selectedCategory;
+
+      let matchesDistance = true;
+      if (nearbyOnly && userLocation) {
+        const traderCoordinates = getTraderCoordinates(trader);
+        if (traderCoordinates) {
+          const dist = calculateDistance(userLocation, traderCoordinates);
+          matchesDistance = dist <= distanceFilter;
+        } else {
+          matchesDistance = false;
+        }
       }
-    }
-    return matchesSearch && matchesCategory && matchesDistance;
-  });
+      return matchesSearch && matchesCategory && matchesDistance;
+    })
+    .sort((a, b) => {
+      if (!userLocation) return 0;
+      const aDistance = getTraderDistance(a);
+      const bDistance = getTraderDistance(b);
+      if (aDistance === null && bDistance === null) return 0;
+      if (aDistance === null) return 1;
+      if (bDistance === null) return -1;
+      return aDistance - bDistance;
+    });
 
   const quickViewProducts = useMemo(() => {
     if (!showQuickView) return [];
@@ -492,7 +518,9 @@ export function Marketplace({
     setShareCopied(false);
   };
 
-  const shareToSocial = async (target: 'native' | 'whatsapp' | 'facebook' | 'x' | 'telegram' | 'copy') => {
+  const shareToSocial = async (
+    target: 'native' | 'whatsapp' | 'facebook' | 'x' | 'telegram' | 'copy'
+  ) => {
     if (!shareProduct) return;
     const { url, text } = buildProductShare(shareProduct);
 
@@ -604,62 +632,64 @@ export function Marketplace({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 px-1 md:grid md:grid-cols-4 md:overflow-visible md:px-0">
         <button
           type="button"
           onClick={() => setNearPaymentTarget({})}
-          className="p-4 rounded-2xl bg-orange-600 text-white text-left shadow-xl shadow-orange-900/30 hover:bg-orange-700 transition-all flex items-center justify-between gap-3"
+          className="min-w-[138px] md:min-w-0 px-3 py-2.5 rounded-2xl bg-orange-600 text-white text-left shadow-lg shadow-orange-900/20 hover:bg-orange-700 transition-all flex items-center gap-3"
         >
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/60">
-              Pay
-            </p>
-            <h3 className="mt-1 text-sm md:text-base font-black leading-tight">Near Pay</h3>
+          <div className="w-9 h-9 rounded-xl bg-black/20 flex items-center justify-center shrink-0">
+            <Nfc size={19} />
           </div>
-          <div className="w-11 h-11 rounded-xl bg-black/20 flex items-center justify-center shrink-0">
-            <Nfc size={22} />
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-white/60">Pay</p>
+            <h3 className="text-sm font-black leading-tight truncate">Near Pay</h3>
           </div>
         </button>
         <button
           type="button"
           onClick={openTraderMap}
-          className="p-4 rounded-2xl bg-blue-600 text-white text-left hover:bg-blue-700 transition-all flex items-center justify-between gap-3 shadow-xl shadow-blue-950/30"
+          className="min-w-[138px] md:min-w-0 px-3 py-2.5 rounded-2xl bg-blue-600 text-white text-left hover:bg-blue-700 transition-all flex items-center gap-3 shadow-lg shadow-blue-950/20"
         >
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-white/60">
-              Map
-            </p>
-            <h3 className="mt-1 text-sm md:text-base font-black leading-tight">Nearby</h3>
+          <div className="w-9 h-9 rounded-xl bg-black/20 flex items-center justify-center shrink-0">
+            <MapIcon size={19} />
           </div>
-          <MapIcon size={22} className="shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-white/60">Map</p>
+            <h3 className="text-sm font-black leading-tight truncate">Nearby</h3>
+          </div>
         </button>
         <button
           type="button"
           onClick={() => setSearchMode('shops')}
-          className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-orange-500/30 transition-all flex items-center justify-between gap-3"
+          className="min-w-[138px] md:min-w-0 px-3 py-2.5 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-orange-500/30 transition-all flex items-center gap-3"
         >
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-500">
+          <div className="w-9 h-9 rounded-xl bg-orange-500/10 text-orange-500 flex items-center justify-center shrink-0">
+            <Radio size={19} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-500">
               Live
             </p>
-            <h3 className="mt-1 text-sm md:text-base font-black text-white leading-tight">
+            <h3 className="text-sm font-black text-white leading-tight truncate">
               {liveSessions.length} online
             </h3>
           </div>
-          <Radio size={22} className="text-orange-500 shrink-0" />
         </button>
         <button
           type="button"
           onClick={() => setShowScanner(true)}
-          className="p-4 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-emerald-500/30 transition-all flex items-center justify-between gap-3"
+          className="min-w-[138px] md:min-w-0 px-3 py-2.5 rounded-2xl bg-[#0a0a0a] border border-white/5 text-left hover:border-emerald-500/30 transition-all flex items-center gap-3"
         >
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-400">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+            <ShoppingCart size={19} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-emerald-400">
               Scan
             </p>
-            <h3 className="mt-1 text-sm md:text-base font-black text-white leading-tight">QR</h3>
+            <h3 className="text-sm font-black text-white leading-tight truncate">QR</h3>
           </div>
-          <ShoppingCart size={22} className="text-emerald-400 shrink-0" />
         </button>
       </div>
 
@@ -827,7 +857,7 @@ export function Marketplace({
           </div>
         </div>
 
-        <div className="bg-[#0a0a0a] p-6 rounded-[2.5rem] border border-white/5 shadow-sm space-y-8">
+        <div className="bg-[#0a0a0a] p-4 md:p-5 rounded-3xl border border-white/5 shadow-sm space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Price Filter */}
             <div className="space-y-4">
@@ -917,7 +947,7 @@ export function Marketplace({
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className={cn(
-              'p-6 rounded-3xl border flex flex-col md:flex-row items-center gap-6',
+              'p-4 rounded-3xl border flex flex-col md:flex-row items-center gap-4',
               searchMode === 'products'
                 ? 'bg-blue-500/5 border-blue-500/20'
                 : 'bg-emerald-500/5 border-emerald-500/20'
@@ -1192,7 +1222,9 @@ export function Marketplace({
                     {userLocation && getTraderCoordinates(traderInfo) && (
                       <div className="flex items-center gap-1 text-[10px] font-black text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/10">
                         <Navigation size={10} className="fill-current" />
-                        {calculateDistance(userLocation, getTraderCoordinates(traderInfo)!).toFixed(1)}
+                        {calculateDistance(userLocation, getTraderCoordinates(traderInfo)!).toFixed(
+                          1
+                        )}
                         {t.common.km}
                       </div>
                     )}
@@ -1464,7 +1496,7 @@ export function Marketplace({
                       setSearchQuery(trader.businessName || trader.name || '');
                       setSearchMode('products');
                     }}
-                    className="flex-1 py-4 bg-white/5 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-600 transition-all flex items-center justify-center gap-2 border border-white/5 shadow-xl shadow-black/50"
+                    className="flex-1 py-3 bg-white/5 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-600 transition-all flex items-center justify-center gap-2 border border-white/5 shadow-xl shadow-black/50"
                   >
                     View Products{' '}
                     <ChevronRight
@@ -1483,7 +1515,7 @@ export function Marketplace({
                         })
                       }
                       className={cn(
-                        'p-4 rounded-2xl transition-all border',
+                        'p-3 rounded-2xl transition-all border',
                         liveSession
                           ? 'bg-red-600 text-white border-red-500 shadow-lg shadow-red-900/30'
                           : 'bg-red-500/10 text-red-400 hover:bg-red-600 hover:text-white border-red-500/20'
@@ -1495,7 +1527,7 @@ export function Marketplace({
                     <button
                       type="button"
                       onClick={() => setNearPaymentTarget({ trader })}
-                      className="p-4 bg-blue-500/10 text-blue-400 rounded-2xl hover:bg-blue-600 hover:text-white transition-all border border-blue-500/20"
+                      className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl hover:bg-blue-600 hover:text-white transition-all border border-blue-500/20"
                       title="Near payment"
                     >
                       <Nfc size={20} />
@@ -1503,7 +1535,7 @@ export function Marketplace({
                     {trader.phoneNumber && (
                       <a
                         href={`tel:${trader.phoneNumber}`}
-                        className="p-4 bg-white/5 text-emerald-500 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all border border-white/5"
+                        className="p-3 bg-white/5 text-emerald-500 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all border border-white/5"
                         title={t.common.call}
                       >
                         <Phone size={20} />
@@ -1513,7 +1545,7 @@ export function Marketplace({
                       <button
                         type="button"
                         onClick={() => navigateToTrader(trader)}
-                        className="p-4 bg-white/5 text-blue-500 rounded-2xl hover:bg-blue-600 hover:text-white transition-all border border-white/5"
+                        className="p-3 bg-white/5 text-blue-500 rounded-2xl hover:bg-blue-600 hover:text-white transition-all border border-white/5"
                         title="Get Directions"
                       >
                         <Navigation size={20} />
@@ -2000,7 +2032,10 @@ function ProductFeedViewer({
                     </h2>
                     <div className="mt-3 flex items-center gap-2 text-xs font-bold text-neutral-500">
                       <Store size={15} className="text-orange-500" />
-                      {product.traderName || trader?.businessName || trader?.name || 'Official Store'}
+                      {product.traderName ||
+                        trader?.businessName ||
+                        trader?.name ||
+                        'Official Store'}
                     </div>
                   </div>
 
@@ -2094,7 +2129,9 @@ function ProductFeedViewer({
 
 function getProductDisplayMedia(product: any) {
   return (
-    product.mediaItems?.find((item: { isMain?: boolean; url?: string }) => item.isMain && item.url) ||
+    product.mediaItems?.find(
+      (item: { isMain?: boolean; url?: string }) => item.isMain && item.url
+    ) ||
     product.mediaItems?.find((item: { url?: string }) => item.url) ||
     (product.imageUrl ? { type: 'image' as const, url: product.imageUrl } : undefined)
   );

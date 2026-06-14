@@ -106,7 +106,8 @@ function AppContent() {
             activeAccount: localUser.activeAccount || response?.user?.activeAccount,
             accountModes: response?.user?.accountModes || localUser.accountModes || [],
             activeTeamContext: localUser.activeTeamContext || response?.user?.activeTeamContext,
-            teamAccessOptions: localUser.teamAccessOptions || response?.user?.teamAccessOptions || [],
+            teamAccessOptions:
+              localUser.teamAccessOptions || response?.user?.teamAccessOptions || [],
           };
           if (freshUser.status === 'suspended') {
             await logoutUser();
@@ -487,7 +488,9 @@ function AppContent() {
                   ) : !userData.onboardingComplete ? (
                     <Navigate to="/onboarding" />
                   ) : (
-                    <Navigate to={`/${userRole}`} />
+                    <Navigate
+                      to={userRole === 'customer' ? '/customer?tab=marketplace' : `/${userRole}`}
+                    />
                   )
                 ) : (
                   <Navigate to="/" />

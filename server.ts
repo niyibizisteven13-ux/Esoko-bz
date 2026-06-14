@@ -3864,6 +3864,353 @@ const firestoreDocumentCollections = new Set([
   'trader_financials',
 ]);
 
+function normalizeDemandKey(itemName: string) {
+  return String(itemName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function notifyUser(userId: string, title: string, message: string, type = 'info', subType = 'system', data: any = {}) {
+  db.prepare(
+    `
+    INSERT INTO notifications (id, userId, title, message, type, subType, data, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `
+  ).run(uuidv4(), userId, title, message, type, subType, JSON.stringify(data));
+}
+
+function getCompletedTransactionsForUser(userId: string) {
+  return db
+    .prepare(
+      `
+      SELECT * FROM transactions
+      WHERE status = 'completed'
+        AND (userId = ? OR senderId = ? OR recipientId = ? OR customerId = ? OR traderId = ?)
+      ORDER BY createdAt DESC
+    `
+    )
+    .all(userId, userId, userId, userId, userId) as any[];
+}
+
+function calculateDigitalCreditScore(userId: string) {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+  if (!user) return null;
+
+  const transactions = getCompletedTransactionsForUser(userId);
+  const now = Date.now();
+  const last90 = transactions.filter((tx) => {
+    const created = Date.parse(tx.createdAt || tx.timestamp || '');
+    return Number.isFinite(created) && now - created <= 90 * 24 * 60 * 60 * 1000;
+  });
+
+  const income = transactions
+    .filter((tx) => tx.traderId === userId || tx.recipientId === userId || ['sale', 'purchase'].includes(tx.type))
+    .reduce((sum, tx) => sum + asNumber(tx.amount), 0);
+  const outflow = transactions
+    .filter((tx) => tx.senderId === userId || ['withdrawal', 'expense'].includes(tx.type))
+    .reduce((sum, tx) => sum + asNumber(tx.amount), 0);
+  const momoCount = transactions.filter((tx) => {
+    const metadata = parseJsonObject(tx.metadata);
+    return String(metadata.method || metadata.paymentMethod || tx.description || '').toLowerCase().includes('momo');
+  }).length;
+  const cashCount = transactions.filter((tx) => {
+    const metadata = parseJsonObject(tx.metadata);
+    return String(metadata.method || metadata.paymentMethod || tx.description || '').toLowerCase().includes('cash');
+  }).length;
+  const activeDays = new Set(
+    transactions.map((tx) => String(tx.createdAt || tx.timestamp || '').slice(0, 10)).filter(Boolean)
+  ).size;
+  const volatility = income > 0 ? Math.min(1, Math.abs(income - outflow) / income) : 1;
+
+  let score = 300;
+  const factors: string[] = [];
+  const transactionPoints = Math.min(140, transactions.length * 4);
+  const recencyPoints = Math.min(120, last90.length * 6);
+  const incomePoints = Math.min(130, Math.floor(income / 10000));
+  const activeDayPoints = Math.min(80, activeDays * 2);
+  const channelPoints = Math.min(70, (momoCount + cashCount) * 2);
+  const stabilityPoints = Math.max(0, Math.floor((1 - volatility) * 60));
+  score += transactionPoints + recencyPoints + incomePoints + activeDayPoints + channelPoints + stabilityPoints;
+  score = Math.max(300, Math.min(850, score));
+
+  factors.push(`Completed transactions: ${transactions.length}`);
+  factors.push(`90-day activity: ${last90.length}`);
+  factors.push(`Observed revenue: RWF ${Math.round(income).toLocaleString()}`);
+  factors.push(`MoMo records: ${momoCount}; cash records: ${cashCount}`);
+  factors.push(`Active trading days: ${activeDays}`);
+
+  const grade = score >= 760 ? 'A' : score >= 680 ? 'B' : score >= 600 ? 'C' : score >= 520 ? 'D' : 'E';
+  const bankPayload = {
+    schema: 'ESOKO_RWANDA_BANK_CREDIT_SCORE_V1',
+    generatedAt: new Date().toISOString(),
+    borrower: {
+      id: user.id,
+      name: user.businessName || user.name,
+      phone: user.phone || user.phoneNumber,
+      tin: user.tin || null,
+      role: user.role,
+    },
+    score,
+    grade,
+    currency: 'RWF',
+    metrics: {
+      completedTransactions: transactions.length,
+      transactionsLast90Days: last90.length,
+      grossIncomeRwf: Number(income.toFixed(2)),
+      outflowRwf: Number(outflow.toFixed(2)),
+      momoTransactionCount: momoCount,
+      cashTransactionCount: cashCount,
+      activeTradingDays: activeDays,
+      stabilityRatio: Number((1 - volatility).toFixed(2)),
+    },
+    factors,
+  };
+
+  db.prepare(
+    `
+    INSERT INTO credit_score_snapshots (id, userId, score, grade, bankPayload, factors, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `
+  ).run(uuidv4(), userId, score, grade, JSON.stringify(bankPayload), JSON.stringify(factors));
+
+  return { score, grade, factors, bankPayload };
+}
+
+function calculateFailureRisk(traderId: string) {
+  const revenueRow = db
+    .prepare(
+      `
+      SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+      WHERE status = 'completed'
+        AND traderId = ?
+        AND createdAt >= datetime('now', '-30 day')
+    `
+    )
+    .get(traderId) as any;
+  const ledgerRows = db
+    .prepare(
+      `
+      SELECT * FROM ledger_entries
+      WHERE accountId = ?
+        AND createdAt >= datetime('now', '-30 day')
+      ORDER BY createdAt DESC
+    `
+    )
+    .all(traderId) as any[];
+
+  const personalExpenses = ledgerRows
+    .filter((entry) => {
+      const metadata = parseJsonObject(entry.metadata);
+      const text = `${entry.description || ''} ${metadata.category || ''}`.toLowerCase();
+      return metadata.personal === true || text.includes('personal') || text.includes('urugo') || text.includes('home');
+    })
+    .reduce((sum, entry) => sum + asNumber(entry.amount), 0);
+  const businessExpenses = ledgerRows
+    .filter((entry) => entry.direction === 'debit')
+    .reduce((sum, entry) => sum + asNumber(entry.amount), 0);
+  const revenue = asNumber(revenueRow?.total);
+  const ratio = revenue > 0 ? personalExpenses / revenue : personalExpenses > 0 ? 1 : 0;
+  const level = ratio >= 0.55 ? 'high' : ratio >= 0.35 ? 'watch' : 'healthy';
+  const messageRw =
+    level === 'high'
+      ? 'Icyitonderwa: amafaranga akoreshwa ku rugo ararenze ugereranyije n`ayinjira mu bucuruzi. Gabanya amafaranga atari ay`ubucuruzi kugira ngo ubucuruzi budahomba.'
+      : level === 'watch'
+        ? 'Witonde: amafaranga y`ibyo ukoresha ku giti cyawe ari kuzamuka. Gerageza kuyatandukanya n`ay`ubucuruzi.'
+        : 'Ubucuruzi bwawe bugaragara neza. Komeza gutandukanya amafaranga y`ubucuruzi n`ayo mu rugo.';
+
+  return {
+    level,
+    ratio: Number(ratio.toFixed(2)),
+    revenue,
+    personalExpenses,
+    businessExpenses,
+    messageRw,
+  };
+}
+
+function parseVoiceLedgerText(rawText: string) {
+  const text = String(rawText || '').trim();
+  const lower = text.toLowerCase();
+  const amountMatch = lower.match(/(\d[\d,\s.]*)/);
+  const amount = amountMatch ? asNumber(amountMatch[1].replace(/[,\s]/g, '')) : 0;
+  const isRevenue =
+    /\b(nagurishije|twagurishije|sale|sold|revenue|income|yinjiye|kwinjiza)\b/.test(lower);
+  const isPersonal = /\b(urugo|rug rugo|home|personal|family|ishuri|ibiryo byo mu rugo)\b/.test(lower);
+  const entryType = isRevenue ? 'revenue' : 'expense';
+  const confidence = amount > 0 ? (isRevenue || lower.includes('expense') || lower.includes('nakoresheje') ? 0.82 : 0.62) : 0.25;
+
+  return {
+    entryType,
+    amount,
+    description: text,
+    personal: isPersonal,
+    confidence,
+  };
+}
+
+function aggregateGroupOrders(threshold = 50) {
+  const requests = db
+    .prepare("SELECT * FROM bulk_requests WHERE status IN ('pending', 'open')")
+    .all() as any[];
+  const groups = new Map<string, any>();
+  for (const request of requests) {
+    const itemKey = normalizeDemandKey(request.itemName);
+    if (!itemKey) continue;
+    const group = groups.get(itemKey) || {
+      itemKey,
+      itemName: request.itemName,
+      totalQuantity: 0,
+      traderIds: new Set<string>(),
+      requestIds: [],
+    };
+    group.totalQuantity += Math.max(0, Math.floor(asNumber(request.quantity)));
+    group.traderIds.add(request.traderId);
+    group.requestIds.push(request.id);
+    groups.set(itemKey, group);
+  }
+
+  const activated: any[] = [];
+  for (const group of groups.values()) {
+    const participantCount = group.traderIds.size;
+    if (participantCount < threshold) continue;
+    const existing = db
+      .prepare("SELECT * FROM group_orders WHERE itemKey = ? AND status IN ('open', 'notified')")
+      .get(group.itemKey) as any;
+    const groupOrderId = existing?.id || uuidv4();
+    const wholesaleNote = `Abacuruzi ${participantCount} bakeneye ${group.itemName}. Saba igiciro cya wholesale.`;
+    db.prepare(
+      `
+      INSERT INTO group_orders (id, itemKey, itemName, totalQuantity, participantCount, status, wholesaleNote, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, 'notified', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        totalQuantity = excluded.totalQuantity,
+        participantCount = excluded.participantCount,
+        status = 'notified',
+        wholesaleNote = excluded.wholesaleNote,
+        updatedAt = CURRENT_TIMESTAMP
+    `
+    ).run(groupOrderId, group.itemKey, group.itemName, group.totalQuantity, participantCount, wholesaleNote);
+
+    for (const traderId of Array.from(group.traderIds) as string[]) {
+      notifyUser(
+        traderId,
+        'Group Buy Ready',
+        `Abacuruzi ${participantCount} bakeneye ${group.itemName}. Esoko ishobora kubafasha kubona discount ya wholesale.`,
+        'success',
+        'group-buy',
+        { groupOrderId, itemName: group.itemName, participantCount }
+      );
+    }
+    activated.push({ id: groupOrderId, ...group, participantCount, traderIds: Array.from(group.traderIds) });
+  }
+
+  return activated;
+}
+
+app.get('/api/business-survival/:traderId', authenticate, (req: any, res): any => {
+  const traderId = req.params.traderId;
+  if (req.user.id !== traderId && !['admin', 'manager'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const creditScore = calculateDigitalCreditScore(traderId);
+  if (!creditScore) return res.status(404).json({ error: 'Trader not found' });
+  const failureRisk = calculateFailureRisk(traderId);
+  if (failureRisk.level === 'high') {
+    notifyUser(traderId, 'Icyitonderwa cy`ubucuruzi', failureRisk.messageRw, 'warning', 'risk', failureRisk);
+  }
+  const groupOrders = db
+    .prepare('SELECT * FROM group_orders ORDER BY updatedAt DESC LIMIT 10')
+    .all();
+  const voiceEntries = db
+    .prepare('SELECT * FROM voice_ledger_entries WHERE traderId = ? ORDER BY createdAt DESC LIMIT 8')
+    .all(traderId);
+  res.json({ success: true, creditScore, failureRisk, groupOrders, voiceEntries });
+});
+
+app.get('/api/credit-score/:userId/export', authenticate, (req: any, res): any => {
+  const userId = req.params.userId;
+  if (req.user.id !== userId && !['admin', 'manager'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const creditScore = calculateDigitalCreditScore(userId);
+  if (!creditScore) return res.status(404).json({ error: 'User not found' });
+  res.json({ success: true, export: creditScore.bankPayload });
+});
+
+app.post('/api/voice-ledger', requireRole(['trader', 'admin']), (req: any, res): any => {
+  const traderId = req.body.traderId || req.user.id;
+  if (req.user.id !== traderId && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const rawText = String(req.body.rawText || '').trim();
+  if (!rawText) return res.status(400).json({ error: 'rawText is required' });
+  const parsed = parseVoiceLedgerText(rawText);
+  if (parsed.amount <= 0) {
+    return res.status(400).json({ error: 'Could not detect an amount from the voice note' });
+  }
+
+  const ledgerEntryId = uuidv4();
+  const voiceEntryId = uuidv4();
+  const direction = parsed.entryType === 'revenue' ? 'credit' : 'debit';
+  const metadata = {
+    source: 'voice',
+    language: req.body.language || 'rw',
+    category: parsed.personal ? 'personal_expense' : parsed.entryType,
+    personal: parsed.personal,
+    rawText,
+  };
+  db.transaction(() => {
+    db.prepare(
+      `
+      INSERT INTO ledger_entries (id, transactionId, accountType, accountId, direction, amount, currency, description, metadata, createdAt)
+      VALUES (?, NULL, 'trader', ?, ?, ?, 'RWF', ?, ?, CURRENT_TIMESTAMP)
+    `
+    ).run(ledgerEntryId, traderId, direction, parsed.amount, parsed.description, JSON.stringify(metadata));
+    db.prepare(
+      `
+      INSERT INTO voice_ledger_entries (id, traderId, ledgerEntryId, rawText, language, entryType, amount, description, confidence, status, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', CURRENT_TIMESTAMP)
+    `
+    ).run(
+      voiceEntryId,
+      traderId,
+      ledgerEntryId,
+      rawText,
+      req.body.language || 'rw',
+      parsed.entryType,
+      parsed.amount,
+      parsed.description,
+      parsed.confidence
+    );
+  })();
+
+  const risk = calculateFailureRisk(traderId);
+  if (risk.level === 'high') {
+    notifyUser(traderId, 'Icyitonderwa cy`ubucuruzi', risk.messageRw, 'warning', 'risk', risk);
+  }
+
+  res.json({
+    success: true,
+    ledgerEntry: { id: ledgerEntryId, traderId, direction, amount: parsed.amount, metadata },
+    voiceEntry: { id: voiceEntryId, ...parsed },
+    failureRisk: risk,
+  });
+});
+
+app.post('/api/group-orders/run', requireRole(['trader', 'admin', 'manager']), (req: any, res): any => {
+  const threshold = Math.max(2, Math.floor(asNumber(req.body.threshold, 50)));
+  const activated = aggregateGroupOrders(threshold);
+  res.json({ success: true, activated, threshold });
+});
+
+app.get('/api/group-orders', authenticate, (_req: any, res): any => {
+  const groupOrders = db
+    .prepare('SELECT * FROM group_orders ORDER BY participantCount DESC, updatedAt DESC LIMIT 50')
+    .all();
+  res.json({ success: true, groupOrders });
+});
+
 app.get('/api/health', (_req, res) => {
   let database = 'error';
   try {
@@ -6163,6 +6510,169 @@ app.delete('/api/products/:id', requireRole(['trader', 'admin']), (req: any, res
   res.json({ success: true });
 });
 
+app.get('/api/reports/business-summary/:traderId', authenticate, (req: any, res): any => {
+  const traderId = String(req.params.traderId);
+  if (req.user.role !== 'admin' && traderId !== req.effectiveTraderId && traderId !== req.user.id) {
+    return res.status(403).json({ error: 'You can only view your own business summary' });
+  }
+
+  const trader = db.prepare('SELECT walletBalance, lowStockThreshold, businessName, name FROM users WHERE id = ?').get(traderId) as any;
+  if (!trader) return res.status(404).json({ error: 'Trader not found' });
+
+  const totalSales =
+    (db.prepare('SELECT COALESCE(SUM(totalAmount), 0) as total FROM purchases WHERE traderId = ? AND status = ?').get(traderId, 'approved') as any)
+      .total || 0;
+  const totalOrders =
+    (db.prepare('SELECT COUNT(*) as count FROM purchases WHERE traderId = ? AND status = ?').get(traderId, 'approved') as any)
+      .count || 0;
+  const todaySales =
+    (db.prepare(
+      'SELECT COALESCE(SUM(totalAmount), 0) as total FROM purchases WHERE traderId = ? AND status = ? AND DATE(createdAt) = DATE(CURRENT_TIMESTAMP, "localtime")'
+    ).get(traderId, 'approved') as any).total || 0;
+  const lowStockCount =
+    (db.prepare(
+      'SELECT COUNT(*) as count FROM products WHERE traderId = ? AND stock < COALESCE(?, 10)'
+    ).get(traderId, trader.lowStockThreshold || 10) as any).count || 0;
+
+  const creditScore = Math.max(
+    300,
+    Math.min(
+      850,
+      Math.round(500 + Math.min(350, (trader.walletBalance || 0) / 50) - lowStockCount * 3)
+    )
+  );
+
+  let recommendedAction = 'Keep selling and keep your inventory balanced.';
+  if (lowStockCount > 8) {
+    recommendedAction = 'Reorder fast-moving stock and check bulk supplier offers.';
+  } else if ((trader.walletBalance || 0) < 10000) {
+    recommendedAction = 'Save liquidity, reduce stock risk, and sell stocked items first.';
+  }
+
+  res.json({
+    success: true,
+    summary: {
+      traderId,
+      totalSales,
+      totalOrders,
+      todaySales,
+      lowStockCount,
+      walletBalance: trader.walletBalance || 0,
+      creditScore,
+      recommendedAction,
+    },
+  });
+});
+
+app.get('/api/alerts/:userId', authenticate, (req: any, res): any => {
+  const userId = String(req.params.userId);
+  if (req.user.role !== 'admin' && userId !== req.user.id) {
+    return res.status(403).json({ error: 'You can only view your own alerts' });
+  }
+
+  const user = db.prepare('SELECT role, walletBalance, lowStockThreshold FROM users WHERE id = ?').get(userId) as any;
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const alerts: any[] = [];
+  if (user.role === 'trader') {
+    const lowStockCount =
+      (db.prepare(
+        'SELECT COUNT(*) as count FROM products WHERE traderId = ? AND stock < COALESCE(?, 10)'
+      ).get(userId, user.lowStockThreshold || 10) as any).count || 0;
+    if (lowStockCount > 0) {
+      alerts.push({
+        type: 'low_stock',
+        message: `${lowStockCount} products are below your low stock threshold. Review inventory now.`,
+      });
+    }
+  }
+
+  if ((user.walletBalance || 0) < 5000) {
+    alerts.push({
+      type: 'low_balance',
+      message: 'Your wallet balance is low. Consider restocking or moving funds to preserve cash flow.',
+    });
+  }
+
+  const recentNotifications = db
+    .prepare('SELECT message, type FROM notifications WHERE userId = ? ORDER BY createdAt DESC LIMIT 5')
+    .all(userId)
+    .map((note: any) => ({ type: note.type || 'general', message: note.message }));
+
+  res.json({ success: true, alerts: [...alerts, ...recentNotifications] });
+});
+
+app.get('/api/bulk-requests', authenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const requestedTraderId = req.query.traderId ? String(req.query.traderId) : undefined;
+  const isAdmin = req.user.role === 'admin';
+  const traderId = isAdmin
+    ? requestedTraderId
+    : req.effectiveTraderId || req.user.id;
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (traderId) {
+    conditions.push('traderId = ?');
+    params.push(traderId);
+  }
+  if (requestedTraderId && !isAdmin && requestedTraderId !== traderId) {
+    return res.status(403).json({ error: 'You can only view your own bulk requests' });
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const bulkRequests = db
+    .prepare(
+      `SELECT * FROM bulk_requests ${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset);
+
+  res.json({ success: true, bulkRequests });
+});
+
+app.post('/api/bulk-requests', authenticate, (req: any, res): any => {
+  if (!['trader', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only traders or admins can create bulk requests' });
+  }
+
+  const traderId = req.effectiveTraderId || req.user.id;
+  const itemName = String(req.body.itemName || '').trim();
+  const quantity = Math.max(1, Math.floor(asNumber(req.body.quantity, 1)));
+
+  if (!itemName) return res.status(400).json({ error: 'Item name is required' });
+
+  const id = uuidv4();
+  db.prepare(
+    `INSERT INTO bulk_requests (id, traderId, itemName, quantity, location, notes, status, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+  ).run(id, traderId, itemName, quantity, req.body.location || null, req.body.notes || null);
+
+  const bulkRequest = db.prepare('SELECT * FROM bulk_requests WHERE id = ?').get(id);
+  res.json({ success: true, bulkRequest });
+});
+
+app.put('/api/bulk-requests/:id', authenticate, (req: any, res): any => {
+  const bulkRequest = db.prepare('SELECT * FROM bulk_requests WHERE id = ?').get(req.params.id) as any;
+  if (!bulkRequest) return res.status(404).json({ error: 'Bulk request not found' });
+
+  const isAdmin = req.user.role === 'admin';
+  const editableTraderId = req.effectiveTraderId || req.user.id;
+  if (!isAdmin && bulkRequest.traderId !== editableTraderId) {
+    return res.status(403).json({ error: 'You can only update your own bulk requests' });
+  }
+
+  const status = ['pending', 'fulfilled', 'cancelled'].includes(req.body.status)
+    ? req.body.status
+    : bulkRequest.status;
+  db.prepare('UPDATE bulk_requests SET status = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?').run(
+    status,
+    req.params.id
+  );
+
+  const updated = db.prepare('SELECT * FROM bulk_requests WHERE id = ?').get(req.params.id);
+  res.json({ success: true, bulkRequest: updated });
+});
+
 app.get('/api/purchases', authenticate, (req: any, res): any => {
   const { limit, offset } = parseLimitOffset(req.query);
   const conditions: string[] = [];
@@ -6191,6 +6701,34 @@ app.get('/api/purchases', authenticate, (req: any, res): any => {
     )
     .all(...params, limit, offset);
   res.json({ success: true, purchases: purchases.map(normalizePurchaseRow) });
+});
+
+app.get('/api/purchases/:id', authenticate, (req: any, res): any => {
+  const purchase = db
+    .prepare(
+      `
+    SELECT p.*, pr.name as productName, COALESCE(p.customerName, c.name) as customerName, t.name as traderName, t.businessName as traderBusinessName, t.tier as traderTier
+    FROM purchases p
+    JOIN products pr ON pr.id = p.productId
+    JOIN users c ON c.id = p.customerId
+    JOIN users t ON t.id = p.traderId
+    WHERE p.id = ?
+  `
+    )
+    .get(req.params.id) as any;
+
+  if (!purchase) return res.status(404).json({ error: 'Purchase not found' });
+  if (
+    req.user.role !== 'admin' &&
+    req.user.role !== 'manager' &&
+    req.user.id !== purchase.customerId &&
+    req.user.id !== purchase.traderId &&
+    req.effectiveTraderId !== purchase.traderId
+  ) {
+    return res.status(403).json({ error: 'You can only view your own purchases' });
+  }
+
+  res.json({ success: true, purchase: normalizePurchaseRow(purchase) });
 });
 
 app.post('/api/purchases', authenticate, (req: any, res): any => {
@@ -6276,7 +6814,7 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
           paymentMethod, recordedBy, customerName, customerEmail, customerPhone, discountAmount,
           createdAt, updatedAt
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, 'paid', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `
       ).run(
         purchaseId,
@@ -6341,14 +6879,20 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
         db.prepare(
           `
           INSERT INTO wallet_transactions (id, userId, type, amount, description, status, createdAt)
-          VALUES (?, ?, 'payment_out', ?, ?, 'completed', CURRENT_TIMESTAMP),
-                 (?, ?, 'payment_in', ?, ?, 'completed', CURRENT_TIMESTAMP)
+          VALUES (?, ?, 'payment_out', ?, ?, 'completed', CURRENT_TIMESTAMP)
         `
         ).run(
           uuidv4(),
           customer.id,
           total,
-          `Paid ${trader.businessName || trader.name} for ${product.name}`,
+          `Paid ${trader.businessName || trader.name} for ${product.name}`
+        );
+        db.prepare(
+          `
+          INSERT INTO wallet_transactions (id, userId, type, amount, description, status, createdAt)
+          VALUES (?, ?, 'payment_in', ?, ?, 'completed', CURRENT_TIMESTAMP)
+        `
+        ).run(
           uuidv4(),
           trader.id,
           sellerNet,
@@ -6421,17 +6965,15 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
       db.prepare(
         `
         INSERT INTO notifications (id, userId, title, message, type, subType, createdAt, updatedAt)
-        VALUES (?, ?, 'Purchase completed', ?, 'success', 'transaction', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-               (?, ?, 'New sale', ?, 'success', 'transaction', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, 'Purchase completed', ?, 'success', 'transaction', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `
-      ).run(
-        uuidv4(),
-        customer.id,
-        `You bought ${product.name} for RWF ${total.toLocaleString()}.`,
-        uuidv4(),
-        trader.id,
-        `${customer.name} bought ${quantity} x ${product.name}.`
-      );
+      ).run(uuidv4(), customer.id, `You bought ${product.name} for RWF ${total.toLocaleString()}.`);
+      db.prepare(
+        `
+        INSERT INTO notifications (id, userId, title, message, type, subType, createdAt, updatedAt)
+        VALUES (?, ?, 'New sale', ?, 'success', 'transaction', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+      ).run(uuidv4(), trader.id, `${customer.name} bought ${quantity} x ${product.name}.`);
 
       return {
         success: true,
@@ -6447,6 +6989,7 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
     idempotency.saveResponse(customerId, idemKey, req.originalUrl, result);
     res.json(result);
   } catch (error: any) {
+    console.error('Purchase creation failed:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -6468,6 +7011,14 @@ app.put('/api/purchases/:id', authenticate, (req: any, res): any => {
     SET status = COALESCE(?, status),
         deliveryStatus = COALESCE(?, deliveryStatus),
         paymentStatus = COALESCE(?, paymentStatus),
+        receiptGenerated = COALESCE(?, receiptGenerated),
+        receiptGeneratedAt = COALESCE(?, receiptGeneratedAt),
+        receiptId = COALESCE(?, receiptId),
+        receiptGenerationFailed = COALESCE(?, receiptGenerationFailed),
+        receiptError = COALESCE(?, receiptError),
+        receiptErrorAt = COALESCE(?, receiptErrorAt),
+        receiptSentAt = COALESCE(?, receiptSentAt),
+        receiptSentVia = COALESCE(?, receiptSentVia),
         updatedAt = CURRENT_TIMESTAMP
     WHERE id = ?
   `
@@ -6475,9 +7026,82 @@ app.put('/api/purchases/:id', authenticate, (req: any, res): any => {
     req.body.status ?? null,
     req.body.deliveryStatus ?? null,
     req.body.paymentStatus ?? null,
+    req.body.receiptGenerated ?? null,
+    req.body.receiptGeneratedAt ?? null,
+    req.body.receiptId ?? null,
+    req.body.receiptGenerationFailed ?? null,
+    req.body.receiptError ?? null,
+    req.body.receiptErrorAt ?? null,
+    req.body.receiptSentAt ?? null,
+    req.body.receiptSentVia ?? null,
     req.params.id
   );
   res.json({ success: true });
+});
+
+app.get('/api/receipts', authenticate, (req: any, res): any => {
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (req.query.purchaseId) {
+    conditions.push('purchaseId = ?');
+    params.push(req.query.purchaseId);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const receipts = db
+    .prepare(`SELECT * FROM receipts ${where} ORDER BY createdAt DESC`)
+    .all(...params) as any[];
+
+  res.json({
+    success: true,
+    receipts: receipts.map((row) => ({
+      ...row,
+      receiptData: parseJsonObject(row.receiptData),
+    })),
+  });
+});
+
+app.get('/api/receipts/:id', authenticate, (req: any, res): any => {
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id) as any;
+  if (!receipt) return res.status(404).json({ error: 'Receipt not found' });
+
+  res.json({
+    success: true,
+    receipt: {
+      ...receipt,
+      receiptData: parseJsonObject(receipt.receiptData),
+    },
+  });
+});
+
+app.post('/api/receipts', authenticate, (req: any, res): any => {
+  const id = req.body.id || uuidv4();
+  const purchaseId = String(req.body.purchaseId || '');
+  if (!purchaseId) {
+    return res.status(400).json({ error: 'purchaseId is required' });
+  }
+
+  db.prepare(
+    `
+    INSERT INTO receipts (id, purchaseId, receiptData, pdfData, status, generatedAt, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `
+  ).run(
+    id,
+    purchaseId,
+    JSON.stringify(req.body.receiptData || {}),
+    req.body.pdfData || null,
+    String(req.body.status || 'generated'),
+    req.body.generatedAt || new Date().toISOString()
+  );
+
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(id) as any;
+  res.json({
+    success: true,
+    receipt: {
+      ...receipt,
+      receiptData: parseJsonObject(receipt.receiptData),
+    },
+  });
 });
 
 app.get('/api/deliveries', authenticate, (req: any, res): any => {

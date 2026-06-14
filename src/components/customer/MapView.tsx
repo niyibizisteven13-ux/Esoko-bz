@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Circle, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import {
@@ -20,6 +20,7 @@ const TileLayerAny = TileLayer as any;
 const MarkerAny = Marker as any;
 const PopupAny = Popup as any;
 const CircleAny = Circle as any;
+const PolylineAny = Polyline as any;
 import { useLanguage } from '../../context/LanguageContext';
 import { cn } from '../../lib/utils';
 import { calculateDistance, Coordinates, openGoogleMapsDirections } from '../../lib/locationUtils';
@@ -147,7 +148,21 @@ export default function MapView({
   const center: [number, number] = userLocation
     ? [userLocation.lat, userLocation.lng]
     : kigaliCenter;
-  const mappedTraders = traders.filter(hasValidCoordinates);
+  const mappedTraders = useMemo(() => {
+    const mapped = traders.filter(hasValidCoordinates);
+    if (!userLocation) return mapped;
+    return [...mapped].sort((a, b) => {
+      const aCoordinates = getTraderCoordinates(a);
+      const bCoordinates = getTraderCoordinates(b);
+      if (!aCoordinates && !bCoordinates) return 0;
+      if (!aCoordinates) return 1;
+      if (!bCoordinates) return -1;
+      return (
+        calculateDistance(userLocation, aCoordinates) -
+        calculateDistance(userLocation, bCoordinates)
+      );
+    });
+  }, [traders, userLocation]);
   const [selectedTrader, setSelectedTrader] = useState<any>(mappedTraders[0] || null);
   const [tileError, setTileError] = useState(false);
   const [tilesLoaded, setTilesLoaded] = useState(false);
@@ -160,10 +175,17 @@ export default function MapView({
   }, [mappedTraders, userLocation]);
 
   useEffect(() => {
-    if (!selectedTrader || !mappedTraders.some((trader) => trader.id === selectedTrader.id)) {
+    if (
+      !selectedTrader ||
+      !mappedTraders.some(
+        (trader) => (trader.id || trader.uid) === (selectedTrader.id || selectedTrader.uid)
+      )
+    ) {
       setSelectedTrader(mappedTraders[0] || null);
     }
   }, [mappedTraders, selectedTrader]);
+
+  const selectedCoordinates = selectedTrader ? getTraderCoordinates(selectedTrader) : null;
 
   const getMatchedProducts = (traderId: string) => {
     if (!searchQuery || !allProducts.length) return [];
@@ -289,7 +311,9 @@ export default function MapView({
                     {coordinates && (
                       <button
                         type="button"
-                        onClick={() => openGoogleMapsDirections(coordinates, userLocation || undefined)}
+                        onClick={() =>
+                          openGoogleMapsDirections(coordinates, userLocation || undefined)
+                        }
                         className="flex items-center gap-2 text-[10px] text-blue-500 font-bold hover:underline"
                       >
                         <ExternalLink size={12} className="shrink-0 text-neutral-600" />
@@ -322,6 +346,21 @@ export default function MapView({
           );
         })}
 
+        {userLocation && selectedCoordinates && (
+          <PolylineAny
+            positions={[
+              [userLocation.lat, userLocation.lng],
+              [selectedCoordinates.lat, selectedCoordinates.lng],
+            ]}
+            pathOptions={{
+              color: '#2563eb',
+              weight: 4,
+              opacity: 0.8,
+              dashArray: '10, 12',
+            }}
+          />
+        )}
+
         <MapBounds points={mapPoints} fallbackCenter={center} />
         <MapRecenter center={center} />
         <MapSizeKeeper />
@@ -342,8 +381,8 @@ export default function MapView({
             Map tiles could not load
           </p>
           <p className="text-xs font-bold text-red-100/80">
-            Check internet access or tile service availability. Trader locations still remain in
-            the list view.
+            Check internet access or tile service availability. Trader locations still remain in the
+            list view.
           </p>
         </div>
       )}
@@ -439,7 +478,9 @@ export default function MapView({
               <div className="mt-4 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => coordinates && openGoogleMapsDirections(coordinates, userLocation || undefined)}
+                  onClick={() =>
+                    coordinates && openGoogleMapsDirections(coordinates, userLocation || undefined)
+                  }
                   disabled={!coordinates}
                   className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
                 >

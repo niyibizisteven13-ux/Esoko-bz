@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
   History,
@@ -117,8 +117,23 @@ type Tab =
 export default function CustomerDashboard() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const getInitialTab = (): Tab => {
+    const tab = new URLSearchParams(location.search).get('tab');
+    return tab === 'overview' ||
+      tab === 'purchases' ||
+      tab === 'wallet' ||
+      tab === 'marketplace' ||
+      tab === 'profile' ||
+      tab === 'notifications' ||
+      tab === 'support' ||
+      tab === 'reports'
+      ? tab
+      : 'marketplace';
+  };
+
+  const [activeTab, setActiveTab] = useState<Tab>(getInitialTab);
   const [isChangingTab, setIsChangingTab] = useState(false);
   const [marketplaceConfig, setMarketplaceConfig] = useState<{
     mode: 'products' | 'shops';
@@ -305,7 +320,7 @@ export default function CustomerDashboard() {
             <div>
               {!isSidebarCollapsed && (
                 <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Discovery
+                  Shop
                 </p>
               )}
               <div className="space-y-1">
@@ -314,7 +329,7 @@ export default function CustomerDashboard() {
                   active={activeTab === 'overview'}
                   onClick={() => handleTabChange('overview')}
                   icon={<LayoutDashboard size={20} />}
-                  label={t.common.activity}
+                  label="Home"
                   description="Dashboard & transactions"
                 />
                 <SidebarItem
@@ -343,7 +358,7 @@ export default function CustomerDashboard() {
             <div>
               {!isSidebarCollapsed && (
                 <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Finance
+                  Money
                 </p>
               )}
               <div className="space-y-1">
@@ -377,7 +392,7 @@ export default function CustomerDashboard() {
             <div>
               {!isSidebarCollapsed && (
                 <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Security & Account
+                  Account
                 </p>
               )}
               <div className="space-y-1">
@@ -394,7 +409,7 @@ export default function CustomerDashboard() {
                   active={activeTab === 'support'}
                   onClick={() => handleTabChange('support')}
                   icon={<MessageSquare size={20} />}
-                  label="Help Center"
+                  label="Help"
                   description="Support & FAQs"
                 />
                 <SidebarItem
@@ -612,7 +627,7 @@ export default function CustomerDashboard() {
       {/* Main Content */}
       <main
         id="main-scroll-container"
-        className="flex-1 h-screen overflow-y-auto no-scrollbar relative bg-[#050505] transition-colors"
+        className="flex-1 h-screen overflow-y-auto relative bg-[#050505] transition-colors"
       >
         {/* Mobile Header */}
         <header className="md:hidden bg-[#050505] border-b border-white/5 px-4 py-3 sticky top-0 z-40 flex items-center justify-between shadow-sm">
@@ -1042,7 +1057,9 @@ export default function CustomerDashboard() {
                 <SupportTab userId={currentUser?.uid || currentUser?.id || ''} role="customer" />
               )}
               {activeTab === 'reports' && (
-                <React.Suspense fallback={<div className="p-8 text-neutral-500">Loading reports...</div>}>
+                <React.Suspense
+                  fallback={<div className="p-8 text-neutral-500">Loading reports...</div>}
+                >
                   <VerifiedReports
                     userId={currentUser?.uid || currentUser?.id || ''}
                     userName={userData?.name || 'Customer'}
@@ -1214,16 +1231,6 @@ function SidebarItem({
       {!collapsed && (
         <div className="flex-1 min-w-0">
           <div className="truncate uppercase tracking-tight">{label}</div>
-          {description && (
-            <div
-              className={cn(
-                'text-[7px] uppercase tracking-[0.1em] leading-tight mt-0.5 truncate',
-                active ? 'text-white/80' : 'text-white/30 group-hover:text-white/50'
-              )}
-            >
-              {description}
-            </div>
-          )}
         </div>
       )}
       {badge !== undefined && badge > 0 && (

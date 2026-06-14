@@ -67,7 +67,7 @@ export default function LoginPage() {
           role,
           email: userFromLogin.email,
         });
-        navigate(`/${role}`);
+        navigate(role === 'customer' ? '/customer?tab=marketplace' : `/${role}`);
       }
     } else {
       console.warn('No user data available, routing to onboarding');
@@ -102,7 +102,12 @@ export default function LoginPage() {
         if ((r.user?.teamAccessOptions || []).length > 0) {
           navigate('/access-choice', { replace: true });
         } else {
-          navigate(r.redirectTo, { replace: true });
+          navigate(
+            r.user?.role === 'customer' && r.redirectTo === '/customer'
+              ? '/customer?tab=marketplace'
+              : r.redirectTo,
+            { replace: true }
+          );
         }
       } else {
         await routeByRole(r.user.id, r.user);

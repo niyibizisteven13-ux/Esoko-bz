@@ -48,6 +48,8 @@ import { getProducts, getProduct } from '../services/productService';
 import { getPurchases } from '../services/purchaseService';
 import { getTransactions } from '../services/transactionService';
 import { getCurrentUser } from '../services/sessionService';
+import { getBusinessSummary } from '../services/reportService';
+import { getBusinessAlerts } from '../services/alertService';
 
 const TraderOverview = React.lazy(() => import('../components/trader/TraderOverview'));
 const TraderProducts = React.lazy(() => import('../components/trader/TraderProducts'));
@@ -62,6 +64,7 @@ const TraderIncentives = React.lazy(() => import('../components/trader/TraderInc
 const TraderDeliveries = React.lazy(() => import('../components/trader/TraderDeliveries'));
 const TraderCustomers = React.lazy(() => import('../components/trader/TraderCustomers'));
 const TraderSuppliers = React.lazy(() => import('../components/trader/TraderSuppliers'));
+const TraderBulkRequests = React.lazy(() => import('../components/trader/TraderBulkRequests'));
 const TraderChat = React.lazy(() => import('../components/trader/TraderChat'));
 const TraderTaxChamber = React.lazy(() => import('../components/trader/TraderTaxChamber'));
 const TraderPayroll = React.lazy(() => import('../components/trader/TraderPayroll'));
@@ -88,6 +91,7 @@ type Tab =
   | 'wallet'
   | 'premium'
   | 'ai'
+  | 'bulkRequests'
   | 'profile'
   | 'accounting'
   | 'payroll'
@@ -124,6 +128,8 @@ export default function TraderDashboard() {
   const [purchases, setPurchases] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [userData, setUserData] = useState<any>(null);
+  const [businessSummary, setBusinessSummary] = useState<any>(null);
+  const [businessAlerts, setBusinessAlerts] = useState<any[]>([]);
   const { notifications, sendNotification, unreadCount } = useNotifications();
   const {
     syncState,
@@ -229,6 +235,17 @@ export default function TraderDashboard() {
         (a: any, b: any) => toDate(b.createdAt).getTime() - toDate(a.createdAt).getTime()
       )
     );
+
+    try {
+      const [summaryRes, alertsRes] = await Promise.all([
+        getBusinessSummary(uid),
+        getBusinessAlerts(uid),
+      ]);
+      setBusinessSummary(summaryRes.summary || null);
+      setBusinessAlerts(alertsRes.alerts || []);
+    } catch (error) {
+      console.error('Failed to load business insights', error);
+    }
   };
 
   // if (error) throw error;
@@ -301,6 +318,17 @@ export default function TraderDashboard() {
             (a: any, b: any) => toDate(b.createdAt).getTime() - toDate(a.createdAt).getTime()
           )
         );
+
+        try {
+          const [summaryRes, alertsRes] = await Promise.all([
+            getBusinessSummary(uid),
+            getBusinessAlerts(uid),
+          ]);
+          setBusinessSummary(summaryRes.summary || null);
+          setBusinessAlerts(alertsRes.alerts || []);
+        } catch (error) {
+          console.error('Failed to load business insights on startup', error);
+        }
 
         // Set up real-time listeners
         unsubscribePurchases = subscribeToPurchases(uid, (newPurchases) => {
@@ -449,15 +477,12 @@ export default function TraderDashboard() {
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
             <nav className={cn('flex-1 space-y-5', isSidebarCollapsed && 'items-center')}>
-              {/* The Pulse: Operations Core */}
+              {/* Core */}
               <div>
                 {!isSidebarCollapsed && (
                   <div className="mb-3 px-3">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
-                      The Pulse
-                    </p>
-                    <p className="text-[7px] text-white/20 uppercase tracking-[0.15em] mt-1.5 leading-tight">
-                      Real-time telemetry & inventory command
+                      Core
                     </p>
                   </div>
                 )}
@@ -483,8 +508,16 @@ export default function TraderDashboard() {
                     active={activeTab === 'purchases'}
                     onClick={() => handleTabChange('purchases')}
                     icon={<ShoppingCart size={20} />}
-                    label="Sales Log"
-                    description="Living ledger of all transactions"
+                    label="Sales"
+                    description="Sales history and approvals"
+                  />
+                  <SidebarItem
+                    collapsed={isSidebarCollapsed}
+                    active={activeTab === 'bulkRequests'}
+                    onClick={() => handleTabChange('bulkRequests')}
+                    icon={<Truck size={20} />}
+                    label="Bulk Requests"
+                    description="Collect cooperative stock needs"
                   />
                   <SidebarItem
                     collapsed={isSidebarCollapsed}
@@ -497,15 +530,12 @@ export default function TraderDashboard() {
                 </div>
               </div>
 
-              {/* The Vault: Finance & Analytics */}
+              {/* Money */}
               <div>
                 {!isSidebarCollapsed && (
                   <div className="mb-3 px-3">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
-                      The Vault
-                    </p>
-                    <p className="text-[7px] text-white/20 uppercase tracking-[0.15em] mt-1.5 leading-tight">
-                      Digital assets, insights & forecasting
+                      Money
                     </p>
                   </div>
                 )}
@@ -577,7 +607,7 @@ export default function TraderDashboard() {
                       onClick={() => handleTabChange('payroll')}
                       icon={<TrendingUp size={20} />}
                       label="Payroll"
-                      description="Workforce compensation management"
+                      description="Team payments"
                     />
                     <SidebarItem
                       collapsed={false}
@@ -599,10 +629,10 @@ export default function TraderDashboard() {
                     <SidebarItem
                       collapsed={false}
                       active={activeTab === 'support'}
-                      onClick={() => handleTabChange('support')}
-                      icon={<AlertCircle size={20} />}
-                      label="Agent Portal"
-                      description="Support & coordination hub"
+                          onClick={() => handleTabChange('support')}
+                          icon={<AlertCircle size={20} />}
+                      label="Help"
+                      description="Support and tickets"
                     />
                     <SidebarItem
                       collapsed={false}
@@ -617,8 +647,8 @@ export default function TraderDashboard() {
                       active={activeTab === 'customers'}
                       onClick={() => handleTabChange('customers')}
                       icon={<Users size={20} />}
-                      label="Client Base"
-                      description="Loyalty data & behavior"
+                      label="Customers"
+                      description="Customer activity"
                     />
                     <SidebarItem
                       collapsed={false}
@@ -633,16 +663,16 @@ export default function TraderDashboard() {
                       active={activeTab === 'team'}
                       onClick={() => handleTabChange('team')}
                       icon={<Users size={20} />}
-                      label="Workforce"
-                      description="Team management & oversight"
+                      label="Team"
+                      description="Members and roles"
                     />
                     <SidebarItem
                       collapsed={false}
                       active={activeTab === 'tax'}
                       onClick={() => handleTabChange('tax')}
                       icon={<VerifiedIcon size={20} />}
-                      label="Business Health"
-                      description="Receipts, device health & business data"
+                      label="Business Status"
+                      description="Compliance and reports"
                     />
                     <SidebarItem
                       collapsed={false}
@@ -825,14 +855,14 @@ export default function TraderDashboard() {
                 </div>
               </div>
               <p className="text-[7px] text-white/30 font-medium uppercase tracking-[0.1em] mt-3 leading-tight">
-                Asset mastery & real-time commerce operations
+                Sales, stock and payments
               </p>
             </div>
 
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-6">
               <div>
                 <p className="px-3 mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">
-                  The Pulse
+                  Core
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <MobileTabItem
@@ -877,7 +907,7 @@ export default function TraderDashboard() {
 
               <div>
                 <p className="px-3 mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">
-                  The Vault
+                  Money
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <MobileTabItem
@@ -930,7 +960,7 @@ export default function TraderDashboard() {
 
               <div>
                 <p className="px-3 mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-orange-500">
-                  The Flow
+                  Operations
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <MobileTabItem
@@ -984,7 +1014,7 @@ export default function TraderDashboard() {
                       setIsSidebarOpen(false);
                     }}
                     icon={<Users size={20} />}
-                    label="Workforce"
+                    label="Team"
                   />
                   <MobileTabItem
                     active={activeTab === 'incentives'}
@@ -1196,6 +1226,49 @@ export default function TraderDashboard() {
               transition={{ duration: 0.2 }}
             >
               <React.Suspense fallback={<TabLoading />}>
+                {activeTab === 'overview' && businessSummary && (
+                  <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr] mb-4">
+                    <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl p-6">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
+                        Business Summary
+                      </p>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {[
+                          { label: 'Total Sales', value: `${businessSummary.totalSales.toLocaleString()} RWF` },
+                          { label: 'Approved Orders', value: businessSummary.totalOrders },
+                          { label: 'Today', value: `${businessSummary.todaySales.toLocaleString()} RWF` },
+                          { label: 'Low-stock items', value: businessSummary.lowStockCount },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-3xl bg-white/5 p-4">
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
+                              {item.label}
+                            </p>
+                            <p className="text-lg font-black text-white">{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl p-6">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
+                        Action Alerts
+                      </p>
+                      <div className="space-y-3">
+                        {businessAlerts.length ? (
+                          businessAlerts.slice(0, 4).map((alert, index) => (
+                            <div key={index} className="rounded-3xl border border-white/5 bg-white/5 p-4">
+                              <p className="text-sm font-black text-white">{alert.message}</p>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mt-2">
+                                {alert.type.replace('_', ' ')}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-white/60">No urgent alerts right now.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {activeTab === 'overview' && (
                   <TraderOverview
                     products={products}
@@ -1375,6 +1448,7 @@ export default function TraderDashboard() {
                 )}
                 {activeTab === 'customers' && <TraderCustomers purchases={purchases} />}
                 {activeTab === 'suppliers' && <TraderSuppliers />}
+                {activeTab === 'bulkRequests' && <TraderBulkRequests traderId={dashboardTraderId} />}
                 {activeTab === 'chat' && <TraderChat traderId={dashboardTraderId} />}
                 {activeTab === 'support' && (
                   <SupportTab userId={actingUserId || dashboardTraderId} role="trader" />
@@ -1426,7 +1500,7 @@ export default function TraderDashboard() {
                 active={activeTab === 'wallet'}
                 onClick={() => handleTabChange('wallet')}
                 icon={<Wallet size={20} />}
-                label="Vault"
+                label="Wallet"
               />
               <BottomNavItem
                 active={activeTab === 'premium'}
@@ -1453,6 +1527,12 @@ export default function TraderDashboard() {
               </div>
 
               <BottomNavItem
+                active={activeTab === 'bulkRequests'}
+                onClick={() => handleTabChange('bulkRequests')}
+                icon={<Truck size={20} />}
+                label="Bulk"
+              />
+              <BottomNavItem
                 active={activeTab === 'analytics'}
                 onClick={() => handleTabChange('analytics')}
                 icon={<TrendingUp size={20} />}
@@ -1462,19 +1542,19 @@ export default function TraderDashboard() {
                 active={activeTab === 'customers'}
                 onClick={() => handleTabChange('customers')}
                 icon={<Users size={20} />}
-                label="Clients"
+                label="Customers"
               />
               <BottomNavItem
                 active={activeTab === 'deliveries'}
                 onClick={() => handleTabChange('deliveries')}
                 icon={<Truck size={20} />}
-                label="Logistics"
+                label="Delivery"
               />
               <BottomNavItem
                 active={activeTab === 'qrcodes'}
                 onClick={() => handleTabChange('qrcodes')}
                 icon={<QrCode size={20} />}
-                label="Generator"
+                label="QR"
               />
               <BottomNavItem
                 active={activeTab === 'reports'}
@@ -1486,7 +1566,7 @@ export default function TraderDashboard() {
                 active={activeTab === 'tax'}
                 onClick={() => handleTabChange('tax')}
                 icon={<VerifiedIcon size={20} />}
-                label="Health"
+                label="Status"
               />
             </div>
           </div>
@@ -1647,16 +1727,6 @@ function SidebarItem({
       {!collapsed && (
         <div className="flex-1 min-w-0">
           <div className="truncate uppercase tracking-tight">{label}</div>
-          {description && (
-            <div
-              className={cn(
-                'text-[7px] uppercase tracking-[0.1em] leading-tight mt-0.5 truncate',
-                active ? 'text-white/80' : 'text-white/30 group-hover:text-white/50'
-              )}
-            >
-              {description}
-            </div>
-          )}
         </div>
       )}
       {badge !== undefined && badge > 0 && (

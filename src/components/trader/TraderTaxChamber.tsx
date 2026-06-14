@@ -36,11 +36,10 @@ export default function TraderTaxChamber({
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight leading-none mb-2">
-            Business Health Center
+            Business Status
           </h2>
           <p className="text-neutral-500 font-medium text-sm tracking-tight">
-            Compliance score, invoice readiness and device synchronization for your trading
-            operation.
+            Keep registration, receipts and compliance tasks in one place.
           </p>
         </div>
 
@@ -99,16 +98,33 @@ export default function TraderTaxChamber({
 }
 
 function StandingView({ traderId, userData }: { traderId: string; userData: any }) {
+  const hasComplianceData = Boolean(userData?.complianceScore);
+  const complianceScore = Number(userData?.complianceScore || 0);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div className="lg:col-span-2 space-y-4">
+        {!hasComplianceData && (
+          <div className="rounded-[2rem] border border-blue-500/20 bg-blue-500/10 p-5 text-blue-700 dark:text-blue-200">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={20} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-black uppercase tracking-widest">Beta data</p>
+                <p className="mt-1 text-sm font-medium">
+                  Compliance scores and tax timelines need verified RRA/ledger data before they can
+                  be used for business decisions.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="bg-white dark:bg-neutral-900 p-6 rounded-[2rem] border-2 border-neutral-100 dark:border-neutral-800 shadow-sm">
           <div className="flex justify-between items-center mb-6">
             <h4 className="text-lg font-black text-neutral-900 dark:text-white uppercase tracking-tight">
-              Business Integrity Rating
+              Business Readiness
             </h4>
-            <div className="px-3 py-1 bg-green-50 dark:bg-green-900/20 text-green-600 rounded-lg font-black text-[9px] uppercase tracking-widest">
-              A+ Rating
+            <div className="px-3 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-lg font-black text-[9px] uppercase tracking-widest">
+              {hasComplianceData ? 'Verified' : 'Beta'}
             </div>
           </div>
 
@@ -132,32 +148,32 @@ function StandingView({ traderId, userData }: { traderId: string; userData: any 
                   cx="50"
                   cy="50"
                   strokeDasharray="251.2"
-                  strokeDashoffset={251.2 * (1 - 0.94)}
+                  strokeDashoffset={251.2 * (1 - complianceScore / 100)}
                   transform="rotate(-90 50 50)"
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-3xl font-black text-neutral-900 dark:text-white leading-none">
-                  94
+                  {hasComplianceData ? complianceScore : '--'}
                 </span>
                 <span className="text-[8px] font-black text-neutral-400 uppercase tracking-widest">
-                  Excellent
+                  {hasComplianceData ? 'Score' : 'Pending'}
                 </span>
               </div>
             </div>
 
             <div className="space-y-3 flex-1">
-              <StandingMetric label="VAT Reporting Consistency" score={98} />
-              <StandingMetric label="EBM Device Uptime" score={100} />
-              <StandingMetric label="Tax Reliability" score={85} />
-              <StandingMetric label="Accounting Integrity" score={92} />
+              <StandingMetric label="VAT Reporting" score={userData?.vatScore} />
+              <StandingMetric label="Receipt Sync" score={userData?.receiptSyncScore} />
+              <StandingMetric label="Tax Tasks" score={userData?.taxTaskScore} />
+              <StandingMetric label="Ledger Integrity" score={userData?.ledgerIntegrityScore} />
             </div>
           </div>
 
           <div className="pt-8 border-t border-neutral-100 dark:border-neutral-800 flex justify-between items-center text-xs font-bold text-neutral-400 italic">
-            <span>* Score calculated based on the last 12 months of RRA interactions.</span>
+            <span>* Scores appear after verified tax and ledger integrations are connected.</span>
             <button className="text-blue-600 font-black flex items-center gap-2 hover:underline">
-              View Full Audit <ArrowRight size={14} />
+              View Checks <ArrowRight size={14} />
             </button>
           </div>
         </div>
@@ -165,18 +181,18 @@ function StandingView({ traderId, userData }: { traderId: string; userData: any 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <FiscalStatusCard
             title="VAT Quarter 1"
-            status="approved"
-            date="Mar 31, 2026"
-            amount="RWF 2,844,000"
-            icon={CheckCircle2}
-            color="text-green-600"
-            bgColor="bg-green-50 dark:bg-green-900/20"
+            status={userData?.vatStatus || 'pending'}
+            date={userData?.vatDueDate || 'Connect tax calendar'}
+            amount={userData?.vatEstimate ? `RWF ${formatCurrency(userData.vatEstimate)}` : 'Pending setup'}
+            icon={userData?.vatStatus === 'approved' ? CheckCircle2 : Clock}
+            color={userData?.vatStatus === 'approved' ? 'text-green-600' : 'text-orange-600'}
+            bgColor={userData?.vatStatus === 'approved' ? 'bg-green-50 dark:bg-green-900/20' : 'bg-orange-50 dark:bg-orange-900/20'}
           />
           <FiscalStatusCard
             title="Annual Income Tax"
-            status="pending"
-            date="Due Apr 30, 2026"
-            amount="Estimated: RWF 1.2M"
+            status={userData?.incomeTaxStatus || 'pending'}
+            date={userData?.incomeTaxDueDate || 'Connect tax calendar'}
+            amount={userData?.incomeTaxEstimate ? `RWF ${formatCurrency(userData.incomeTaxEstimate)}` : 'Pending setup'}
             icon={Clock}
             color="text-orange-600"
             bgColor="bg-orange-50 dark:bg-orange-900/20"
@@ -210,8 +226,8 @@ function StandingView({ traderId, userData }: { traderId: string; userData: any 
             />
             <CalendarItem date="25 May" title="Local Gov Fees" desc="Trade license renewal" />
           </div>
-          <button className="w-full mt-8 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all border border-white/5">
-            Sync to Google Calendar
+          <button disabled className="w-full mt-8 py-4 bg-white/10 text-white/40 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all border border-white/5 cursor-not-allowed">
+            Calendar Sync Beta
           </button>
         </div>
 
@@ -232,14 +248,16 @@ function StandingView({ traderId, userData }: { traderId: string; userData: any 
               <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">
                 Registration Date
               </p>
-              <p className="font-bold text-neutral-700 dark:text-neutral-300">Jan 12, 2022</p>
+              <p className="font-bold text-neutral-700 dark:text-neutral-300">
+                {userData?.businessRegisteredAt || 'Not connected'}
+              </p>
             </div>
             <div>
               <p className="text-[10px] font-black text-neutral-400 uppercase tracking-widest">
                 Tax Office
               </p>
               <p className="font-bold text-neutral-700 dark:text-neutral-300">
-                Kigali, City Center Hub
+                {userData?.taxOffice || 'Not connected'}
               </p>
             </div>
           </div>
@@ -250,6 +268,8 @@ function StandingView({ traderId, userData }: { traderId: string; userData: any 
 }
 
 function EBMView({ userData }: { userData: any }) {
+  const ebmConnected = Boolean(userData?.ebmSerial);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-white">
       <div className="bg-neutral-900 dark:bg-black p-10 rounded-[3rem] shadow-2xl relative overflow-hidden group">
@@ -259,9 +279,18 @@ function EBMView({ userData }: { userData: any }) {
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-12">
             <div>
-              <h3 className="text-3xl font-black tracking-tight mb-2">EBM Serial #774-22</h3>
-              <span className="px-3 py-1 bg-green-500/20 text-green-400 border border-green-500/20 rounded-lg text-[10px] font-black uppercase tracking-widest">
-                Device Online
+              <h3 className="text-3xl font-black tracking-tight mb-2">
+                {userData?.ebmSerial ? `EBM ${userData.ebmSerial}` : 'EBM Setup'}
+              </h3>
+              <span
+                className={cn(
+                  'px-3 py-1 border rounded-lg text-[10px] font-black uppercase tracking-widest',
+                  ebmConnected
+                    ? 'bg-green-500/20 text-green-400 border-green-500/20'
+                    : 'bg-yellow-500/20 text-yellow-300 border-yellow-500/20'
+                )}
+              >
+                {ebmConnected ? 'Connected' : 'Not connected'}
               </span>
             </div>
             <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center border border-white/5">
@@ -274,24 +303,28 @@ function EBMView({ userData }: { userData: any }) {
               <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">
                 RRA Link Status
               </p>
-              <p className="text-xl font-bold">Synchronized</p>
+              <p className="text-xl font-bold">{ebmConnected ? 'Synchronized' : 'Pending'}</p>
             </div>
             <div>
               <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">
                 Last Signature
               </p>
-              <p className="text-xl font-bold">Today, 10:42 AM</p>
+              <p className="text-xl font-bold">{userData?.lastEbmSignatureAt || '--'}</p>
             </div>
           </div>
 
           <div className="space-y-4">
             <div className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/5">
               <p className="text-xs font-bold text-white/60">Total VCDC Invoices Issued</p>
-              <p className="text-lg font-black">1,492</p>
+              <p className="text-lg font-black">{userData?.ebmInvoiceCount ?? '--'}</p>
             </div>
             <div className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/5">
               <p className="text-xs font-bold text-white/60">Total SDC Transactions</p>
-              <p className="text-lg font-black">RWF 14.8M</p>
+              <p className="text-lg font-black">
+                {userData?.ebmTransactionTotal
+                  ? `RWF ${formatCurrency(userData.ebmTransactionTotal)}`
+                  : '--'}
+              </p>
             </div>
           </div>
         </div>
@@ -309,11 +342,11 @@ function EBMView({ userData }: { userData: any }) {
           </div>
         </div>
         <div className="flex gap-4">
-          <button className="flex-1 py-5 bg-neutral-900 dark:bg-black text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl">
-            Restart EBM Service
+          <button disabled className="flex-1 py-5 bg-neutral-900/60 dark:bg-black text-white/40 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl cursor-not-allowed">
+            Restart Beta
           </button>
-          <button className="flex-1 py-5 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-900/10">
-            Manual Audit Push
+          <button disabled className="flex-1 py-5 bg-blue-600/60 text-white/50 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-900/10 cursor-not-allowed">
+            Audit Push Beta
           </button>
         </div>
       </div>
@@ -377,26 +410,37 @@ function ReportsView({ traderId }: { traderId: string }) {
   );
 }
 
-function StandingMetric({ label, score }: { label: string; score: number }) {
+function StandingMetric({ label, score }: { label: string; score?: number }) {
+  const hasScore = typeof score === 'number';
+  const displayScore = hasScore ? Math.max(0, Math.min(100, score)) : 0;
+
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
         <span className="text-neutral-400">{label}</span>
         <span
           className={cn(
-            score > 90 ? 'text-green-600' : score > 80 ? 'text-blue-600' : 'text-orange-600'
+            hasScore && displayScore > 90
+              ? 'text-green-600'
+              : hasScore && displayScore > 80
+                ? 'text-blue-600'
+                : 'text-orange-600'
           )}
         >
-          {score}%
+          {hasScore ? `${displayScore}%` : '--'}
         </span>
       </div>
       <div className="h-1.5 bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
-          animate={{ width: `${score}%` }}
+          animate={{ width: `${displayScore}%` }}
           className={cn(
             'h-full rounded-full',
-            score > 90 ? 'bg-green-600' : score > 80 ? 'bg-blue-600' : 'bg-orange-600'
+            hasScore && displayScore > 90
+              ? 'bg-green-600'
+              : hasScore && displayScore > 80
+                ? 'bg-blue-600'
+                : 'bg-orange-600'
           )}
         />
       </div>
