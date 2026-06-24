@@ -71,6 +71,8 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
 
   if (isProduction) {
     if (!jwtSecret) missing.push('JWT_SECRET');
+    if (!appUrl) missing.push('APP_URL');
+    if (frontendUrls.length === 0) missing.push('FRONTEND_URLS');
   } else if (!jwtSecret && !devJwtSecret) {
     missing.push('DEV_JWT_SECRET');
   }
@@ -81,18 +83,6 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
 
   if (isProduction && jwtSecret && jwtSecret.length < 32) {
     throw new Error('JWT_SECRET must be at least 32 characters in production');
-  }
-
-  if (isProduction && !appUrl) {
-    console.warn(
-      'WARNING: APP_URL is not set. Public links will be inferred from request host/proxy headers.'
-    );
-  }
-
-  if (isProduction && frontendUrls.length === 0) {
-    console.warn(
-      'WARNING: FRONTEND_URLS is not set. Same-origin, Render, and Cloudflare tunnel origins will still be accepted.'
-    );
   }
 
   if (!isProduction && !jwtSecret && devJwtSecret) {

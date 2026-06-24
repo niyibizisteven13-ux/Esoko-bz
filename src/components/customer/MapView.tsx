@@ -126,6 +126,80 @@ function hasValidCoordinates(trader: any) {
   return Boolean(getTraderCoordinates(trader));
 }
 
+function deg2rad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+
+function rad2deg(rad: number): number {
+  return (rad * 180) / Math.PI;
+}
+
+function calculateBearing(from: Coordinates, to: Coordinates): number {
+  const lat1 = deg2rad(from.lat);
+  const lat2 = deg2rad(to.lat);
+  const dLng = deg2rad(to.lng - from.lng);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (rad2deg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function getCompassDirection(bearing: number): string {
+  const directions = [
+    'north',
+    'north-east',
+    'east',
+    'south-east',
+    'south',
+    'south-west',
+    'west',
+    'north-west',
+  ];
+  const index = Math.round(bearing / 45) % 8;
+  return directions[index];
+}
+
+function getTurnCue(bearing: number): string {
+  if (bearing > 22.5 && bearing <= 67.5) return 'Turn slightly right';
+  if (bearing > 67.5 && bearing <= 112.5) return 'Turn right';
+  if (bearing > 112.5 && bearing <= 157.5) return 'Turn sharply right';
+  if (bearing > 157.5 && bearing <= 202.5) return 'Turn back';
+  if (bearing > 202.5 && bearing <= 247.5) return 'Turn sharply left';
+  if (bearing > 247.5 && bearing <= 292.5) return 'Turn left';
+  if (bearing > 292.5 && bearing <= 337.5) return 'Turn slightly left';
+  return 'Go straight';
+}
+
+function getStepInstruction(step: any): string {
+  const type = step?.maneuver?.type || '';
+  const modifier = step?.maneuver?.modifier;
+  const name = step?.name || '';
+
+  if (type === 'depart') {
+    return `Head ${modifier ? modifier + ' ' : ''}${name || 'onto the road'}`.trim();
+  }
+  if (type === 'turn' || type === 'new name') {
+    return `Turn ${modifier || ''}${name ? ` onto ${name}` : ''}`.trim();
+  }
+  if (type === 'arrive') {
+    return 'You are arriving at your destination';
+  }
+  if (type === 'roundabout') {
+    return `Enter the roundabout${step?.maneuver?.exit ? ` and take exit ${step.maneuver.exit}` : ''}${name ? ` onto ${name}` : ''}`.trim();
+  }
+  return `${type ? `${type} ${modifier || ''}` : 'Continue'}${name ? ` onto ${name}` : ''}`.trim();
+}
+
+function getStepDistanceText(step: any): string {
+  if (!step?.distance && step?.distance !== 0) return '';
+  const meters = Math.round(step.distance);
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`;
+}
+
+function estimateDrivingTimeMinutes(distanceKm: number): number {
+  const averageKmph = 60;
+  return Math.max(1, Math.round((distanceKm / averageKmph) * 60));
+}
+
 interface MapViewProps {
   traders: any[];
   userLocation: { lat: number; lng: number } | null;
@@ -133,6 +207,7 @@ interface MapViewProps {
   onTraderClick: (trader: any) => void;
   searchQuery?: string;
   allProducts?: any[];
+  heightClass?: string;
 }
 
 export default function MapView({
@@ -142,14 +217,22 @@ export default function MapView({
   onTraderClick,
   searchQuery,
   allProducts = [],
+  heightClass,
 }: MapViewProps) {
+  const mapHeightClass = heightClass ?? 'h-[min(78vh,760px)] min-h-[560px]';
   const { t } = useLanguage();
   const kigaliCenter: [number, number] = [-1.9441, 30.0619];
   const center: [number, number] = userLocation
     ? [userLocation.lat, userLocation.lng]
     : kigaliCenter;
   const mappedTraders = useMemo(() => {
-    const mapped = traders.filter(hasValidCoordinates);
+    let mapped = traders.filter(hasValidCoordinates);
+    if (userLocation && radius) {
+      mapped = mapped.filter((trader) => {
+        const coordinates = getTraderCoordinates(trader);
+        return coordinates ? calculateDistance(userLocation, coordinates) <= radius : false;
+      });
+    }
     if (!userLocation) return mapped;
     return [...mapped].sort((a, b) => {
       const aCoordinates = getTraderCoordinates(a);
@@ -162,7 +245,7 @@ export default function MapView({
         calculateDistance(userLocation, bCoordinates)
       );
     });
-  }, [traders, userLocation]);
+  }, [traders, userLocation, radius]);
   const [selectedTrader, setSelectedTrader] = useState<any>(mappedTraders[0] || null);
   const [tileError, setTileError] = useState(false);
   const [tilesLoaded, setTilesLoaded] = useState(false);
@@ -186,6 +269,170 @@ export default function MapView({
   }, [mappedTraders, selectedTrader]);
 
   const selectedCoordinates = selectedTrader ? getTraderCoordinates(selectedTrader) : null;
+  const routeDistance = userLocation && selectedCoordinates ? calculateDistance(userLocation, selectedCoordinates) : null;
+  const routeBearing = userLocation && selectedCoordinates ? calculateBearing(userLocation, selectedCoordinates) : null;
+  const routeDirection = routeBearing !== null ? getCompassDirection(routeBearing) : null;
+  const routePoints = userLocation && selectedCoordinates ? [[userLocation.lat, userLocation.lng], [selectedCoordinates.lat, selectedCoordinates.lng]] : [];
+  const isNavigationMode = routePoints.length === 2 && traders.length === 1;
+  const [routeAnnounced, setRouteAnnounced] = useState(false);
+  const [routeGeometry, setRouteGeometry] = useState<Array<[number, number]>>([]);
+  const [routeSteps, setRouteSteps] = useState<any[]>([]);
+  const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
+  const [routeDurationMinutes, setRouteDurationMinutes] = useState<number | null>(null);
+  const [routeFetchError, setRouteFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isNavigationMode || !selectedCoordinates || !userLocation) {
+      setRouteGeometry([]);
+      setRouteSteps([]);
+      setRouteDistanceKm(null);
+      setRouteDurationMinutes(null);
+      setRouteFetchError(null);
+      setRouteAnnounced(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const origin = `${userLocation.lng},${userLocation.lat}`;
+    const destination = `${selectedCoordinates.lng},${selectedCoordinates.lat}`;
+    const url = `https://router.project-osrm.org/route/v1/driving/${origin};${destination}?overview=full&geometries=geojson&steps=true&annotations=true`;
+
+    setRouteFetchError(null);
+
+    fetch(url, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Routing service returned ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        const route = data?.routes?.[0];
+        if (!route) {
+          throw new Error('No route found');
+        }
+
+        const geometry = (route.geometry?.coordinates || []).map(
+          ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
+        );
+
+        const steps = (route.legs?.[0]?.steps || []).map((step: any) => ({
+          ...step,
+          instruction: getStepInstruction(step),
+        }));
+
+        setRouteGeometry(geometry);
+        setRouteSteps(steps);
+        setRouteDistanceKm(route.distance / 1000);
+        setRouteDurationMinutes(Math.max(1, Math.round(route.duration / 60)));
+        setRouteAnnounced(false);
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError') {
+          setRouteFetchError(error.message || 'Unable to fetch route');
+          setRouteGeometry([]);
+          setRouteSteps([]);
+          setRouteDistanceKm(null);
+          setRouteDurationMinutes(null);
+        }
+      });
+
+    return () => controller.abort();
+  }, [isNavigationMode, selectedCoordinates, userLocation]);
+
+  useEffect(() => {
+    if (!isNavigationMode || routeSteps.length === 0 || routeAnnounced) return;
+    if (!window.speechSynthesis) return;
+
+    const nextInstruction = routeSteps[0]?.instruction || 'Head toward your destination';
+    const distanceText = routeDistanceKm !== null ? (routeDistanceKm >= 1 ? `${routeDistanceKm.toFixed(1)} kilometers` : `${Math.round(routeDistanceKm * 1000)} meters`) : '';
+    const instruction = `${nextInstruction}${distanceText ? `, ${distanceText}` : ''}${routeDurationMinutes ? `, about ${routeDurationMinutes} minutes by car` : ''}`;
+
+    const utterance = new SpeechSynthesisUtterance(instruction);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setRouteAnnounced(true);
+  }, [isNavigationMode, routeSteps, routeAnnounced, routeDistanceKm, routeDurationMinutes]);
+
+  const getNavigationLabel = () => {
+    if (!routeDistanceKm && routeDistanceKm !== 0) return 'Navigation ready';
+    if (routeDistanceKm !== null && routeDistanceKm >= 1)
+      return `Drive ${routeDirection || 'toward'} ${selectedTrader?.businessName || selectedTrader?.name}`;
+    if (routeDistanceKm !== null && routeDistanceKm >= 0.25) return 'Continue to destination';
+    return 'You are almost there';
+  };
+
+  const getNavigationDetails = () => {
+    if (routeDistanceKm === null) return '';
+    const distanceText = routeDistanceKm >= 1 ? `${routeDistanceKm.toFixed(1)} km` : `${Math.round(routeDistanceKm * 1000)} m`;
+    const timeText = routeDurationMinutes ? `${routeDurationMinutes} min` : '';
+    return routeDistanceKm >= 1
+      ? `${distanceText} · ${timeText} · ${routeDirection}`
+      : `${distanceText} · ${timeText}`;
+  };
+
+  const getCurrentStepText = () => {
+    const currentStep = routeSteps[0];
+    if (!currentStep) return '';
+    const stepText = currentStep.instruction || 'Continue toward your destination';
+    const stepDistance = getStepDistanceText(currentStep);
+    const isImmediate = currentStep.distance !== undefined && currentStep.distance < 60;
+    if (isImmediate) {
+      return `Turn now: ${stepText}${stepDistance ? ` · ${stepDistance}` : ''}`;
+    }
+    return `Next: ${stepText}${stepDistance ? ` in ${stepDistance}` : ''}`;
+  };
+
+  const getRouteProgress = () => {
+    if (routeDistanceKm === null) return 0;
+    return Math.min(100, Math.max(0, 100 - (routeDistanceKm / 10) * 100));
+  };
+
+  const navigationProgress = getRouteProgress();
+
+  const getNavigationIcon = () => (
+    <div className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-white shadow-lg shadow-blue-500/30">
+      <Navigation size={16} />
+    </div>
+  );
+
+  const getMapOverlay = () => (
+    <div className="absolute left-4 top-4 z-[1000] w-[min(250px,calc(100%-32px))] rounded-2xl bg-[#0a0a0a]/90 backdrop-blur p-3 border border-white/10 shadow-2xl">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-[0.3em] text-orange-400">Navigation</p>
+          <p className="mt-1 text-sm font-black text-white leading-tight">{getNavigationLabel()}</p>
+          {routeSteps.length > 0 && (
+             <p className="mt-1 text-[11px] text-white/80 leading-tight">
+               {getCurrentStepText()}
+             </p>
+           )}
+        </div>
+        {getNavigationIcon()}
+      </div>
+      <div className="mt-3 rounded-full bg-white/5 p-2">
+        <div className="flex items-center justify-between text-[10px] text-white/70">
+          <span>Distance</span>
+          <span className="font-black text-white">{getNavigationDetails()}</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${navigationProgress}%` }} />
+        </div>
+        {routeDurationMinutes !== null && (
+          <div className="mt-2 text-[10px] text-white/70">
+            Estimated {routeDurationMinutes} minute drive
+          </div>
+        )}
+        {routeFetchError && (
+          <div className="mt-2 text-[10px] text-red-300">{routeFetchError}</div>
+        )}
+      </div>
+    </div>
+  );
+
+  const getNavigationOverlay = isNavigationMode ? getMapOverlay() : null;
 
   const getMatchedProducts = (traderId: string) => {
     if (!searchQuery || !allProducts.length) return [];
@@ -200,7 +447,7 @@ export default function MapView({
   };
 
   return (
-    <div className="h-[min(78vh,760px)] min-h-[560px] w-full rounded-[2rem] md:rounded-[2.5rem] overflow-hidden border border-orange-500/20 shadow-2xl shadow-black/60 relative z-0 bg-[#111827]">
+    <div className={`${mapHeightClass} w-full rounded-[2rem] md:rounded-[2.5rem] overflow-hidden border border-orange-500/20 shadow-2xl shadow-black/60 relative z-0 bg-[#111827]`}>
       <MapContainerAny
         center={center}
         zoom={13}
@@ -346,7 +593,16 @@ export default function MapView({
           );
         })}
 
-        {userLocation && selectedCoordinates && (
+        {routeGeometry.length > 1 ? (
+          <PolylineAny
+            positions={routeGeometry}
+            pathOptions={{
+              color: '#2563eb',
+              weight: 4,
+              opacity: 0.8,
+            }}
+          />
+        ) : userLocation && selectedCoordinates ? (
           <PolylineAny
             positions={[
               [userLocation.lat, userLocation.lng],
@@ -359,12 +615,14 @@ export default function MapView({
               dashArray: '10, 12',
             }}
           />
-        )}
+        ) : null}
 
         <MapBounds points={mapPoints} fallbackCenter={center} />
         <MapRecenter center={center} />
         <MapSizeKeeper />
       </MapContainerAny>
+
+      {getNavigationOverlay}
 
       {!tilesLoaded && !tileError && (
         <div className="absolute inset-0 z-[900] pointer-events-none flex items-center justify-center bg-[#050505]/50">
@@ -387,42 +645,29 @@ export default function MapView({
         </div>
       )}
 
-      {mappedTraders.length === 0 && (
-        <div className="absolute left-4 right-4 top-4 z-[1000] max-w-xl rounded-2xl bg-[#0a0a0a]/90 backdrop-blur p-4 border border-white/10 shadow-2xl md:left-6 md:right-auto">
-          <p className="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-1">
-            Map needs shop locations
-          </p>
-          <p className="text-xs font-bold text-neutral-400">
-            No mapped traders match this filter yet. Use the list, QR, or merchant code while
-            sellers add their precise location.
-          </p>
+      {!isNavigationMode && mappedTraders.length > 0 && (
+        <div className="absolute right-4 top-4 z-[1000] flex flex-col gap-1 rounded-2xl bg-[#0a0a0a]/85 backdrop-blur-md px-3 py-2 border border-white/10 text-[9px] text-white/80 shadow-2xl md:right-6 md:top-6">
+          <div className="font-black uppercase tracking-[0.3em] text-orange-400">
+            {mappedTraders.length} mapped shop{mappedTraders.length === 1 ? '' : 's'}
+          </div>
+          <div className="text-[9px] text-neutral-400">
+            {userLocation ? 'Centered from you' : 'Centered on Kigali'}
+          </div>
         </div>
       )}
 
-      {/* Map Legend/Overlay */}
-      <div className="absolute right-4 top-4 z-[1000] bg-[#0a0a0a]/90 backdrop-blur-md p-4 rounded-2xl border border-white/10 shadow-2xl space-y-3 min-w-[170px] md:right-6 md:top-6">
-        <div className="text-[10px] font-black uppercase tracking-widest text-orange-500">
-          {mappedTraders.length} mapped shops
+      {!isNavigationMode && (
+        <div className="absolute bottom-4 left-4 z-[1000] flex flex-col gap-2 rounded-2xl bg-[#0a0a0a]/85 backdrop-blur-md px-3 py-2 border border-white/10 text-[9px] text-white/80 md:bottom-6 md:left-6">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-orange-600"></span>
+            <span className="font-black uppercase tracking-[0.3em]">Shop</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+            <span className="font-black uppercase tracking-[0.3em]">You</span>
+          </div>
         </div>
-        <div className="text-[10px] font-bold text-neutral-400">
-          {userLocation ? 'Centered from your location' : 'Centered on Kigali'}
-        </div>
-      </div>
-
-      <div className="absolute bottom-4 left-4 z-[1000] bg-[#0a0a0a]/90 backdrop-blur-md p-4 rounded-2xl border border-white/10 shadow-2xl space-y-3 md:bottom-6 md:left-6">
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 bg-orange-600 rounded-lg shadow-lg shadow-orange-600/20"></div>
-          <span className="text-[10px] font-black text-white uppercase tracking-widest leading-none">
-            Traders
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="w-3 h-3 bg-blue-600 rounded-full shadow-lg shadow-blue-600/20"></div>
-          <span className="text-[10px] font-black text-white uppercase tracking-widest leading-none">
-            Your Location
-          </span>
-        </div>
-      </div>
+      )}
 
       {selectedTrader &&
         (() => {

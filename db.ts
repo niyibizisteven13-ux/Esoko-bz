@@ -486,6 +486,21 @@ export default function initializeDatabase() {
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      userId TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      status TEXT NOT NULL DEFAULT 'success',
+      ip_address TEXT,
+      user_agent TEXT,
+      details TEXT,
+      error_message TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id TEXT PRIMARY KEY,
       userId TEXT NOT NULL,
@@ -1267,6 +1282,10 @@ export default function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_trader_analytics_trader_id ON trader_analytics(trader_id);
     CREATE INDEX IF NOT EXISTS idx_trader_analytics_metric_type ON trader_analytics(metric_type);
     CREATE INDEX IF NOT EXISTS idx_trader_analytics_period ON trader_analytics(period);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_userId ON audit_logs(userId);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_status ON audit_logs(status);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_createdAt ON audit_logs(createdAt);
   `);
 
   db.prepare(

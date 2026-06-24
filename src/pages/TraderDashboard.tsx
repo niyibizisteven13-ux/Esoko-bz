@@ -9,16 +9,22 @@ import {
   QrCode,
   TrendingUp,
   Settings,
+  DollarSign,
+  Bell,
+  MessageSquare,
+  HelpCircle,
+  BarChart2,
+  Users,
+  Layers,
+  ShieldCheck,
+  Activity,
   LogOut,
   User,
   Plus,
-  MessageSquare,
   Menu,
   X,
-  Bell,
   Book,
   FileText,
-  Users,
   Gift,
   ShieldCheck as VerifiedIcon,
   CheckCircle2,
@@ -57,6 +63,7 @@ const TraderPurchases = React.lazy(() => import('../components/trader/TraderPurc
 const TraderAnalytics = React.lazy(() => import('../components/trader/TraderAnalytics'));
 const TraderQRCodes = React.lazy(() => import('../components/trader/TraderQRCodes'));
 const TraderWallet = React.lazy(() => import('../components/trader/TraderWallet'));
+const TraderFinance = React.lazy(() => import('../components/trader/TraderFinance'));
 const TraderProfile = React.lazy(() => import('../components/trader/TraderProfile'));
 const TraderAccounting = React.lazy(() => import('../components/trader/TraderAccounting'));
 const TraderTeamManagement = React.lazy(() => import('../components/trader/TraderTeamManagement'));
@@ -89,6 +96,7 @@ type Tab =
   | 'analytics'
   | 'qrcodes'
   | 'wallet'
+  | 'finance'
   | 'premium'
   | 'ai'
   | 'bulkRequests'
@@ -143,7 +151,6 @@ export default function TraderDashboard() {
   const [error, setError] = useState<Error | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scannedProduct, setScannedProduct] = useState<any>(null);
   const [initialEditProductId, setInitialEditProductId] = useState<string | null>(null);
@@ -152,6 +159,7 @@ export default function TraderDashboard() {
   >('all');
   const [upgradeStatus, setUpgradeStatus] = useState<'success' | 'cancel' | null>(null);
   const [showPreferences, setShowPreferences] = useState(false);
+  const [showMoreHeader, setShowMoreHeader] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -197,6 +205,80 @@ export default function TraderDashboard() {
     setActiveTab(tab);
     setIsSidebarOpen(false);
   };
+
+  const handleMoreClick = () => {
+    setShowMoreHeader(true);
+    handleTabChange('payroll');
+  };
+
+  const MORE_HEADER_CARDS = [
+    {
+      label: 'PAYROLL',
+      tab: 'payroll',
+      icon: <DollarSign size={16} />, 
+      subText: 'Staff payouts & wages',
+    },
+    {
+      label: 'ALERTS',
+      tab: 'notifications',
+      icon: <Bell size={16} />, 
+      subText: 'System notifications',
+    },
+    {
+      label: 'MESSENGER',
+      tab: 'chat',
+      icon: <MessageSquare size={16} />, 
+      subText: 'Team communications',
+    },
+    {
+      label: 'SUPPORT',
+      tab: 'support',
+      icon: <HelpCircle size={16} />, 
+      subText: 'Helpdesk tickets',
+    },
+    {
+      label: 'REPORTS',
+      tab: 'reports',
+      icon: <BarChart2 size={16} />, 
+      subText: 'Analytics & audits',
+    },
+    {
+      label: 'CUSTOMERS',
+      tab: 'customers',
+      icon: <Users size={16} />, 
+      subText: 'Client profiles',
+    },
+    {
+      label: 'PROGRAMS',
+      tab: 'incentives',
+      icon: <Layers size={16} />, 
+      subText: 'Campaign configs',
+    },
+    {
+      label: 'TEAM',
+      tab: 'team',
+      icon: <ShieldCheck size={16} />, 
+      subText: 'Roles & tracking',
+    },
+    {
+      label: 'BUSINESS STATUS',
+      tab: 'tax',
+      icon: <Activity size={16} />, 
+      subText: 'Live status stats',
+    },
+    {
+      label: 'QR ENGINE',
+      tab: 'qrcodes',
+      icon: <QrCode size={16} />, 
+      subText: 'Code generations',
+    },
+    {
+      label: 'PREFERENCES',
+      tab: 'preferences',
+      icon: <Settings size={16} />, 
+      subText: 'Workspace parameters',
+    },
+  ];
 
   const refreshUserData = async () => {
     try {
@@ -455,12 +537,12 @@ export default function TraderDashboard() {
       {/* Sidebar - Desktop Only or Overlay on Mobile */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out md:relative md:translate-x-0 hidden md:flex flex-col border-r border-white/5',
+          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out md:sticky md:top-0 md:translate-x-0 hidden md:flex flex-col border-r border-white/5 md:h-screen',
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full',
           isSidebarCollapsed ? 'w-20' : 'w-64'
         )}
       >
-        <div className="h-full flex flex-col p-4">
+          <div className="h-full flex flex-col p-4">
           <div className="flex items-center justify-between mb-8 shrink-0 px-2">
             {!isSidebarCollapsed && <Logo dark className="scale-90 origin-left" />}
             <button
@@ -475,8 +557,8 @@ export default function TraderDashboard() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto no-scrollbar">
-            <nav className={cn('flex-1 space-y-5', isSidebarCollapsed && 'items-center')}>
+          <div className="flex-1 overflow-y-auto no-scrollbar max-h-[calc(100vh-200px)]">
+            <nav className={cn('flex-1 space-y-1 sm:space-y-1.5', isSidebarCollapsed && 'items-center')}>
               {/* Core */}
               <div>
                 {!isSidebarCollapsed && (
@@ -550,6 +632,14 @@ export default function TraderDashboard() {
                   />
                   <SidebarItem
                     collapsed={isSidebarCollapsed}
+                    active={activeTab === 'finance'}
+                    onClick={() => handleTabChange('finance')}
+                    icon={<TrendingUp size={20} />}
+                    label="Finance"
+                    description="Balance, transactions & earnings"
+                  />
+                  <SidebarItem
+                    collapsed={isSidebarCollapsed}
                     active={activeTab === 'premium'}
                     onClick={() => handleTabChange('premium')}
                     icon={<Crown size={20} />}
@@ -572,126 +662,12 @@ export default function TraderDashboard() {
               <div className="space-y-1">
                 <SidebarItem
                   collapsed={isSidebarCollapsed}
-                  active={showMoreMenu}
-                  onClick={() => setShowMoreMenu(!showMoreMenu)}
-                  icon={<ChevronDown size={20} />}
+                  active={activeTab === 'payroll'}
+                  onClick={handleMoreClick}
+                  icon={<TrendingUp size={20} />}
                   label="More"
-                  description="Open additional tools"
+                  description="Payroll"
                 />
-                {!isSidebarCollapsed && showMoreMenu && (
-                  <div className="space-y-1 pl-2 pt-2 border-l border-white/10">
-                    {(userData?.features?.includes('supply_chain') ||
-                      userData?.features?.includes('delivery_management')) && (
-                      <>
-                        <SidebarItem
-                          collapsed={false}
-                          active={activeTab === 'deliveries'}
-                          onClick={() => handleTabChange('deliveries')}
-                          icon={<Truck size={20} />}
-                          label="Deliveries"
-                          description="Dispatch to doorstep tracking"
-                        />
-                        <SidebarItem
-                          collapsed={false}
-                          active={activeTab === 'suppliers'}
-                          onClick={() => handleTabChange('suppliers')}
-                          icon={<Store size={20} />}
-                          label="Suppliers"
-                          description="Upstream supply analysis"
-                        />
-                      </>
-                    )}
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'payroll'}
-                      onClick={() => handleTabChange('payroll')}
-                      icon={<TrendingUp size={20} />}
-                      label="Payroll"
-                      description="Team payments"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'notifications'}
-                      onClick={() => handleTabChange('notifications')}
-                      icon={<Bell size={20} />}
-                      label="Alerts"
-                      description="System notifications & warnings"
-                      badge={unreadCount ?? 0}
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'chat'}
-                      onClick={() => handleTabChange('chat')}
-                      icon={<MessageSquare size={20} />}
-                      label="Messenger"
-                      description="Direct customer communication"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'support'}
-                          onClick={() => handleTabChange('support')}
-                          icon={<AlertCircle size={20} />}
-                      label="Help"
-                      description="Support and tickets"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'reports'}
-                      onClick={() => handleTabChange('reports')}
-                      icon={<FileText size={20} />}
-                      label="Reports"
-                      description="Verified daily, weekly & annual PDFs"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'customers'}
-                      onClick={() => handleTabChange('customers')}
-                      icon={<Users size={20} />}
-                      label="Customers"
-                      description="Customer activity"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'incentives'}
-                      onClick={() => handleTabChange('incentives')}
-                      icon={<Gift size={20} />}
-                      label="Programs"
-                      description="Rewards & growth initiatives"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'team'}
-                      onClick={() => handleTabChange('team')}
-                      icon={<Users size={20} />}
-                      label="Team"
-                      description="Members and roles"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'tax'}
-                      onClick={() => handleTabChange('tax')}
-                      icon={<VerifiedIcon size={20} />}
-                      label="Business Status"
-                      description="Compliance and reports"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={activeTab === 'qrcodes'}
-                      onClick={() => handleTabChange('qrcodes')}
-                      icon={<QrCode size={20} />}
-                      label="QR Engine"
-                      description="Dynamic code generation"
-                    />
-                    <SidebarItem
-                      collapsed={false}
-                      active={false}
-                      onClick={() => setShowPreferences(true)}
-                      icon={<Settings size={20} />}
-                      label="Preferences"
-                      description="App settings & features"
-                    />
-                  </div>
-                )}
               </div>
             </nav>
           </div>
@@ -699,7 +675,7 @@ export default function TraderDashboard() {
           <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
             {!isSidebarCollapsed && (
               <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-3 mb-2 p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner">
+                <div className="flex items-center gap-2 mb-1 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-inner">
                   <ProfileImage
                     src={userData?.photoURL}
                     alt={userData?.businessName || userData?.name || 'Trader'}
@@ -734,7 +710,7 @@ export default function TraderDashboard() {
                 {/* Live Sync Indicator */}
 
                 {/* Phase 2: Account Status Card */}
-                <div className="mt-3 p-3 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border border-blue-600/20 rounded-2xl space-y-2 text-[8px]">
+                <div className="mt-2 p-2 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border border-blue-600/20 rounded-2xl space-y-1 text-[8px]">
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 bg-blue-500 rounded flex items-center justify-center">
                       <AlertCircle size={10} className="text-white" />
@@ -781,7 +757,7 @@ export default function TraderDashboard() {
                 </div>
 
                 {/* Phase 2: Sync Status */}
-                <div className="mt-3 flex items-center justify-center gap-2 text-[7px] text-white/40 px-2 py-1.5">
+                <div className="mt-2 flex items-center justify-center gap-1.5 text-[7px] text-white/40 px-2 py-1">
                   <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                   <span>Synced {getTimeAgo(lastSyncTime)}</span>
                 </div>
@@ -1069,7 +1045,12 @@ export default function TraderDashboard() {
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="flex-1 h-screen overflow-y-auto no-scrollbar relative bg-[#050505] transition-colors">
+      <main
+        className={cn(
+          "flex-1 h-screen relative bg-[#050505] transition-colors",
+          activeTab === 'chat' ? "overflow-hidden flex flex-col" : "overflow-y-auto no-scrollbar"
+        )}
+      >
         {/* Mobile Header */}
         <header className="md:hidden bg-[#050505] border-b border-white/5 px-4 py-4 sticky top-0 z-40 flex flex-col gap-3 shadow-sm">
           <div className="flex items-center justify-between">
@@ -1110,7 +1091,54 @@ export default function TraderDashboard() {
           </div>
         </header>
 
-        <div className="p-3 sm:p-4 md:p-8 max-w-7xl mx-auto space-y-4 sm:space-y-6 md:space-y-8 pb-40 sm:pb-32 md:pb-8">
+
+        <AnimatePresence>
+          {showMoreHeader && ['payroll', 'alerts', 'chat', 'support', 'reports', 'customers', 'programs', 'team', 'business_status', 'qr_engine', 'preferences'].includes(activeTab) && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="hidden md:flex items-center gap-2 px-4 py-2 bg-zinc-900/90 backdrop-blur-md border-b border-white/10 sticky top-0 z-50 shadow-xl rounded-xl mt-2 mx-4 overflow-x-auto no-scrollbar"
+            >
+              {MORE_HEADER_CARDS.map((item) => {
+                const itemActive = item.tab === 'preferences' ? showPreferences : activeTab === item.tab;
+
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    title={item.label}
+                    onClick={() => {
+                      if (item.tab === 'preferences') {
+                        setShowPreferences(true);
+                      }
+                      handleTabChange(item.tab as Tab);
+                    }}
+                    className={cn(
+                      'flex items-center justify-center w-8 h-8 rounded-lg border border-white/5 bg-zinc-900/30 hover:bg-white/5 transition-all duration-200 cursor-pointer',
+                      itemActive
+                        ? 'bg-orange-500/10 border-orange-500/40 text-orange-500 shadow-md shadow-orange-500/5'
+                        : 'text-white/60'
+                    )}
+                  >
+                    <span className={itemActive ? 'text-orange-500' : 'text-white/60'}>
+                      {item.icon}
+                    </span>
+                  </button>
+                );
+              })}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div
+          className={cn(
+            "mx-auto transition-all duration-200",
+            activeTab === 'chat'
+              ? "p-0 max-w-none w-full flex-1 h-full flex flex-col pb-0"
+              : "p-3 sm:p-4 md:p-8 max-w-7xl space-y-4 sm:space-y-6 md:space-y-8 pb-40 sm:pb-32 md:pb-8"
+          )}
+        >
           {/* Context Banner - Shows user type info and dashboard purpose */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -1416,6 +1444,9 @@ export default function TraderDashboard() {
                     tier={userData?.tier || 'free'}
                   />
                 )}
+                {activeTab === 'finance' && (
+                  <TraderFinance />
+                )}
                 {activeTab === 'premium' && (
                   <TraderSubscriptionDashboard
                     traderId={dashboardTraderId}
@@ -1572,21 +1603,25 @@ export default function TraderDashboard() {
           </div>
         </nav>
 
-        {/* Desktop Floating Action Buttons */}
-        <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">
-          <button
-            onClick={() => setShowScanner(true)}
-            className="w-16 h-16 bg-[#0a0a0a] text-orange-600 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
-          >
-            <QrCode size={32} className="group-hover:scale-110 transition-transform" />
-          </button>
-          <button
-            onClick={() => setActiveTab('products')}
-            className="w-16 h-16 bg-orange-600 text-white rounded-2xl shadow-2xl shadow-orange-600/20 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
-          >
-            <Plus size={32} className="group-hover:rotate-90 transition-transform duration-300" />
-          </button>
-        </div>
+        {!['payroll', 'alerts', 'chat', 'support', 'reports', 'customers', 'programs', 'team', 'business_status', 'qr_engine', 'preferences'].includes(activeTab) && (
+          <>
+            {/* Desktop Floating Action Buttons */}
+            <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">
+              <button
+                onClick={() => setShowScanner(true)}
+                className="w-16 h-16 bg-[#0a0a0a] text-orange-600 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+              >
+                <QrCode size={32} className="group-hover:scale-110 transition-transform" />
+              </button>
+              <button
+                onClick={() => setActiveTab('products')}
+                className="w-16 h-16 bg-orange-600 text-white rounded-2xl shadow-2xl shadow-orange-600/20 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+              >
+                <Plus size={32} className="group-hover:rotate-90 transition-transform duration-300" />
+              </button>
+            </div>
+          </>
+        )}
       </main>
 
       <AnimatePresence>

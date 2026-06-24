@@ -18,6 +18,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { observeAuthState } from '../services/sessionService';
 import { getUser } from '../services/userService';
 import { useEffect, useState } from 'react';
+import HybridCarousel from '../components/HybridCarousel';
 import Logo from '../components/Logo';
 
 export default function LandingPage() {
@@ -117,6 +118,8 @@ export default function LandingPage() {
           </div>
         </motion.div>
       </section>
+
+      <HybridCarousel />
 
       {/* Features Section */}
       <section className="py-24 bg-white px-4">

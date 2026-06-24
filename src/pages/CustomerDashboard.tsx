@@ -34,7 +34,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import WalletComponent from '../components/WalletComponent';
-import { Marketplace } from '../components/customer/Marketplace';
+import Marketplace from '../components/customer/Marketplace';
 import { useLanguage } from '../context/LanguageContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRealTimeSync } from '../context/RealTimeSyncContext';
@@ -671,97 +671,6 @@ export default function CustomerDashboard() {
                       </span>
                     </div>
                   </div>
-
-                  {/* Phase 3: First-Time User Banner */}
-                  {userData?.firstTime && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      className="p-4 md:p-6 bg-gradient-to-r from-orange-600/20 to-amber-600/20 border border-orange-600/30 rounded-2xl"
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center flex-shrink-0">
-                          <Sparkles className="text-orange-400" size={20} />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-black text-white mb-2 text-lg">
-                            Welcome to Nexus! 👋
-                          </h3>
-                          <p className="text-[12px] text-neutral-300 mb-4">
-                            Here's how to get started and make the most of your account:
-                          </p>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                            <div className="flex items-start gap-2.5 p-3 bg-white/5 rounded-xl border border-white/10">
-                              <div className="w-6 h-6 bg-orange-600 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-black text-white">
-                                1
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-black text-white uppercase">
-                                  Add Funds
-                                </p>
-                                <p className="text-[9px] text-neutral-400">
-                                  Top up your wallet to start paying
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2.5 p-3 bg-white/5 rounded-xl border border-white/10">
-                              <div className="w-6 h-6 bg-orange-600 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-black text-white">
-                                2
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-black text-white uppercase">
-                                  Find Shops
-                                </p>
-                                <p className="text-[9px] text-neutral-400">
-                                  Browse the marketplace for great deals
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-start gap-2.5 p-3 bg-white/5 rounded-xl border border-white/10">
-                              <div className="w-6 h-6 bg-orange-600 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-black text-white">
-                                3
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-black text-white uppercase">
-                                  Scan & Pay
-                                </p>
-                                <p className="text-[9px] text-neutral-400">
-                                  Use QR codes for instant transactions
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={async () => {
-                                const current = auth.currentUser;
-                                if (current) {
-                                  try {
-                                    await updateUser(current.uid || current.id, {
-                                      firstTime: false,
-                                    });
-                                    setUserData({ ...userData, firstTime: false });
-                                  } catch (err) {
-                                    console.error('Error updating user:', err);
-                                  }
-                                }
-                              }}
-                              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-[10px] font-black rounded-xl transition-all active:scale-95"
-                            >
-                              Got It!
-                            </button>
-                            <button
-                              onClick={() => handleTabChange('wallet')}
-                              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-[10px] font-black rounded-xl transition-all"
-                            >
-                              Add Funds Now
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
 
                   {/* Wallet & Quick Actions in Overview */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

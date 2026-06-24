@@ -1,0 +1,356 @@
+﻿
+ RUN  v4.1.9 C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments (1)
+
+stdout | tests/permission-matrix.spec.ts
+[dotenv@17.3.1] injecting env (11) from .env -- tip: ≡ƒñû agentic secret storage: https://dotenvx.com/as2
+
+node.exe : stderr | tests/permission-matrix.spec.ts > Permission Matrix - 
+Negative Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/deposit > should reject trader without permission
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (stderr | tests/...hout permission 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+POST /api/wallet/deposit 403 47ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow admin deposit on behalf of user
+POST /api/wallet/deposit 200 12ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow agent deposit on behalf of user
+POST /api/wallet/deposit 200 4ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/deposit > should reject unauthenticated request
+POST /api/wallet/deposit 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/withdraw > should reject trader without permission
+POST /api/wallet/withdraw 403 3ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should allow customer withdraw
+POST /api/wallet/withdraw 200 6ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should reject trader without permission 133ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow admin deposit on behalf of user 32ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow agent deposit on behalf of user 17ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should reject unauthenticated request 14ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should reject trader without permission 16ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should allow customer withdraw 17ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/withdraw > should reject unauthenticated request
+POST /api/wallet/withdraw 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/transfer > should reject trader without permission
+POST /api/wallet/transfer 403 5ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should allow customer transfer
+POST /api/wallet/transfer 200 11ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Wallet Endpoints - Money Operations > POST 
+/api/wallet/transfer > should reject unauthenticated request
+POST /api/wallet/transfer 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject 
+trader without permission
+POST /api/purchases 403 4ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Purchase Endpoints > POST /api/purchases > should allow 
+customer to create purchase
+Purchase creation failed: Error: Product not found
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/server.ts:6832:27
+    at sqliteTransaction 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\better-sqlite3\lib\methods\transaction.js:65:24)
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/server.ts:7062:6
+    at Layer.handle [as handle_request] 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\route.js:149:13)
+    at authenticate 
+(C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/lib/authMiddleware.ts:48:7)
+    at Layer.handle [as handle_request] 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\route.js:149:13)
+    at Route.dispatch 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\route.js:119:3)
+    at Layer.handle [as handle_request] 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\layer.js:95:5)
+POST /api/purchases 400 161ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should reject unauthenticated request 14ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should reject trader without permission 14ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should allow customer transfer 23ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should reject unauthenticated request 13ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject trader without permission 12ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject 
+unauthenticated request
+POST /api/purchases 401 0ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should allow customer to create purchase 242ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject unauthenticated request 88ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/dashboard > should reject customer
+GET /api/admin/dashboard 403 5ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/dashboard > should reject trader
+GET /api/admin/dashboard 403 2ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/dashboard > should reject agent
+GET /api/admin/dashboard 403 2ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject customer 32ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject trader 59ms
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should allow admin access
+GET /api/admin/dashboard 200 7ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/dashboard > should reject unauthenticated request
+GET /api/admin/dashboard 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT 
+/api/admin/users/:id > should reject customer
+PUT /api/admin/users/cdc8761d-9c7e-488f-8a6c-03fbe7bf5f04 403 4ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject agent 17ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should allow admin access 17ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject unauthenticated request 64ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT 
+/api/admin/users/:id > should reject trader
+PUT /api/admin/users/3bf36c86-a0ca-46f5-b480-a380d624e0ed 403 2ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT 
+/api/admin/users/:id > should reject agent
+PUT /api/admin/users/3bf36c86-a0ca-46f5-b480-a380d624e0ed 403 2ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should allow admin
+PUT /api/admin/users/cdc8761d-9c7e-488f-8a6c-03fbe7bf5f04 200 5ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT 
+/api/admin/users/:id > should reject unauthenticated request
+PUT /api/admin/users/cdc8761d-9c7e-488f-8a6c-03fbe7bf5f04 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE 
+/api/admin/users/:id > should reject customer
+DELETE /api/admin/users/7f4e39df-e5b6-48e0-a872-c93144267de3 403 2ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject customer 28ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject trader 43ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject agent 13ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should allow admin 15ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject unauthenticated request 9ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject customer 19ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE 
+/api/admin/users/:id > should reject trader
+DELETE /api/admin/users/7f4e39df-e5b6-48e0-a872-c93144267de3 403 2ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE 
+/api/admin/users/:id > should allow admin
+Error: SqliteError: FOREIGN KEY constraint failed
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/server.ts:9537:50
+    at sqliteTransaction 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\better-sqlite3\lib\methods\transaction.js:65:24)
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/server.ts:9538:4
+    at Layer.handle [as handle_request] 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\route.js:149:13)
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/lib/authMiddleware.ts:82:9
+    at authenticate 
+(C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/lib/authMiddleware.ts:48:7)
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/lib/authMiddleware.ts:64:7
+    at Layer.handle [as handle_request] 
+(C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\niyib\Downloads\esoko-nexus---b2b-commerce-payments 
+(1)\node_modules\express\lib\router\route.js:149:13) {
+  code: 'SQLITE_CONSTRAINT_FOREIGNKEY'
+}
+DELETE /api/admin/users/7f4e39df-e5b6-48e0-a872-c93144267de3 500 17ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE 
+/api/admin/users/:id > should reject unauthenticated request
+DELETE /api/admin/users/7f4e39df-e5b6-48e0-a872-c93144267de3 401 0ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > POST 
+/api/admin/verify-user > should reject customer
+POST /api/admin/verify-user 403 2ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > POST 
+/api/admin/verify-user > should reject trader
+POST /api/admin/verify-user 403 2ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should allow admin
+POST /api/admin/verify-user 200 3ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > POST 
+/api/admin/verify-user > should reject unauthenticated request
+POST /api/admin/verify-user 401 1ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject trader 11ms
+ ├ù tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should allow admin 36ms
+   ΓåÆ expected [ 200, 400, 404 ] to include 500
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject unauthenticated request 10ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject customer 11ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject trader 10ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should allow admin 12ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject unauthenticated request 8ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/audit-logs > should reject customer
+GET /api/admin/audit-logs 403 2ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/audit-logs > should reject trader
+GET /api/admin/audit-logs 403 2ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should allow admin
+GET /api/admin/audit-logs 200 3ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > GET 
+/api/admin/audit-logs > should reject unauthenticated request
+GET /api/admin/audit-logs 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp 
+> should reject customer
+POST /api/admin/request-otp 403 3ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp 
+> should reject trader
+POST /api/admin/request-otp 403 3ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject customer 11ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject trader 13ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should allow admin 12ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject unauthenticated request 8ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should reject customer 12ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should reject trader 9ms
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should allow admin
+[ADMIN OTP] Email sent successfully to admin@test.local
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should allow admin
+POST /api/admin/request-otp 200 3571ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should allow admin 3584ms
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp 
+> should reject customer
+POST /api/admin/verify-otp 403 9ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp 
+> should allow admin
+POST /api/admin/verify-otp 401 14ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp > should reject customer 41ms
+ ├ù tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp > should allow admin 52ms
+   ΓåÆ expected [ 200, 400 ] to include 401
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Cross-Route Coverage > should enforce auth on /api/me 
+(profile endpoint)
+GET /api/me 401 5ms
+
+stdout | tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should return profile for authenticated user
+GET /api/me 200 4ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Cross-Route Coverage > should enforce auth on /api/upload
+POST /api/upload 401 1ms
+
+stderr | tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Cross-Route Coverage > should enforce auth on 
+/api/uploads/:filename
+GET /api/uploads/test.jpg 401 1ms
+
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/me (profile endpoint) 26ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should return profile for authenticated user 13ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/upload 8ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/uploads/:filename 10ms
+ Γ£ô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Permission Matrix Summary > should document expected role permissions for all money-moving endpoints 2ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 2 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE 
+/api/admin/users/:id > should allow admin
+AssertionError: expected [ 200, 400, 404 ] to include 500
+ Γ¥» tests/permission-matrix.spec.ts:364:33
+    362|           .set('Authorization', `Bearer ${adminToken}`);
+    363|
+    364|         expect([200, 400, 404]).toContain(response.status);
+       |                                 ^
+    365|       });
+    366|
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/2]ΓÄ
+»
+
+ FAIL  tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp 
+> should allow admin
+AssertionError: expected [ 200, 400 ] to include 401
+ Γ¥» tests/permission-matrix.spec.ts:492:28
+    490|           .send({ email: 'admin@test.local', code: '000000' });
+    491|
+    492|         expect([200, 400]).toContain(response.status); // 400 if OTP 
+iΓÇª
+       |                            ^
+    493|       });
+    494|     });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/2]ΓÄ
+»
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 43 passed (45)
+   Start at  22:46:47
+   Duration  9.35s (transform 1.68s, setup 0ms, import 3.82s, tests 4.88s, environment 1ms)
+

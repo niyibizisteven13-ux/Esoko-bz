@@ -936,36 +936,21 @@ export default function TraderProducts({
       </div>
 
       <div className="bg-[#0a0a0a] border border-white/5 rounded-[2rem] md:rounded-[2.5rem] overflow-hidden shadow-2xl">
-        <div className="p-5 md:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-400 border border-red-500/20 flex items-center justify-center shrink-0">
-              <Radio size={28} />
+        <div className="p-5 md:p-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 text-red-400 border border-red-500/20 flex items-center justify-center shrink-0">
+              <Radio size={24} />
             </div>
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-400">
-                  Live Marketplace Control
-                </p>
-                {isLive && (
-                  <span className="px-2 py-1 rounded-full bg-red-600 text-white text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                    Live
-                  </span>
-                )}
-              </div>
-              <h3 className="text-xl font-black text-white leading-tight">
-                Go live from inventory and sell while customers watch
-              </h3>
-              <p className="text-xs text-neutral-500 font-bold mt-1 max-w-2xl">
-                Pin a product, open camera, share the live room, and keep inventory controls in the
-                same market command area.
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-red-400">
+                Live Marketplace Control
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setIsLivePanelOpen((value) => !value)}
-            className="px-5 py-4 rounded-2xl bg-red-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all flex items-center justify-center gap-2"
+            className="px-4 py-3 rounded-2xl bg-red-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all flex items-center justify-center gap-2"
           >
             <Video size={18} />
             {isLivePanelOpen ? 'Hide Live Tools' : 'Open Live Tools'}
@@ -1213,58 +1198,9 @@ export default function TraderProducts({
                   </div>
                 )}
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 md:p-8 rounded-[2rem] md:rounded-[2.5rem] text-white overflow-hidden relative group">
-        <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-125 transition-transform duration-1000">
-          <TrendingUp size={120} />
-        </div>
-        <div className="relative z-10 space-y-6">
-          <div>
-            <h3 className="text-sm font-black uppercase tracking-[0.3em] text-white/50 mb-4 flex items-center gap-2">
-              <Navigation size={14} /> Marketplace Sourcing
-            </h3>
-            <div className="relative max-w-2xl">
-              <Search
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-300"
-                size={20}
-              />
-              <input
-                type="text"
-                placeholder={
-                  t.trader.searchSupplierProduct || 'Search any product name across the network...'
-                }
-                value={sourcingQuery}
-                onChange={(e) => setSourcingQuery(e.target.value)}
-                onKeyDown={(e) =>
-                  e.key === 'Enter' && sourcingQuery && handleFindSuppliers(sourcingQuery)
-                }
-                className="w-full pl-12 pr-32 py-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl shadow-xl focus:ring-2 focus:ring-white outline-none font-black text-sm placeholder:text-white/40"
-              />
-              <button
-                onClick={() => sourcingQuery && handleFindSuppliers(sourcingQuery)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2.5 bg-white text-blue-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-50 transition-all"
-              >
-                {t.common.findSupplier || 'Find Hubs'}
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-4 pt-2">
-            <div className="flex items-center gap-2 bg-white/5 backdrop-blur-sm px-4 py-2 rounded-xl">
-              <CheckCircle2 size={14} className="text-emerald-400" />
-              <span className="text-[10px] font-black uppercase tracking-widest">Stock Synced</span>
-            </div>
-            <div className="flex items-center gap-2 bg-white/5 backdrop-blur-sm px-4 py-2 rounded-xl">
-              <VerifiedIcon size={14} className="text-blue-400" />
-              <span className="text-[10px] font-black uppercase tracking-widest">Clean Receipts</span>
-            </div>
-          </div>
-        </div>
-        <div className="absolute -left-20 -bottom-20 w-80 h-80 bg-white/5 rounded-full blur-3xl group-hover:bg-white/10 transition-colors" />
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex flex-col gap-4">
         {/* Advanced Filter Architecture */}
@@ -1516,6 +1452,7 @@ export default function TraderProducts({
             </motion.div>
           ))}
         </div>
+      </div>
       </div>
 
       <AnimatePresence>

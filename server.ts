@@ -24,6 +24,13 @@ import { createOriginGuard, isTrustedDynamicPublicOrigin } from './lib/originGua
 import { createRevenueService } from './lib/revenueService.ts';
 import { normalizeRole } from './lib/roles.ts';
 import { hashPassword, hashToken, verifyPassword } from './lib/security.ts';
+import { validateBody, WalletDepositSchema, WalletWithdrawSchema, WalletTransferSchema, PurchaseCreateSchema, AdminVerifyUserSchema, VoucherCreateSchema, VoucherRedeemSchema, TransactionCreateSchema } from './lib/schemas.ts';
+import FinanceService from './lib/financeService.ts';
+import { setUploadSafeHeaders, validateUploadMagicBytesMiddleware, scanUploadForMalwareMiddleware } from './lib/uploadSecurity.ts';
+import { requireCsrfTokenForRoute, csrfTokenEndpoint, generateCsrfToken } from './lib/csrfToken.ts';
+import { initMigrationsTable, runPendingMigrations } from './lib/migrations.ts';
+import { AuditLogger, MetricsCollector } from './lib/auditLogger.ts';
+import { DistributedScheduler } from './lib/distributedScheduler.ts';
 import {
   bootstrapSqliteAccountsFromPostgres,
   deleteProductFromPostgres,
@@ -296,6 +303,46 @@ const LOYALTY_POINT_RWF_VALUE = 0.2;
 const idempotency = createIdempotencyStore(db, isProduction);
 const app = express();
 const port = config.port;
+
+// Simple in-memory cache for frequently requested product listings.
+// This is a lightweight mitigation to reduce DB load for high-traffic listing queries.
+// Use `PRODUCTS_CACHE_TTL_MS` env var to tune cache duration (defaults to 5000ms).
+const PRODUCTS_CACHE_TTL_MS = Number(env.PRODUCTS_CACHE_TTL_MS || 5000);
+const productsCache: Map<string, { expiresAt: number; payload: any }> = new Map();
+
+// ============================================================================
+// Initialize Professional Hardening Modules
+// ============================================================================
+
+// Initialize audit logging and metrics collection
+const auditLog = new AuditLogger(db, isProduction ? 'production' : 'development');
+const metrics = new MetricsCollector(db, {
+  failedLoginAttemptsPerHour: 5,
+  otpAttemptsPerHour: 10,
+});
+
+// Initialize finance service for vouchers, transactions, and balances
+const financeService = new FinanceService(db);
+
+// Initialize migrations framework (non-blocking, optional)
+try {
+  initMigrationsTable(db);
+  // Migrations loading disabled in test/dev mode for now - enable only after migration files are set up
+  // void runPendingMigrations(db, './migrations').then(result => { ... });
+} catch (error) {
+  console.warn('Migrations initialization warning (non-blocking):', error instanceof Error ? error.message : error);
+}
+
+// Initialize distributed scheduler for multi-instance background jobs
+const scheduler = new DistributedScheduler(db, {
+  instanceId: env.INSTANCE_ID || `instance-${uuidv4().slice(0, 8)}`,
+  lockTtlMs: 30 * 60 * 1000, // 30 minutes
+});
+
+// ============================================================================
+// End Professional Hardening Modules Initialization
+// ============================================================================
+
 const LOAN_WHATSAPP_NUMBER = env.LOAN_WHATSAPP_NUMBER || '+250795806631';
 const WHATSAPP_OTP_SENDER = env.WHATSAPP_OTP_SENDER || env.VITE_SUPPORT_WHATSAPP || '+250795806631';
 const WHATSAPP_OTP_PROVIDER_URL = env.WHATSAPP_OTP_PROVIDER_URL || '';
@@ -484,6 +531,34 @@ const upload = multer({
   },
 });
 
+// Basic magic-byte verification for uploads to harden MIME-only checks.
+function detectFileTypeByMagic(filePath: string) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(16);
+    fs.readSync(fd, buf, 0, 16, 0);
+    fs.closeSync(fd);
+
+    const hex = buf.toString('hex');
+    const str = buf.toString('latin1');
+
+    if (hex.startsWith('ffd8ff')) return 'image/jpeg';
+    if (str.startsWith('\u0089PNG')) return 'image/png';
+    if (str.startsWith('GIF87a') || str.startsWith('GIF89a')) return 'image/gif';
+    if (str.startsWith('%PDF-')) return 'application/pdf';
+    // MP4 / ISO BMFF often has 'ftyp' at offset 4
+    if (buf.slice(4, 8).toString() === 'ftyp') return 'video/mp4';
+    // WebM/Matroska detection: 0x1A45DFA3 at start
+    if (hex.startsWith('1a45dfa3')) return 'video/webm';
+    // OGG/OGV
+    if (str.startsWith('OggS')) return 'video/ogg';
+
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 app.get('/uploads/:filename', (req, res): any => {
   const filename = path.basename(String(req.params.filename || ''));
   if (!filename || !isPublicUpload(filename)) {
@@ -598,10 +673,11 @@ function createRefreshSession(user: any, req?: Request) {
 }
 
 function clearAuthCookies(res: Response) {
-  res.clearCookie('nexus_auth_token', accessCookieOptions);
-  res.clearCookie('nexus_refresh_token', refreshCookieOptions);
-  res.clearCookie('nexus_team_access', teamAccessCookieOptions);
-  res.clearCookie('nexus_account_mode', accountModeCookieOptions);
+  const clearOpts = { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite };
+  res.clearCookie('nexus_auth_token', clearOpts);
+  res.clearCookie('nexus_refresh_token', clearOpts);
+  res.clearCookie('nexus_team_access', clearOpts);
+  res.clearCookie('nexus_account_mode', clearOpts);
 }
 
 function issueAuthCookies(req: Request, res: Response, user: any) {
@@ -775,6 +851,10 @@ function sendUploadFile(res: Response, filename: string) {
     res.status(404).json({ error: 'File not found' });
     return;
   }
+  // Safe serving headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', isProduction ? 'public, max-age=604800' : 'no-cache');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; frame-ancestors 'none';");
   res.sendFile(filePath);
 }
 
@@ -1529,7 +1609,7 @@ function selectAccountMode(req: any, res: Response, user: any, account: any) {
   );
 
   res.cookie('nexus_account_mode', normalizedAccount.id, accountModeCookieOptions);
-  res.clearCookie('nexus_team_access', teamAccessCookieOptions);
+  res.clearCookie('nexus_team_access', { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite });
   const freshUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
   mirrorAccountState(user.id);
   return applyAccountModeToUser(freshUser, normalizedAccount);
@@ -4447,8 +4527,8 @@ app.post('/api/auth/login', validateRequest(LoginSchema), async (req: any, res):
     if (accountModes.length === 1 && teamOptions.length === 0) {
       freshUser = selectAccountMode(req, res, freshUser, accountModes[0]);
     } else {
-      res.clearCookie('nexus_account_mode', accountModeCookieOptions);
-      res.clearCookie('nexus_team_access', teamAccessCookieOptions);
+      res.clearCookie('nexus_account_mode', { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite });
+      res.clearCookie('nexus_team_access', { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite });
     }
 
     const { accessToken } = issueAuthCookies(req, res, freshUser);
@@ -4519,6 +4599,12 @@ app.post('/api/auth/logout', (req: any, res) => {
   clearAuthCookies(res);
   res.json({ success: true });
 });
+
+/**
+ * GET /api/csrf-token
+ * Fetch a fresh CSRF token for use in subsequent state-changing requests
+ */
+app.get('/api/csrf-token', authenticate, csrfTokenEndpoint);
 
 app.get('/api/me', authenticate, (req: any, res): any => {
   void maybeSendVerificationReminder(req, req.user).catch((emailError) => {
@@ -4632,7 +4718,7 @@ app.post('/api/auth/select-access', authenticate, (req: any, res): any => {
 
     if (!account) return res.status(404).json({ error: 'Account mode was not found' });
     const selectedUser = selectAccountMode(req, res, req.user, account);
-    res.clearCookie('nexus_team_access', teamAccessCookieOptions);
+    res.clearCookie('nexus_team_access', { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite });
     return res.json({
       success: true,
       user: publicUserWithAccess(req, selectedUser),
@@ -6262,6 +6348,12 @@ function transformProduct(product: any) {
 
 app.get('/api/products', authenticate, (req: any, res): any => {
   const { limit, offset } = parseLimitOffset(req.query);
+  // Only cache shallow listing pages to avoid storing deep pagination results.
+  const cacheKey = `products:${req.originalUrl}`;
+  const cached = productsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return res.json(cached.payload);
+  }
   const conditions: string[] = [];
   const params: any[] = [];
   const activeTeam = getActiveTeamContext(req);
@@ -6321,7 +6413,19 @@ app.get('/api/products', authenticate, (req: any, res): any => {
 
   const transformedProducts = products.map(transformProduct);
 
-  res.json({ success: true, products: transformedProducts });
+  const responsePayload = { success: true, products: transformedProducts };
+
+  // Cache common listing requests: small limits and offset 0.
+  if (offset === 0 && limit <= 250) {
+    try {
+      productsCache.set(cacheKey, { expiresAt: Date.now() + PRODUCTS_CACHE_TTL_MS, payload: responsePayload });
+    } catch (err) {
+      // Ignore cache errors to avoid impacting the request.
+      console.warn('Products cache set failed', err);
+    }
+  }
+
+  res.json(responsePayload);
 });
 
 app.get('/api/products/:id', authenticate, (req: any, res): any => {
@@ -6508,6 +6612,103 @@ app.delete('/api/products/:id', requireRole(['trader', 'admin']), (req: any, res
     console.error('Postgres product delete mirror failed:', error);
   });
   res.json({ success: true });
+});
+
+// ============================================================================
+// Finance Endpoints: Vouchers, Transactions, Balance Management
+// ============================================================================
+
+/**
+ * POST /api/vouchers — Create voucher (admin only)
+ */
+app.post('/api/vouchers', requireRole(['admin']), (req: any, res): any => {
+  const validation = VoucherCreateSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: validation.error.issues[0].message });
+  }
+
+  try {
+    const { code, amount, redeemable_by, batch_count = 1, expires_at } = validation.data;
+    const expiryDate = new Date(expires_at);
+    const redeemableBy = redeemable_by ?? undefined;
+
+    const vouchers = financeService.createVoucher(code, amount, expiryDate, redeemableBy, batch_count);
+
+    publishLiveSync({ collection: 'vouchers', action: 'created', count: batch_count });
+
+    res.json({ success: true, vouchers, message: `${batch_count} voucher(s) created` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/vouchers/:code — Check voucher validity
+ */
+app.get('/api/vouchers/:code', authenticate, (req: any, res): any => {
+  try {
+    const result = financeService.checkVoucher(req.params.code);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/vouchers/:code/redeem — Redeem voucher
+ */
+app.post('/api/vouchers/:code/redeem', authenticate, (req: any, res): any => {
+  try {
+    const result = financeService.redeemVoucher(req.params.code, req.user.id, req.body.order_id);
+    publishLiveSync({ collection: 'vouchers', action: 'redeemed', userId: req.user.id });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/transactions — User transaction history
+ */
+app.get('/api/transactions', authenticate, (req: any, res): any => {
+  const { limit = 20, offset = 0 } = req.query;
+  try {
+    const result = financeService.getTransactionHistory(req.user.id, parseInt(limit), parseInt(offset));
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/balance — Trader account balance
+ */
+app.get('/api/balance', authenticate, (req: any, res): any => {
+  try {
+    const balance = financeService.getTraderBalance(req.user.id);
+    res.json({ success: true, ...balance });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/balance/withdraw — Withdraw from trader account
+ */
+app.post('/api/balance/withdraw', authenticate, (req: any, res): any => {
+  const validation = WalletWithdrawSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: validation.error.issues[0].message });
+  }
+
+  try {
+    const { amount, method } = validation.data;
+    const result = financeService.withdrawBalance(req.user.id, amount, method);
+    publishLiveSync({ collection: 'trader_accounts', action: 'withdrawal', userId: req.user.id });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/reports/business-summary/:traderId', authenticate, (req: any, res): any => {
@@ -7359,8 +7560,12 @@ app.get('/api/wallet/:userId', authenticate, (req: any, res): any => {
   });
 });
 
-app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
-  const userId = req.body.userId || req.user.id;
+app.post('/api/wallet/deposit', authenticate, requireCsrfTokenForRoute(), validateBody(WalletDepositSchema), (req: any, res): any => {
+  const validated = req.validatedBody; // From Zod validation
+  const userId = validated.userId;
+  const amount = validated.amount;
+  const method = validated.method;
+  
   const idemKey = idempotency.requireKey(req, res);
   if (idemKey === null) return;
   const existingResponse = idempotency.getResponse(userId, idemKey, req.originalUrl);
@@ -7369,23 +7574,30 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
   }
 
   if (!ensureWalletActionAllowed(userId)) {
+    auditLog.recordWalletEvent(userId, 'deposit', 'denied', req, { reason: 'Wallet action blocked due to login alert' });
     return res.status(423).json({
       error:
         'Wallet operations are blocked due to an unresolved login alert. Confirm the recent login before retrying.',
     });
   }
+  if (req.user.role === 'trader') {
+    return res.status(403).json({ error: 'Traders are not allowed to perform wallet deposits' });
+  }
   if (req.user.id !== userId && !['admin', 'agent'].includes(req.user.role)) {
+    auditLog.recordPermissionDenied(req.user.id, 'wallet.deposit', req, 'Only agents or admins can deposit for another user');
     return res.status(403).json({ error: 'Only agents or admins can deposit for another user' });
   }
-  const amount = asNumber(req.body.amount);
-  if (amount <= 0) return res.status(400).json({ error: 'Amount must be positive' });
 
   const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  
   const userTier = user?.tier || 'free';
   const feeCalc = calculateFeeAmount('deposit', amount, userTier);
-  if (feeCalc.netAmount < 0)
+  if (feeCalc.netAmount < 0) {
     return res.status(400).json({ error: 'Deposit amount is too small after fees' });
+  }
 
   const walletTransactionId = uuidv4();
   const transactionRecordId = uuidv4();
@@ -7401,7 +7613,7 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
         walletTransactionId,
         userId,
         amount,
-        `Pending deposit via ${req.body.method || 'external'}`
+        `Pending deposit via ${method}`
       );
       db.prepare(
         `
@@ -7412,8 +7624,8 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
         transactionRecordId,
         userId,
         amount,
-        `Pending deposit via ${req.body.method || 'external'}`,
-        req.body.reference || walletTransactionId,
+        `Pending deposit via ${method}`,
+        validated.reference || walletTransactionId,
         txCode('DEP'),
         feeCalc.totalFee,
         feeCalc.netAmount
@@ -7429,6 +7641,7 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
       };
     })();
 
+    auditLog.recordWalletEvent(userId, 'deposit', 'success', req, { amount, method, fee: feeCalc.totalFee, status: 'pending' });
     idempotency.saveResponse(userId, idemKey, req.originalUrl, result);
     return res.status(202).json(result);
   }
@@ -7449,7 +7662,7 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
       walletTransactionId,
       userId,
       feeCalc.netAmount,
-      `Deposit via ${req.body.method || 'cash'}`
+      `Deposit via ${method}`
     );
     db.prepare(
       `
@@ -7460,8 +7673,8 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
       transactionRecordId,
       userId,
       amount,
-      `Deposit via ${req.body.method || 'cash'}`,
-      req.body.reference || walletTransactionId,
+      `Deposit via ${method}`,
+      validated.reference || walletTransactionId,
       txCode('DEP'),
       feeCalc.totalFee,
       feeCalc.netAmount
@@ -7470,7 +7683,7 @@ app.post('/api/wallet/deposit', authenticate, (req: any, res): any => {
       transactionId: transactionRecordId,
       userId,
       amountDelta: feeCalc.netAmount,
-      description: `Wallet deposit credited: ${req.body.method || 'cash'}`,
+      description: `Wallet deposit credited: ${method}`,
       metadata: {
         grossAmount: amount,
         feeAmount: feeCalc.totalFee,
@@ -7524,6 +7737,9 @@ app.post('/api/wallet/withdraw', authenticate, (req: any, res): any => {
       error:
         'Wallet operations are blocked due to an unresolved login alert. Confirm the recent login before retrying.',
     });
+  }
+  if (req.user.role === 'trader') {
+    return res.status(403).json({ error: 'Traders are not allowed to perform wallet withdrawals' });
   }
   if (req.user.id !== userId && !['admin', 'agent'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Only agents or admins can withdraw for another user' });
@@ -7614,8 +7830,8 @@ app.post('/api/wallet/withdraw', authenticate, (req: any, res): any => {
 
 app.post('/api/wallet/transfer', authenticate, (req: any, res): any => {
   try {
-    const senderId = req.body.senderId || req.user.id;
-    const recipientId = req.body.recipientId;
+    const senderId = String(req.body.senderId || req.body.fromUserId || req.user.id);
+    const recipientId = String(req.body.recipientId || req.body.toUserId || '');
     const idemKey = idempotency.requireKey(req, res);
     if (idemKey === null) return;
     const existingResponse = idempotency.getResponse(senderId, idemKey, req.originalUrl);
@@ -7628,6 +7844,9 @@ app.post('/api/wallet/transfer', authenticate, (req: any, res): any => {
         error:
           'Wallet operations are blocked due to an unresolved login alert for one of the users involved. Confirm the recent login before retrying.',
       });
+    }
+    if (req.user.role === 'trader') {
+      return res.status(403).json({ error: 'Traders are not allowed to perform wallet transfers' });
     }
     const amount = asNumber(req.body.amount);
     if (req.user.id !== senderId && !['admin', 'agent'].includes(req.user.role)) {
@@ -9433,17 +9652,25 @@ app.post('/api/admin/transactions/:id/correct', requireRole(['admin']), (req: an
 app.delete('/api/admin/users/:id', requireRole(['admin']), (req: any, res): any => {
   if (req.params.id === req.user.id)
     return res.status(400).json({ error: 'Cannot delete your own account' });
-  db.transaction(() => {
-    db.prepare('DELETE FROM password_reset_tokens WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM linked_accounts WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM loyalty_points WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM wallet_transactions WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM notifications WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM smart_loans WHERE userId = ?').run(req.params.id);
-    db.prepare('UPDATE system_logs SET userId = NULL WHERE userId = ?').run(req.params.id);
-    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-  })();
-  res.json({ success: true });
+
+  try {
+    db.transaction(() => {
+      db.prepare('DELETE FROM password_reset_tokens WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM linked_accounts WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM loyalty_points WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM wallet_transactions WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM notifications WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM smart_loans WHERE userId = ?').run(req.params.id);
+      db.prepare('UPDATE system_logs SET userId = NULL WHERE userId = ?').run(req.params.id);
+      db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    })();
+    res.json({ success: true });
+  } catch (error: any) {
+    if (error?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      return res.status(400).json({ error: 'Unable to delete user due to related records' });
+    }
+    return res.status(500).json({ error: error?.message || 'Failed to delete user' });
+  }
 });
 
 app.post('/api/admin/verify-user', requireRole(['admin']), (req: any, res): any => {
@@ -11261,7 +11488,12 @@ app.delete('/api/:collectionName/:id', authenticate, (req: any, res: any, next: 
 // ============ ADMIN PORTAL ENDPOINTS ============
 const adminOtpStore = new Map<string, { otpHash: string; expiresAt: number; attempts: number }>();
 
-app.post('/api/admin/request-otp', adminOtpLimiter, async (req: any, res): Promise<any> => {
+app.post(
+  '/api/admin/request-otp',
+  authenticate,
+  requireRole(['admin']),
+  adminOtpLimiter,
+  async (req: any, res): Promise<any> => {
   try {
     const email = String(req.body.email || '')
       .trim()
@@ -11335,12 +11567,12 @@ app.post('/api/admin/request-otp', adminOtpLimiter, async (req: any, res): Promi
   }
 });
 
-app.post('/api/admin/verify-otp', adminOtpLimiter, (req: any, res): any => {
+app.post('/api/admin/verify-otp', authenticate, requireRole(['admin']), adminOtpLimiter, (req: any, res): any => {
   try {
     const email = String(req.body.email || '')
       .trim()
       .toLowerCase();
-    const otp = String(req.body.otp || '').trim();
+    const otp = String(req.body.otp || req.body.code || '').trim();
 
     if (!email || !otp) {
       return res.status(400).json({ error: 'Email and OTP are required' });
@@ -11348,12 +11580,12 @@ app.post('/api/admin/verify-otp', adminOtpLimiter, (req: any, res): any => {
 
     const otpRecord = adminOtpStore.get(email);
     if (!otpRecord) {
-      return res.status(401).json({ error: 'Invalid or expired OTP' });
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
 
     if (otpRecord.expiresAt < Date.now()) {
       adminOtpStore.delete(email);
-      return res.status(401).json({ error: 'OTP has expired' });
+      return res.status(400).json({ error: 'OTP has expired' });
     }
 
     if (otpRecord.attempts >= 5) {
@@ -11364,14 +11596,14 @@ app.post('/api/admin/verify-otp', adminOtpLimiter, (req: any, res): any => {
     if (otpRecord.otpHash !== hashToken(otp)) {
       otpRecord.attempts += 1;
       adminOtpStore.set(email, otpRecord);
-      return res.status(401).json({ error: 'Invalid or expired OTP' });
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
 
     const user = db
       .prepare('SELECT * FROM users WHERE email = ? AND role = ?')
       .get(email, 'admin') as any;
     if (!user) {
-      return res.status(401).json({ error: 'Admin user not found' });
+      return res.status(400).json({ error: 'Admin user not found' });
     }
 
     const { accessToken } = issueAuthCookies(req, res, user);
@@ -13131,7 +13363,20 @@ function shutdown(signal: string) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-startServer().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+// Export app for testing and module usage
+export { app, db, auditLog, scheduler };
+export default app;
+
+// Only start server if this module is run directly, not when imported for testing
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  });
+} else if (process.env.NODE_ENV !== 'test') {
+  // Auto-start if imported but not in test environment
+  startServer().catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  });
+}

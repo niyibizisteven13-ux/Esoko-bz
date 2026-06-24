@@ -1,0 +1,115 @@
+﻿
+ RUN  v4.1.9 C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments (1)
+
+stdout | tests/permission-matrix.spec.ts
+[dotenv@17.3.1] injecting env (11) from .env -- tip: ΓÜÖ∩╕Å  write to custom object with { processEnv: myObject }
+
+node.exe : stderr | tests/permission-matrix.spec.ts > Permission Matrix - 
+Negative Authorization Tests
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (stderr | tests/...orization Tests 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Failed to clean up test database: SqliteError: FOREIGN KEY constraint failed
+    at cleanupTestDb 
+(C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/tests/helpers/db.ts:26:69)
+    at C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments 
+(1)/tests/permission-matrix.spec.ts:54:11
+    at wrapper (file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-pay
+ments%20(1)/node_modules/@vitest/runner/dist/chunk-artifact.js:888:28)
+    at file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments%20(
+1)/node_modules/@vitest/runner/dist/chunk-artifact.js:294:11
+    at file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments%20(
+1)/node_modules/@vitest/runner/dist/chunk-artifact.js:901:10
+    at file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments%20(
+1)/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-comme
+rce-payments%20(1)/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payments%20(
+1)/node_modules/@vitest/runner/dist/chunk-artifact.js:2621:52
+    at run (file:///C:/Users/niyib/Downloads/esoko-nexus---b2b-commerce-payment
+s%20(1)/node_modules/@vitest/runner/dist/chunk-artifact.js:1150:20) {
+  code: 'SQLITE_CONSTRAINT_FOREIGNKEY'
+}
+
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should reject trader without permission
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow admin deposit on behalf of user
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should allow agent deposit on behalf of user
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/deposit > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should reject trader without permission
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should allow customer withdraw
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/withdraw > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should reject trader without permission
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should allow customer transfer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Wallet Endpoints - Money Operations > POST /api/wallet/transfer > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject trader without permission
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should allow customer to create purchase
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Purchase Endpoints > POST /api/purchases > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject agent
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should allow admin access
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/dashboard > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject agent
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > PUT /api/admin/users/:id > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > DELETE /api/admin/users/:id > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > POST /api/admin/verify-user > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Admin Endpoints - Dashboard & User Management > GET /api/admin/audit-logs > should reject unauthenticated request
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should reject trader
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/request-otp > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp > should reject customer
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > OTP Endpoints - Admin Only > POST /api/admin/verify-otp > should allow admin
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/me (profile endpoint)
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should return profile for authenticated user
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/upload
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Cross-Route Coverage > should enforce auth on /api/uploads/:filename
+ Γåô tests/permission-matrix.spec.ts > Permission Matrix - Negative Authorization Tests > Permission Matrix Summary > should document expected role permissions for all money-moving endpoints
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Suites 1 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/permission-matrix.spec.ts > Permission Matrix - Negative 
+Authorization Tests
+SqliteError: UNIQUE constraint failed: users.email
+ Γ¥» createTestUser tests/helpers/auth.ts:32:5
+     30|     `INSERT INTO users (id, email, name, password, role, status, 
+verifΓÇª
+     31|      VALUES (?, ?, ?, ?, ?, 'active', 'verified', 0, ?, 
+CURRENT_TIMESTΓÇª
+     32|   ).run(userId, email, `${role.charAt(0).toUpperCase() + 
+role.slice(1)ΓÇª
+       |     ^
+     33|
+     34|   const secret = process.env.JWT_SECRET || process.env.DEV_JWT_SECRET 
+ΓÇª
+ Γ¥» tests/permission-matrix.spec.ts:37:32
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»Γ
+Ä»ΓÄ»ΓÄ»ΓÄ»
+Serialized Error: { code: 'SQLITE_CONSTRAINT_UNIQUE' }
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/1]ΓÄ
+»
+
+
+ Test Files  1 failed (1)
+      Tests  45 skipped (45)
+   Start at  22:45:57
+   Duration  4.24s (transform 2.08s, setup 0ms, import 3.79s, tests 29ms, environment 0ms)
+

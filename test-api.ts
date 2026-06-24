@@ -18,6 +18,19 @@ async function request(path: string, options: RequestInit = {}) {
   return body;
 }
 
+async function getCsrfToken(authToken: string): Promise<string> {
+  const response = await fetch(`${BASE_URL}/api/csrf-token`, {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  return body.token;
+}
+
 async function requestRaw(path: string, options: RequestInit = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -99,9 +112,11 @@ await test('load marketplace products', async () => {
 });
 
 await test('deposit to wallet', async () => {
+  const csrfToken = await getCsrfToken(token);
   const data = await request('/api/wallet/deposit', {
     method: 'POST',
-    body: JSON.stringify({ userId, amount: 25000, method: 'test' }),
+    headers: { 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify({ userId, amount: 25000, method: 'cash' }),
   });
   if (!data.success) throw new Error('Deposit failed');
 });
@@ -109,15 +124,19 @@ await test('deposit to wallet', async () => {
 await test('wallet deposit idempotency', async () => {
   const key = `api-test-deposit-${Date.now()}`;
   const before = await request(`/api/wallet/${userId}`);
+  
+  const csrfToken1 = await getCsrfToken(adminToken);
   const first = await request('/api/wallet/deposit', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${adminToken}`, 'Idempotency-Key': key },
-    body: JSON.stringify({ userId, amount: 777, method: 'idempotency-test' }),
+    headers: { Authorization: `Bearer ${adminToken}`, 'Idempotency-Key': key, 'X-CSRF-Token': csrfToken1 },
+    body: JSON.stringify({ userId, amount: 777, method: 'cash' }),
   });
+  
+  const csrfToken2 = await getCsrfToken(adminToken);
   const second = await request('/api/wallet/deposit', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${adminToken}`, 'Idempotency-Key': key },
-    body: JSON.stringify({ userId, amount: 777, method: 'idempotency-test' }),
+    headers: { Authorization: `Bearer ${adminToken}`, 'Idempotency-Key': key, 'X-CSRF-Token': csrfToken2 },
+    body: JSON.stringify({ userId, amount: 777, method: 'cash' }),
   });
   const after = await request(`/api/wallet/${userId}`);
 
@@ -133,10 +152,11 @@ await test('wallet deposit idempotency', async () => {
 
 await test('idempotency key cannot be reused across routes', async () => {
   const key = `api-test-conflict-${Date.now()}`;
+  const csrfToken = await getCsrfToken(token);
   await request('/api/wallet/deposit', {
     method: 'POST',
-    headers: { 'Idempotency-Key': key },
-    body: JSON.stringify({ userId, amount: 500, method: 'idempotency-conflict-test' }),
+    headers: { 'Idempotency-Key': key, 'X-CSRF-Token': csrfToken },
+    body: JSON.stringify({ userId, amount: 500, method: 'cash' }),
   });
 
   const response = await requestRaw('/api/purchases', {
