@@ -4,31 +4,45 @@ import { motion } from 'framer-motion';
 
 const slides = [
   {
-    title: 'Scroll a story, not just a page',
+    title: '70% of SMEs Fail in 3 Years',
     description:
-      'Swipe through a cinematic carousel experience built like creator Photo Mode. Each panel feels full-screen, immersive, and swipe-ready.',
+      'Cash flow mismanagement, no mentorship, 16–25% bank interest rates, and telecom fees of 10% per withdrawal are silently destroying African merchants.',
     accent: 'from-orange-400 via-orange-500 to-red-500',
     showCard: false,
   },
   {
-    title: 'Keep the organic flow alive',
+    title: 'One Platform. Three Advantages.',
     description:
-      'Use content-first storytelling with bold full-screen visuals and progress dots. This is the same feel as photo-mode carousel posts.',
+      'Esoko Nexus combines a Mentorship Hub, a Commerce Platform, and CBDC E-Money — solving SME failure and telecom monopoly in one ecosystem.',
     accent: 'from-violet-500 via-fuchsia-500 to-pink-500',
     showCard: false,
   },
   {
-    title: 'Add an interactive display overlay',
+    title: 'Free Business Guidance, Built to Scale',
     description:
-      'One slide becomes a commerce moment with a horizontal catalog card overlay and a strong call-to-action button.',
+      'Through partnerships with Inkomoko and the University of Rwanda, trained mentors give merchants real-time business support — funded sustainably through app fees.',
     accent: 'from-cyan-500 via-sky-500 to-indigo-500',
+    showCard: false,
+  },
+  {
+    title: 'Replace 10% Fees With Under 1%',
+    description:
+      'Using Bank of Rwanda CBDC e-money, merchants save up to RWF 45,000 per month. MTN and Airtel charge RWF 100 per 1K withdrawn. We charge less than RWF 10.',
+    accent: 'from-emerald-500 via-lime-500 to-yellow-500',
     showCard: true,
   },
   {
-    title: 'Finish with a conversion slide',
+    title: 'Already Built. Already Tested.',
     description:
-      'End the story with a clear action: shop, learn more, or tap to continue. The swipe experience remains seamless.',
-    accent: 'from-emerald-500 via-lime-500 to-yellow-500',
+      'Full-stack commerce platform with integrated wallet, mobile money, inventory management, financial dashboards, loan access, RRA tax compliance — works on 3G and basic browsers.',
+    accent: 'from-sky-500 via-blue-500 to-indigo-500',
+    showCard: false,
+  },
+  {
+    title: 'Every Merchant Deserves a Mentor and Fair Fees',
+    description:
+      'We are not just building a platform. We are building the alternative to telecom monopolies — using government-backed digital money to make Rwandan merchants richer.',
+    accent: 'from-slate-700 via-slate-800 to-slate-950',
     showCard: false,
   },
 ];
@@ -43,6 +57,28 @@ const productItems = [
 export default function HybridCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
   const sliderRef = useRef<HTMLDivElement | null>(null);
+  const autoplayRef = useRef<number | null>(null);
+
+  const clearAutoplay = () => {
+    if (autoplayRef.current !== null) {
+      window.clearInterval(autoplayRef.current);
+      autoplayRef.current = null;
+    }
+  };
+
+  const resetAutoplay = () => {
+    clearAutoplay();
+    autoplayRef.current = window.setInterval(() => {
+      setActiveIndex((currentIndex) => {
+        const nextIndex = (currentIndex + 1) % slides.length;
+        const slider = sliderRef.current;
+        if (slider) {
+          slider.scrollTo({ left: slider.offsetWidth * nextIndex, behavior: 'smooth' });
+        }
+        return nextIndex;
+      });
+    }, 4000);
+  };
 
   const handleScroll = () => {
     const slider = sliderRef.current;
@@ -50,14 +86,24 @@ export default function HybridCarousel() {
     const slideWidth = slider.offsetWidth;
     const scrollLeft = slider.scrollLeft;
     const index = Math.round(scrollLeft / slideWidth);
-    setActiveIndex(Math.min(Math.max(index, 0), slides.length - 1));
+    setActiveIndex((prevIndex) => {
+      const nextIndex = Math.min(Math.max(index, 0), slides.length - 1);
+      if (nextIndex !== prevIndex) {
+        resetAutoplay();
+      }
+      return nextIndex;
+    });
   };
 
   useEffect(() => {
     const slider = sliderRef.current;
     if (!slider) return;
     slider.addEventListener('scroll', handleScroll, { passive: true });
-    return () => slider.removeEventListener('scroll', handleScroll);
+    resetAutoplay();
+    return () => {
+      slider.removeEventListener('scroll', handleScroll);
+      clearAutoplay();
+    };
   }, []);
 
   const slideClasses = useMemo(
@@ -71,14 +117,13 @@ export default function HybridCarousel() {
       <div className="max-w-7xl mx-auto">
         <div className="mb-10 text-center">
           <p className="text-sm uppercase tracking-[0.35em] text-orange-300 font-semibold mb-3">
-            Hybrid Carousel Experience
+            ESOKO NEXUS · BUILT FOR RWANDA'S MERCHANTS
           </p>
           <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-            Carousel storytelling with interactive card commerce
+            Mentorship. Commerce. Digital Money. One Platform.
           </h2>
           <p className="max-w-2xl mx-auto mt-4 text-neutral-300 leading-8">
-            Blend creator-style Photo Mode with a commerce overlay. Users swipe horizontally, then tap a bottom card when they
-            want to convert.
+            From SME failure to telecom monopoly fees — swipe through the real problems we solve and how Esoko Nexus fights back.
           </p>
         </div>
 
@@ -86,10 +131,10 @@ export default function HybridCarousel() {
           <div className="flex items-end justify-between mb-6 px-1">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-neutral-400">Slide {activeIndex + 1} of {slides.length}</p>
-              <p className="text-lg font-semibold text-white">Swipe left or right to explore</p>
+              <p className="text-lg font-semibold text-white">Swipe to explore our story</p>
             </div>
             <div className="flex items-center gap-3 text-neutral-400 text-sm">
-              <Sparkles size={16} /> Smooth swipe motion
+              <Sparkles size={16} /> Built for Rwanda · Expanding across East Africa
             </div>
           </div>
 
@@ -101,13 +146,33 @@ export default function HybridCarousel() {
             {slides.map((slide, index) => (
               <div key={slide.title} className={slideClasses}>
                 <div
-                  className={`relative flex min-h-[420px] flex-col justify-between p-8 bg-gradient-to-br ${slide.accent}`}
+                  className={`relative flex min-h-[420px] flex-col justify-between p-8 bg-gradient-to-br ${slide.accent} shadow-2xl backdrop-blur-sm`}
                 >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background:
+                        'linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.08) 50%, transparent 70%)',
+                      animation: 'shimmer 3s infinite linear',
+                      borderRadius: 'inherit',
+                      pointerEvents: 'none',
+                    }}
+                  />
                   <div className="space-y-4">
                     <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs uppercase tracking-[0.3em] text-white/90">
-                      <Heart size={16} /> Carousel + Card
+                      <Heart size={16} /> ESOKO NEXUS · SOLUTION
                     </div>
-                    <h3 className="text-3xl md:text-4xl font-extrabold leading-tight">{slide.title}</h3>
+                    <h3
+                      key={index}
+                      className="text-3xl md:text-4xl font-extrabold leading-tight"
+                      style={{
+                        animation: 'fadeInUp 0.6s ease forwards',
+                        opacity: 0,
+                      }}
+                    >
+                      {slide.title}
+                    </h3>
                     <p className="max-w-xl text-neutral-100/90 leading-8">{slide.description}</p>
                   </div>
 
@@ -156,15 +221,15 @@ export default function HybridCarousel() {
                   ) : (
                     <div className="mt-8 grid gap-3 sm:grid-cols-2">
                       <div className="rounded-3xl bg-white/10 p-5 backdrop-blur-sm">
-                        <p className="text-sm uppercase tracking-[0.3em] text-neutral-200">Tip</p>
+                        <p className="text-sm uppercase tracking-[0.3em] text-neutral-200">DID YOU KNOW</p>
                         <p className="mt-3 text-neutral-100 leading-7">
-                          Use one or two commerce slides inside a carousel to keep engagement high and conversion easy.
+                          70% of Rwandan SMEs fail in 3 years due to lack of guidance and predatory transaction fees.
                         </p>
                       </div>
                       <div className="rounded-3xl bg-white/10 p-5 backdrop-blur-sm">
-                        <p className="text-sm uppercase tracking-[0.3em] text-neutral-200">Best practice</p>
+                        <p className="text-sm uppercase tracking-[0.3em] text-neutral-200">OUR IMPACT</p>
                         <p className="mt-3 text-neutral-100 leading-7">
-                          Keep interactions consistent: swipe for content, tap for commerce.
+                          Merchants save up to RWF 45,000/month by switching from telecom fees to Esoko Nexus CBDC payments.
                         </p>
                       </div>
                     </div>
