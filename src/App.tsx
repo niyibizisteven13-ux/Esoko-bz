@@ -35,7 +35,7 @@ import { NotificationProvider, useNotifications } from './context/NotificationCo
 import ThemeToggle from './components/ThemeToggle';
 
 // Local auth service
-import { observeAuthState, logoutUser } from './services/sessionService';
+import { observeAuthState, logoutUser, getCurrentUser } from './services/sessionService';
 import { getUser } from './services/userService';
 
 // Pages (lazy-loaded for code splitting)
@@ -92,22 +92,52 @@ function AppContent() {
 
   useEffect(() => {
     const unsub = observeAuthState(async (localUser) => {
-      setUser(localUser);
+      let currentLocalUser = localUser;
+      setUser(currentLocalUser);
 
-      if (localUser) {
+      if (currentLocalUser) {
         // Immediately set userData from local storage so routing works immediately
-        setUserData(localUser);
+        setUserData(currentLocalUser);
+
+        // If the stored local user is missing an `id`, try to refresh from the server
+        if (!currentLocalUser.id) {
+          try {
+            const refreshed = await getCurrentUser();
+            if (refreshed) {
+              currentLocalUser = refreshed;
+              setUser(currentLocalUser);
+              setUserData(currentLocalUser);
+            } else {
+              // Invalid local session, clear and redirect to login
+              setUser(null);
+              setUserData(null);
+              setLoading(false);
+              await logoutUser();
+              window.location.href = '/login';
+              return;
+            }
+          } catch (refreshErr) {
+            console.debug('Auth refresh failed:', refreshErr);
+            setUser(null);
+            setUserData(null);
+            setLoading(false);
+            await logoutUser();
+            window.location.href = '/login';
+            return;
+          }
+        }
 
         // Then fetch fresh data from server
         try {
-          const response = await getUser(localUser.id);
+          const response = await getUser(currentLocalUser.id);
           const freshUser: any = {
-            ...(response?.user || localUser),
-            activeAccount: localUser.activeAccount || response?.user?.activeAccount,
-            accountModes: response?.user?.accountModes || localUser.accountModes || [],
-            activeTeamContext: localUser.activeTeamContext || response?.user?.activeTeamContext,
+            ...(response?.user || currentLocalUser),
+            activeAccount: currentLocalUser.activeAccount || response?.user?.activeAccount,
+            accountModes: response?.user?.accountModes || currentLocalUser.accountModes || [],
+            activeTeamContext:
+              currentLocalUser.activeTeamContext || response?.user?.activeTeamContext,
             teamAccessOptions:
-              localUser.teamAccessOptions || response?.user?.teamAccessOptions || [],
+              currentLocalUser.teamAccessOptions || response?.user?.teamAccessOptions || [],
           };
           if (freshUser.status === 'suspended') {
             await logoutUser();

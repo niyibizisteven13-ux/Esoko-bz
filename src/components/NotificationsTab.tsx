@@ -116,65 +116,6 @@ export default function NotificationsTab({
 
   return (
     <div className="space-y-10 pb-20">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
-        <div className="space-y-2">
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="flex items-center gap-3"
-          >
-            <div className="p-3 rounded-2xl bg-orange-500 shadow-lg shadow-orange-500/20">
-              <Bell className="text-white" size={24} />
-            </div>
-            <h1
-              className={cn(
-                'text-4xl font-black tracking-tighter uppercase',
-                dark ? 'text-white' : 'text-neutral-900'
-              )}
-            >
-              {title}
-            </h1>
-          </motion.div>
-          <p
-            className={cn(
-              'text-lg font-medium max-w-xl',
-              dark ? 'text-neutral-400' : 'text-neutral-500'
-            )}
-          >
-            Stay informed with real-time updates on your transactions, account security, and
-            exclusive merchant offers.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={markAllAsRead}
-            disabled={!notifications.some((n) => !n.read)}
-            className={cn(
-              'flex items-center gap-2 px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all',
-              dark
-                ? 'bg-white/5 text-white hover:bg-white/10 disabled:opacity-30'
-                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200 disabled:opacity-50'
-            )}
-          >
-            <MailOpen size={16} /> Mark All Read
-          </button>
-          <button
-            onClick={handleClearAll}
-            disabled={notifications.length === 0}
-            className={cn(
-              'flex items-center gap-2 px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-sm',
-              dark
-                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 disabled:opacity-30 border border-red-500/20'
-                : 'bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-50 border border-red-100'
-            )}
-          >
-            <Trash2 size={16} /> Clear Feed
-          </button>
-        </div>
-      </div>
-
       {/* Filter Section */}
       <div className="flex items-center gap-2 overflow-x-auto pb-4 no-scrollbar">
         <Filter

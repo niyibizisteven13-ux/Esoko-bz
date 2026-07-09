@@ -6,13 +6,39 @@ const authListeners = new Set<(user: any) => void>();
 let authChannel: BroadcastChannel | null = null;
 let crossTabSyncStarted = false;
 
+function normalizeStoredUser(user: any) {
+  if (!user || typeof user !== 'object') return null;
+  const id = user?.id === 'undefined' ? undefined : user?.id;
+  const uid = user?.uid === 'undefined' ? undefined : user?.uid;
+  const normalizedId = id || uid;
+  const normalizedUid = uid || id;
+  const role = user?.role || '';
+
+  if (!normalizedId || !role) {
+    return null;
+  }
+
+  return {
+    ...user,
+    id: normalizedId,
+    uid: normalizedUid,
+    role,
+  };
+}
+
 function readStoredUser() {
   const userData = localStorage.getItem(AUTH_USER_KEY);
   if (!userData) return null;
   try {
-    const user = JSON.parse(userData);
-    return { ...user, uid: user.uid || user.id };
+    const parsed = JSON.parse(userData);
+    const normalized = normalizeStoredUser(parsed);
+    if (!normalized) {
+      localStorage.removeItem(AUTH_USER_KEY);
+      return null;
+    }
+    return normalized;
   } catch {
+    localStorage.removeItem(AUTH_USER_KEY);
     return null;
   }
 }
@@ -46,27 +72,36 @@ function startAuthCrossTabSync() {
 
 function writeStoredUser(user: any) {
   if (user) {
+    const normalized = normalizeStoredUser(user);
+    if (!normalized) {
+      localStorage.removeItem(AUTH_USER_KEY);
+      getAuthChannel()?.postMessage({ type: 'auth-user-updated', userId: null });
+      notifyAuthListeners();
+      return;
+    }
+
     const safeUser = {
-      id: user.id,
-      uid: user.uid || user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      activeRole: user.activeRole || user.role,
-      activeAccountId: user.activeAccountId || user.activeAccount?.id || null,
-      businessName: user.businessName || null,
-      walletBalance: user.walletBalance,
-      tier: user.tier,
-      onboardingComplete: user.onboardingComplete,
-      verificationStatus: user.verificationStatus,
-      emailVerified: user.emailVerified,
-      appNumber: user.appNumber,
-      status: user.status,
-      activeAccount: user.activeAccount || null,
-      accountModes: user.accountModes || [],
-      activeTeamContext: user.activeTeamContext || null,
-      teamAccessOptions: user.teamAccessOptions || [],
+      id: normalized.id,
+      uid: normalized.uid,
+      email: normalized.email,
+      name: normalized.name,
+      role: normalized.role,
+      activeRole: normalized.activeRole || normalized.role,
+      activeAccountId: normalized.activeAccountId || normalized.activeAccount?.id || null,
+      businessName: normalized.businessName || null,
+      walletBalance: normalized.walletBalance,
+      tier: normalized.tier,
+      onboardingComplete: normalized.onboardingComplete,
+      verificationStatus: normalized.verificationStatus,
+      emailVerified: normalized.emailVerified,
+      appNumber: normalized.appNumber,
+      status: normalized.status,
+      activeAccount: normalized.activeAccount || null,
+      accountModes: normalized.accountModes || [],
+      activeTeamContext: normalized.activeTeamContext || null,
+      teamAccessOptions: normalized.teamAccessOptions || [],
     };
+
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
   } else {
     localStorage.removeItem(AUTH_USER_KEY);

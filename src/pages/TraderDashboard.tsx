@@ -45,6 +45,7 @@ import { isToday } from 'date-fns';
 import ThemeToggle from '../components/ThemeToggle';
 import Logo from '../components/Logo';
 import { ProfileImage, VerifiedBadge } from '../components/VerifiedBadge';
+import ProfileEditModal from '../components/profile/ProfileEditModal';
 import { autoReceiptService } from '../services/autoReceiptService';
 import { auth } from '../firebase';
 
@@ -72,7 +73,9 @@ const TraderDeliveries = React.lazy(() => import('../components/trader/TraderDel
 const TraderCustomers = React.lazy(() => import('../components/trader/TraderCustomers'));
 const TraderSuppliers = React.lazy(() => import('../components/trader/TraderSuppliers'));
 const TraderBulkRequests = React.lazy(() => import('../components/trader/TraderBulkRequests'));
-const TraderChat = React.lazy(() => import('../components/trader/TraderChat'));
+const TraderChat = React.lazy<React.ComponentType<{ traderId?: string }>>(
+  () => import('../components/trader/TraderChat')
+);
 const TraderTaxChamber = React.lazy(() => import('../components/trader/TraderTaxChamber'));
 const TraderPayroll = React.lazy(() => import('../components/trader/TraderPayroll'));
 const TraderSubscriptionDashboard = React.lazy(
@@ -159,6 +162,7 @@ export default function TraderDashboard() {
   >('all');
   const [upgradeStatus, setUpgradeStatus] = useState<'success' | 'cancel' | null>(null);
   const [showPreferences, setShowPreferences] = useState(false);
+  const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showMoreHeader, setShowMoreHeader] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -194,8 +198,17 @@ export default function TraderDashboard() {
 
   const dashboardAccent = getDashboardAccent();
   const activeTeamContext = userData?.activeTeamContext || auth.currentUser?.activeTeamContext;
-  const dashboardTraderId = activeTeamContext?.traderId || auth.currentUser?.uid || '';
-  const actingUserId = auth.currentUser?.uid || '';
+  const dashboardTraderId =
+    activeTeamContext?.traderId || userData?.uid || userData?.id || auth.currentUser?.uid || '';
+  const actingUserId = auth.currentUser?.uid || userData?.uid || userData?.id || '';
+
+  console.debug('[TraderDashboard] dashboardTraderId computed', {
+    dashboardTraderId,
+    activeTeamContext,
+    authCurrentUser: auth.currentUser,
+    userDataId: userData?.id,
+    userDataUid: userData?.uid,
+  });
 
   const handleTabChange = (
     tab: Tab,
@@ -675,7 +688,11 @@ export default function TraderDashboard() {
           <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
             {!isSidebarCollapsed && (
               <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2 mb-1 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-inner">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileEditor(true)}
+                  className="group flex w-full items-center gap-2 mb-1 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
+                >
                   <ProfileImage
                     src={userData?.photoURL}
                     alt={userData?.businessName || userData?.name || 'Trader'}
@@ -705,7 +722,7 @@ export default function TraderDashboard() {
                       {userData?.appNumber || 'ID not set'}
                     </p>
                   </div>
-                </div>
+                </button>
 
                 {/* Live Sync Indicator */}
 
@@ -782,6 +799,13 @@ export default function TraderDashboard() {
           </div>
         </div>
       </aside>
+
+      <ProfileEditModal
+        open={showProfileEditor}
+        onClose={() => setShowProfileEditor(false)}
+        userData={userData}
+        onSaved={refreshUserData}
+      />
 
       {/* Mobile Drawer Overlay */}
       <AnimatePresence>
@@ -1254,49 +1278,6 @@ export default function TraderDashboard() {
               transition={{ duration: 0.2 }}
             >
               <React.Suspense fallback={<TabLoading />}>
-                {activeTab === 'overview' && businessSummary && (
-                  <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr] mb-4">
-                    <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl p-6">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
-                        Business Summary
-                      </p>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        {[
-                          { label: 'Total Sales', value: `${businessSummary.totalSales.toLocaleString()} RWF` },
-                          { label: 'Approved Orders', value: businessSummary.totalOrders },
-                          { label: 'Today', value: `${businessSummary.todaySales.toLocaleString()} RWF` },
-                          { label: 'Low-stock items', value: businessSummary.lowStockCount },
-                        ].map((item) => (
-                          <div key={item.label} className="rounded-3xl bg-white/5 p-4">
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
-                              {item.label}
-                            </p>
-                            <p className="text-lg font-black text-white">{item.value}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl p-6">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-2">
-                        Action Alerts
-                      </p>
-                      <div className="space-y-3">
-                        {businessAlerts.length ? (
-                          businessAlerts.slice(0, 4).map((alert, index) => (
-                            <div key={index} className="rounded-3xl border border-white/5 bg-white/5 p-4">
-                              <p className="text-sm font-black text-white">{alert.message}</p>
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 mt-2">
-                                {alert.type.replace('_', ' ')}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-sm text-white/60">No urgent alerts right now.</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
                 {activeTab === 'overview' && (
                   <TraderOverview
                     products={products}
@@ -1613,13 +1594,7 @@ export default function TraderDashboard() {
               >
                 <QrCode size={32} className="group-hover:scale-110 transition-transform" />
               </button>
-              <button
-                onClick={() => setActiveTab('products')}
-                className="w-16 h-16 bg-orange-600 text-white rounded-2xl shadow-2xl shadow-orange-600/20 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
-              >
-                <Plus size={32} className="group-hover:rotate-90 transition-transform duration-300" />
-              </button>
-            </div>
+              </div>
           </>
         )}
       </main>
@@ -1809,7 +1784,7 @@ function StatCard({
     >
       <p className="micro-label">{label}</p>
       <div className="flex items-baseline justify-between gap-2 mt-2">
-        <h4 className="text-base sm:text-lg md:text-xl font-black text-slate-900 dark:text-white tabular-nums">
+        <h4 className="text-base sm:text-lg md:text-xl font-black text-white tabular-nums">
           {value}
         </h4>
         <span

@@ -24,6 +24,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 }
 
 export async function getUser(userId: string) {
+  if (!userId || String(userId) === 'undefined') {
+    return { user: null } as { user: UserProfile | null };
+  }
   const headers = await getAuthHeaders();
   return apiGet<{ user: UserProfile }>(`/api/users/${userId}`, { headers });
 }

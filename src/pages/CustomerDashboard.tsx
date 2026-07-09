@@ -1,5 +1,4 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
   History,
@@ -116,11 +115,10 @@ type Tab =
 
 export default function CustomerDashboard() {
   const { t } = useLanguage();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const locationSearch = typeof window !== 'undefined' ? window.location.search : '';
 
   const getInitialTab = (): Tab => {
-    const tab = new URLSearchParams(location.search).get('tab');
+    const tab = new URLSearchParams(locationSearch).get('tab');
     return tab === 'overview' ||
       tab === 'purchases' ||
       tab === 'wallet' ||
@@ -133,7 +131,7 @@ export default function CustomerDashboard() {
       : 'marketplace';
   };
 
-  const [activeTab, setActiveTab] = useState<Tab>(getInitialTab);
+  const [activeTab, setActiveTab] = useState<Tab>(getInitialTab());
   const [isChangingTab, setIsChangingTab] = useState(false);
   const [marketplaceConfig, setMarketplaceConfig] = useState<{
     mode: 'products' | 'shops';
@@ -177,12 +175,26 @@ export default function CustomerDashboard() {
       const current = auth.currentUser || (await getCurrentUser());
       if (!current) {
         setLoading(false);
+        if (typeof window !== 'undefined') window.location.href = '/login';
         return;
       }
+
+      const normalized = current.uid || current.id;
+      if (!normalized || String(normalized) === 'undefined') {
+        setLoading(false);
+        if (typeof window !== 'undefined') window.location.href = '/login';
+        return;
+      }
+
       setCurrentUser(current);
 
       try {
-        const userId = current.uid || current.id;
+        let userId = current.uid || current.id;
+        if (!userId || String(userId) === 'undefined') {
+          setLoading(false);
+          if (typeof window !== 'undefined') window.location.href = '/login';
+          return;
+        }
 
         // Initial data fetch
         const [userResponse, transactionsResponse] = await Promise.all([
@@ -509,7 +521,11 @@ export default function CustomerDashboard() {
               </>
             )}
             <button
-              onClick={() => auth.signOut().then(() => navigate('/login'))}
+              onClick={() =>
+                auth.signOut().then(() => {
+                  if (typeof window !== 'undefined') window.location.href = '/login';
+                })
+              }
               className={cn(
                 'w-full flex items-center transition-all font-bold text-xs rounded-xl',
                 isSidebarCollapsed ? 'justify-center p-3' : 'gap-3 py-3 px-4',
@@ -613,7 +629,11 @@ export default function CustomerDashboard() {
 
               <div className="pt-4 border-t border-white/10">
                 <button
-                  onClick={() => auth.signOut().then(() => navigate('/login'))}
+                  onClick={() =>
+                    auth.signOut().then(() => {
+                      if (typeof window !== 'undefined') window.location.href = '/login';
+                    })
+                  }
                   className="w-full flex items-center justify-center gap-3 py-4 bg-red-500/10 text-red-500 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em]"
                 >
                   <History className="rotate-180" size={16} /> Sign Out
@@ -638,7 +658,13 @@ export default function CustomerDashboard() {
             <Logo dark className="scale-90" />
           </div>
           <div className="flex items-center gap-2">
-            <ThemeToggle />
+            <button
+              onClick={() => handleTabChange('notifications')}
+              className="p-2.5 bg-white/5 rounded-xl text-neutral-400 hover:bg-white/10 transition-colors"
+              aria-label="Open notifications"
+            >
+              <Bell size={20} />
+            </button>
           </div>
         </header>
 
@@ -982,80 +1008,72 @@ export default function CustomerDashboard() {
         </div>
 
         {/* Bottom Navigation for Mobile - Phase 4: Improved */}
-        <nav className="fixed bottom-6 left-6 right-6 z-50 md:hidden">
-          <div className="bg-[#050505]/90 backdrop-blur-xl border border-white/10 rounded-[2.5rem] shadow-2xl relative group">
-            <div
-              className="overflow-x-auto no-scrollbar flex items-center gap-1 px-4 py-2 scroll-smooth snap-x snap-mandatory"
-              onKeyDown={(e) => {
-                // Phase 4: Keyboard navigation
-                if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '6') {
-                  e.preventDefault();
-                  const tabs: Tab[] = [
-                    'overview',
-                    'marketplace',
-                    'notifications',
-                    'wallet',
-                    'purchases',
-                    'reports',
-                  ];
-                  const index = parseInt(e.key) - 1;
-                  if (tabs[index]) handleTabChange(tabs[index]);
-                }
-              }}
-            >
-              <BottomNavItem
-                active={activeTab === 'overview'}
-                onClick={() => handleTabChange('overview')}
-                icon={<LayoutDashboard size={22} />}
-                label="Home"
-              />
-              <BottomNavItem
-                active={activeTab === 'marketplace'}
-                onClick={() => {
-                  setMarketplaceConfig({ mode: 'products', nearby: false, map: false });
-                  handleTabChange('marketplace');
+        {activeTab !== 'marketplace' && (
+          <nav className="fixed bottom-6 left-6 right-6 z-50 md:hidden">
+            <div className="bg-[#050505]/90 backdrop-blur-xl border border-white/10 rounded-[2.5rem] shadow-2xl relative group">
+              <div
+                className="overflow-x-auto no-scrollbar flex items-center gap-1 px-4 py-2 scroll-smooth snap-x snap-mandatory"
+                onKeyDown={(e) => {
+                  // Phase 4: Keyboard navigation
+                  if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '6') {
+                    e.preventDefault();
+                    const tabs: Tab[] = [
+                      'overview',
+                      'marketplace',
+                      'notifications',
+                      'wallet',
+                      'purchases',
+                      'reports',
+                    ];
+                    const index = parseInt(e.key) - 1;
+                    if (tabs[index]) handleTabChange(tabs[index]);
+                  }
                 }}
-                icon={<ShoppingBag size={22} />}
-                label="Market"
-              />
-              <BottomNavItem
-                active={activeTab === 'notifications'}
-                onClick={() => handleTabChange('notifications')}
-                icon={<Bell size={22} />}
-                label="Alerts"
-                badge={unreadCount ?? 0}
-              />
-              <div className="px-2 snap-center">
-                <button
-                  onClick={() => setShowScanner(true)}
-                  className="w-14 h-14 bg-orange-600 text-white rounded-[1.5rem] flex items-center justify-center shadow-lg active:scale-95 transition-all hover:shadow-orange-500/50 hover:shadow-lg"
-                  title="Pay with QR code (Ctrl+0)"
-                  aria-label="Scan QR code to pay"
-                >
-                  <QrCode size={24} />
-                </button>
+              >
+                <BottomNavItem
+                  active={activeTab === 'overview'}
+                  onClick={() => handleTabChange('overview')}
+                  icon={<LayoutDashboard size={22} />}
+                  label="Home"
+                />
+                <BottomNavItem
+                  active={false}
+                  onClick={() => {
+                    setMarketplaceConfig({ mode: 'products', nearby: false, map: false });
+                    handleTabChange('marketplace');
+                  }}
+                  icon={<ShoppingBag size={22} />}
+                  label="Market"
+                />
+                <BottomNavItem
+                  active={activeTab === 'notifications'}
+                  onClick={() => handleTabChange('notifications')}
+                  icon={<Bell size={22} />}
+                  label="Alerts"
+                  badge={unreadCount ?? 0}
+                />
+                <BottomNavItem
+                  active={activeTab === 'wallet'}
+                  onClick={() => handleTabChange('wallet')}
+                  icon={<Wallet size={22} />}
+                  label="Vault"
+                />
+                <BottomNavItem
+                  active={activeTab === 'purchases'}
+                  onClick={() => handleTabChange('purchases')}
+                  icon={<History size={22} />}
+                  label="History"
+                />
+                <BottomNavItem
+                  active={activeTab === 'reports'}
+                  onClick={() => handleTabChange('reports')}
+                  icon={<FileText size={22} />}
+                  label="Reports"
+                />
               </div>
-              <BottomNavItem
-                active={activeTab === 'wallet'}
-                onClick={() => handleTabChange('wallet')}
-                icon={<Wallet size={22} />}
-                label="Vault"
-              />
-              <BottomNavItem
-                active={activeTab === 'purchases'}
-                onClick={() => handleTabChange('purchases')}
-                icon={<History size={22} />}
-                label="History"
-              />
-              <BottomNavItem
-                active={activeTab === 'reports'}
-                onClick={() => handleTabChange('reports')}
-                icon={<FileText size={22} />}
-                label="Reports"
-              />
             </div>
-          </div>
-        </nav>
+          </nav>
+        )}
 
         {/* Desktop Quick Actions */}
         <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">

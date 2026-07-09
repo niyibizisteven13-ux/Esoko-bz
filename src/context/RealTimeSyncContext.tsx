@@ -203,7 +203,7 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const subscribeToTransactions = useCallback(
     (userId: string, callback: (transactions: any[]) => void) => {
-      if (!userId) return () => {};
+      if (!userId || String(userId) === 'undefined') return () => {};
       return createQuietSubscription(
         ['transactions', 'wallet', 'wallets', 'purchases', 'users'],
         async () => {
@@ -218,7 +218,7 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const subscribeToProducts = useCallback(
     (traderId: string, callback: (products: any[]) => void) => {
-      if (!traderId) return () => {};
+      if (!traderId || String(traderId) === 'undefined') return () => {};
       return createQuietSubscription(
         ['products', 'purchases'],
         async () => {
@@ -233,7 +233,7 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const subscribeToUserData = useCallback(
     (userId: string, callback: (userData: any) => void) => {
-      if (!userId) return () => {};
+      if (!userId || String(userId) === 'undefined') return () => {};
       return createQuietSubscription(
         [
           'users',

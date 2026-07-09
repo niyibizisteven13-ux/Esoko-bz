@@ -23,6 +23,7 @@ declare global {
       FRONTEND_URL?: string;
       API_URL?: string;
       HMR_PORT?: string;
+      DATABASE_URL?: string;
 
       // SSL configuration
       SSL_KEY_PATH?: string;

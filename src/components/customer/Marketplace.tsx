@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Eye,
+  Heart,
   Navigation,
   Play,
   Loader2,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { auth } from '../../firebase';
 import { VerifiedBadge } from '../../components/VerifiedBadge';
+import LiveTraderRoom from './LiveTraderRoom';
 import { cn, formatCurrency } from '../../lib/utils';
 import { useLanguage } from '../../context/LanguageContext';
 import { getProducts } from '../../services/productService';
@@ -204,6 +206,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [liveSessions, setLiveSessions] = useState<any[]>([]);
+  const [activeLiveSession, setActiveLiveSession] = useState<any>(null);
+  const [liveOverlayProduct, setLiveOverlayProduct] = useState<Product | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -241,6 +248,36 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLiveSessions = async () => {
+      setLiveLoading(true);
+      setLiveError('');
+      try {
+        const res = await fetch('/api/live/sessions', { credentials: 'include' });
+        if (!res.ok) throw new Error('Unable to fetch live sessions');
+        const data = await res.json();
+        if (!cancelled) setLiveSessions(data.sessions || []);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) setLiveError('Could not load live streams.');
+      } finally {
+        if (!cancelled) setLiveLoading(false);
+      }
+    };
+
+    void loadLiveSessions();
+    const interval = window.setInterval(loadLiveSessions, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const getLiveSessionForProduct = (product: Product) =>
+    liveSessions.find((session) => session.traderId === product.traderId);
 
   useEffect(() => {
     setSearchMode(initialSearchMode);
@@ -421,8 +458,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }
 
   return (
-    <div className="pb-24">
-      <div className="mx-auto mb-4 flex w-full max-w-[720px] flex-col gap-3 px-1 md:px-0">
+    <div className="pb-[calc(7rem+env(safe-area-inset-bottom))] min-h-screen h-auto overflow-y-auto">
+      <div className="mx-auto mb-4 flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0">
         <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" size={18} />
@@ -439,7 +476,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               type="button"
               onClick={() => setSearchMode('products')}
               className={cn(
-                'h-12 rounded-2xl px-3 text-[10px] font-black uppercase tracking-widest',
+                'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
                 searchMode === 'products' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
               )}
             >
@@ -449,7 +486,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               type="button"
               onClick={() => setSearchMode('shops')}
               className={cn(
-                'h-12 rounded-2xl px-3 text-[10px] font-black uppercase tracking-widest',
+                'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
                 searchMode === 'shops' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
               )}
             >
@@ -480,6 +517,19 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               <Store size={18} />
             </button>
           </div>
+
+          {!error && resultCount > 0 ? (
+            <div className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left md:min-w-[180px] md:items-end">
+              <span className="font-black text-white">
+                {resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}
+              </span>
+              <div className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+                {nearbyOnly && <span>Within 30 km</span>}
+                {mapView && <span>Map view enabled</span>}
+                {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {(nearbyOnly || mapView || shopTraderId) && (
@@ -514,7 +564,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       </div>
 
       {mapView ? (
-        <div className="mx-auto mb-6 w-full max-w-[980px] px-1 md:px-0">
+        <div className="mx-auto mb-6 w-full max-w-[980px] px-3 md:px-0">
           <MapView
             traders={traderRecords}
             userLocation={userLocation}
@@ -528,19 +578,6 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             searchQuery={query}
             allProducts={products}
           />
-        </div>
-      ) : null}
-
-      {!error && resultCount > 0 ? (
-        <div className="mx-auto mb-6 max-w-[720px] px-1 md:px-0">
-          <div className="flex flex-col gap-2 rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-white/80 md:flex-row md:items-center md:justify-between">
-            <span className="font-black text-white">{resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}</span>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/60">
-              {nearbyOnly && <span>Within 30 km</span>}
-              {mapView && <span>Map view enabled</span>}
-              {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
-            </div>
-          </div>
         </div>
       ) : null}
 
@@ -558,7 +595,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         </div>
       ) : null}
 
-      <div className="h-[calc(100vh-190px)] overflow-y-auto pr-2 md:pr-0">
+      <div className="min-h-full h-auto overflow-y-auto px-3 pr-3 md:px-0 md:pr-0">
         <div className="flex flex-col items-center gap-6">
           {displayProducts.map((product) => {
             const background = product.mediaBlocks.find((block) => block.type === 'video' || block.type === 'image');
@@ -566,6 +603,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               (block) => block.type === 'text' || (!block.url && block.type !== 'image' && block.type !== 'video')
             );
             const isShopCard = searchMode === 'shops' && !shopTraderId;
+            const liveSession = getLiveSessionForProduct(product);
 
             return (
               <motion.article
@@ -576,15 +614,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 className={cn(
                   'snap-start',
                   'mx-auto w-full max-w-[420px]',
-                  'h-[82vh] overflow-hidden',
+                  'overflow-visible',
                   'rounded-[2rem]',
                   'border border-white/10',
                   'bg-[#0f0f0f]',
                   'shadow-2xl shadow-black/40',
-                  'relative'
+                  'relative',
+                  'h-auto md:h-[82vh]'
                 )}
               >
-                <div className="relative h-[58vh] overflow-hidden bg-black text-white">
+                <div className="relative h-[42vh] min-h-[260px] md:h-[58vh] md:min-h-[420px] overflow-hidden bg-black text-white">
                   {background?.type === 'image' && background.url ? (
                     <img
                       src={background.url}
@@ -624,16 +663,23 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     <div className="pointer-events-none absolute inset-0">
                       {textOverlays.slice(0, 6).map((block, idx) => (
                         <div key={block.id} className="absolute left-6 right-6" style={{ top: `${10 + idx * 12}%` }}>
-                          <p className="text-[13px] font-black uppercase leading-5 tracking-[0.12em] text-white drop-shadow">
+                          <p className="line-clamp-1 text-[13px] font-black uppercase leading-5 tracking-[0.12em] text-white drop-shadow">
                             {block.text || product.title}
                           </p>
                         </div>
                       ))}
                     </div>
                   )}
+
+                  {liveSession && (
+                    <div className="pointer-events-none absolute left-4 top-4 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white shadow-xl shadow-black/30 backdrop-blur-sm">
+                      <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                      LIVE NOW
+                    </div>
+                  )}
                 </div>
 
-<div className="absolute inset-x-0 top-0 h-[58vh] bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-[42vh] min-h-[260px] md:h-[58vh] md:min-h-[420px] bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
                     <div className="pointer-events-none absolute left-0 right-0 top-0 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -662,9 +708,28 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {liveSession && (
+                      <div className="pointer-events-auto absolute right-4 top-4 z-30 flex flex-col items-center gap-3 rounded-[2rem] bg-black/60 px-3 py-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveLiveSession(liveSession);
+                            setLiveOverlayProduct(product);
+                          }}
+                          className="flex items-center gap-2 rounded-full bg-red-600 px-3 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white shadow-lg shadow-red-900/40 transition hover:bg-red-500"
+                        >
+                          <span className="h-2.5 w-2.5 rounded-full bg-white animate-pulse" />
+                          LIVE
+                        </button>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70">
+                          {liveSession.viewerCount || '0'} viewers
+                        </span>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="absolute inset-x-0 top-[58vh] bottom-0 bg-[#0f0f0f] p-4 z-10 flex flex-col justify-between">
+                  <div className="relative md:absolute inset-x-0 md:top-[58vh] top-auto bottom-0 bg-[#0f0f0f] p-4 z-10 flex flex-col justify-between overflow-hidden">
                     <div>
                       <p className="line-clamp-2 text-[12px] leading-5 text-white/75">{product.description}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -704,10 +769,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       )}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <div className="mt-4 -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] md:mx-0 md:flex-wrap md:gap-3 md:overflow-visible md:px-0 md:pb-0 [&::-webkit-scrollbar]:hidden">
                     <button
                       onClick={() => (isShopCard ? setShopTraderId(product.traderId || null) : setSelectedProduct(product))}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label={isShopCard ? 'Open shop' : 'View product'}
                       title={isShopCard ? ui.shopText : ui.viewText}
                     >
@@ -716,7 +781,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                     <button
                       onClick={() => setCommentProduct(product)}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label="Ask seller"
                       title={ui.commentsText}
                     >
@@ -725,7 +790,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                     <button
                       onClick={() => void copyProductLink(product)}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label="Share"
                       title={ui.shareText}
                     >
@@ -743,7 +808,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         }
                       }}
                       className={cn(
-                        'flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10',
+                        'flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12',
                         navigationProductId === product.id ? 'bg-blue-600 text-white' : ''
                       )}
                       aria-label="Navigate"
@@ -754,7 +819,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                     <button
                       onClick={() => setSelectedProduct(product)}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label="Product details"
                       title={ui.wordsText}
                     >
@@ -763,7 +828,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                     <button
                       onClick={() => setShopTraderId(product.traderId || null)}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label="Go to shop"
                       title={ui.shopText}
                     >
@@ -773,7 +838,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       <button
                         onClick={() => setPurchaseProduct(product)}
                         disabled={isShopCard || !product.traderId || product.priceAmount <= 0 || product.stock <= 0}
-                        className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-600 text-black shadow-xl shadow-orange-900/40 transition-all hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-600 text-black shadow-xl shadow-orange-900/40 transition-all hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 md:h-12 md:w-12"
                         aria-label="Buy"
                         title={ui.buyText}
                       >
@@ -794,9 +859,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-28 left-1/2 z-[130] flex -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-xs font-black text-white shadow-2xl"
+            className="fixed bottom-28 left-1/2 z-[130] flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[#0a0a0a] px-4 py-3 text-center text-xs font-black text-white shadow-2xl"
           >
-            <Check size={16} className="text-emerald-400" />
+            <Check size={16} className="shrink-0 text-emerald-400" />
             {notice}
           </motion.div>
         )}
@@ -838,6 +903,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             onSuccess={() => setPurchaseProduct(null)}
           />
         )}
+
+        {activeLiveSession && liveOverlayProduct && (
+          <LiveTraderRoom
+            session={activeLiveSession}
+            product={liveOverlayProduct}
+            onClose={() => setActiveLiveSession(null)}
+            onBuy={(product) => {
+              setPurchaseProduct(product);
+              setActiveLiveSession(null);
+            }}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
@@ -861,22 +938,22 @@ function ProductSheet({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center"
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm md:items-center md:pb-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ opacity: 0, y: 28, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 28, scale: 0.98 }}
-        className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-6 shadow-2xl"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-5 shadow-2xl sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">{product.seller}</p>
-            <h3 className="mt-1 text-2xl font-black text-white">{product.title}</h3>
+            <h3 className="mt-1 text-xl font-black text-white sm:text-2xl">{product.title}</h3>
           </div>
-          <button onClick={onClose} className="rounded-2xl bg-white/5 p-3 text-white/50 hover:text-white">
+          <button onClick={onClose} className="shrink-0 rounded-2xl bg-white/5 p-3 text-white/50 hover:text-white">
             <X size={18} />
           </button>
         </div>
@@ -885,18 +962,22 @@ function ProductSheet({
         {product.mediaBlocks && product.mediaBlocks.length > 0 && (
           <div className="mb-4 w-full">
             {product.mediaBlocks[0].type === 'image' && product.mediaBlocks[0].url ? (
-              <img src={product.mediaBlocks[0].url} alt={product.title} className="w-full rounded-2xl object-cover" />
+              <img
+                src={product.mediaBlocks[0].url}
+                alt={product.title}
+                className="max-h-[40vh] w-full rounded-2xl object-cover"
+              />
             ) : product.mediaBlocks[0].type === 'video' && product.mediaBlocks[0].url ? (
               <video
                 src={product.mediaBlocks[0].url}
                 controls
-                className="w-full rounded-2xl bg-black object-cover"
+                className="max-h-[40vh] w-full rounded-2xl bg-black object-cover"
               />
             ) : null}
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <Metric label="Price" value={product.price} />
           <Metric label="Stock" value={String(product.stock)} />
           <Metric label="Category" value={product.category || 'General'} />
@@ -904,17 +985,17 @@ function ProductSheet({
 
         <p className="mt-5 text-sm font-bold leading-6 text-white/65">{product.description}</p>
 
-        <div className="mt-6 grid grid-cols-3 gap-3">
-          <button onClick={onAsk} className="rounded-2xl bg-white/5 px-4 py-4 text-[10px] font-black uppercase tracking-widest text-white/70">
+        <div className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
+          <button onClick={onAsk} className="rounded-2xl bg-white/5 px-2 py-4 text-[10px] font-black uppercase tracking-widest text-white/70 sm:px-4">
             Ask
           </button>
-          <button onClick={onShare} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white/5 px-4 py-4 text-[10px] font-black uppercase tracking-widest text-white/70">
+          <button onClick={onShare} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white/5 px-2 py-4 text-[10px] font-black uppercase tracking-widest text-white/70 sm:px-4">
             <Copy size={14} /> Share
           </button>
           <button
             onClick={onBuy}
             disabled={!product.traderId || product.priceAmount <= 0 || product.stock <= 0}
-            className="rounded-2xl bg-orange-600 px-4 py-4 text-[10px] font-black uppercase tracking-widest text-black disabled:opacity-40"
+            className="rounded-2xl bg-orange-600 px-2 py-4 text-[10px] font-black uppercase tracking-widest text-black disabled:opacity-40 sm:px-4"
           >
             Buy
           </button>
@@ -944,23 +1025,23 @@ function QuestionSheet({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm md:items-center"
+      className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm md:items-center md:pb-4"
       onClick={onClose}
     >
       <motion.div
         initial={{ opacity: 0, y: 28, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 28, scale: 0.98 }}
-        className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-6 shadow-2xl"
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-5 shadow-2xl sm:p-6"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">Ask seller</p>
-            <h3 className="mt-1 text-xl font-black text-white">{product.title}</h3>
+            <h3 className="mt-1 text-lg font-black text-white sm:text-xl">{product.title}</h3>
             <p className="mt-1 text-xs font-bold text-white/40">{product.seller}</p>
           </div>
-          <button onClick={onClose} className="rounded-2xl bg-white/5 p-3 text-white/50 hover:text-white">
+          <button onClick={onClose} className="shrink-0 rounded-2xl bg-white/5 p-3 text-white/50 hover:text-white">
             <X size={18} />
           </button>
         </div>

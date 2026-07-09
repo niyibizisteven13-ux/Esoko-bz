@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Loader2, ShieldCheck, ShoppingBag, Store, User } from 'lucide-react';
 import { getAccessOptions, selectAccess } from '../services/teamService';
 import { updateStoredAuthUser } from '../services/sessionService';
 
 export default function AccessChoicePage() {
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState('');
   const [options, setOptions] = useState<any>(null);
@@ -26,7 +24,8 @@ export default function AccessChoicePage() {
         mode === 'team' ? { mode, membershipId: id } : { mode, accountId: id }
       );
       if (response.user) updateStoredAuthUser(response.user);
-      navigate(response.redirectTo || '/', { replace: true });
+      const redirectTo = response.redirectTo || '/';
+      window.location.assign(redirectTo);
     } catch (err: any) {
       setError(err.message || 'Could not select access.');
     } finally {
