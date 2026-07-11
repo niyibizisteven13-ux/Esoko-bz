@@ -458,145 +458,150 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }
 
   return (
-    <div className="pb-[calc(7rem+env(safe-area-inset-bottom))] min-h-screen h-auto overflow-y-auto">
-      <div className="mx-auto mb-4 flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0">
-        <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" size={18} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={searchMode === 'shops' ? 'Search shops or categories' : 'Search products, shops, prices'}
-              className="h-12 w-full rounded-2xl border border-white/10 bg-black pl-12 pr-4 text-sm font-bold text-white outline-none placeholder:text-white/25 focus:border-orange-500"
-            />
-          </div>
+    <div className="flex flex-col h-full min-h-screen">
+      {/* Sticky Header Section */}
+      <div className="sticky top-0 z-30 bg-[#050505] pb-4">
+        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0 pt-4">
+          <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" size={18} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={searchMode === 'shops' ? 'Search shops or categories' : 'Search products, shops, prices'}
+                className="h-12 w-full rounded-2xl border border-white/10 bg-black pl-12 pr-4 text-sm font-bold text-white outline-none placeholder:text-white/25 focus:border-orange-500"
+              />
+            </div>
 
-          <div className="grid grid-cols-4 gap-2 md:flex md:items-center">
-            <button
-              type="button"
-              onClick={() => setSearchMode('products')}
-              className={cn(
-                'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
-                searchMode === 'products' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
-              )}
-            >
-              Products
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchMode('shops')}
-              className={cn(
-                'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
-                searchMode === 'shops' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
-              )}
-            >
-              Shops
-            </button>
-            <button
-              type="button"
-              onClick={() => setNearbyOnly((value) => !value)}
-              className={cn(
-                'flex h-12 items-center justify-center rounded-2xl px-3',
-                nearbyOnly ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/45'
-              )}
-              title="Nearby"
-              aria-label="Toggle nearby marketplace"
-            >
-              <MapPin size={18} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setMapView((value) => !value)}
-              className={cn(
-                'flex h-12 items-center justify-center rounded-2xl px-3',
-                mapView ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/45'
-              )}
-              title="Map mode"
-              aria-label="Toggle map mode"
-            >
-              <Store size={18} />
-            </button>
-          </div>
+            <div className="grid grid-cols-4 gap-2 md:flex md:items-center">
+              <button
+                type="button"
+                onClick={() => setSearchMode('products')}
+                className={cn(
+                  'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
+                  searchMode === 'products' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
+                )}
+              >
+                Products
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode('shops')}
+                className={cn(
+                  'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
+                  searchMode === 'shops' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
+                )}
+              >
+                Shops
+              </button>
+              <button
+                type="button"
+                onClick={() => setNearbyOnly((value) => !value)}
+                className={cn(
+                  'flex h-12 items-center justify-center rounded-2xl px-3',
+                  nearbyOnly ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/45'
+                )}
+                title="Nearby"
+                aria-label="Toggle nearby marketplace"
+              >
+                <MapPin size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapView((value) => !value)}
+                className={cn(
+                  'flex h-12 items-center justify-center rounded-2xl px-3',
+                  mapView ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/45'
+                )}
+                title="Map mode"
+                aria-label="Toggle map mode"
+              >
+                <Store size={18} />
+              </button>
+            </div>
 
-          {!error && resultCount > 0 ? (
-            <div className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left md:min-w-[180px] md:items-end">
-              <span className="font-black text-white">
-                {resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}
-              </span>
-              <div className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
-                {nearbyOnly && <span>Within 30 km</span>}
-                {mapView && <span>Map view enabled</span>}
-                {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
+            {!error && resultCount > 0 ? (
+              <div className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left md:min-w-[180px] md:items-end">
+                <span className="font-black text-white">
+                  {resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}
+                </span>
+                <div className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+                  {nearbyOnly && <span>Within 30 km</span>}
+                  {mapView && <span>Map view enabled</span>}
+                  {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
+                </div>
               </div>
+            ) : null}
+          </div>
+
+          {(nearbyOnly || mapView || shopTraderId) && (
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/45 px-2">
+              {shopTraderId && (
+                <button
+                  type="button"
+                  onClick={() => setShopTraderId(null)}
+                  className="inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-orange-300"
+                >
+                  {activeShopName || 'Shop'} <X size={12} />
+                </button>
+              )}
+              {nearbyOnly && (
+                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-300">
+                  Nearby only
+                </span>
+              )}
+              {mapView && (
+                <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-blue-300">
+                  Map view enabled
+                </span>
+              )}
+            </div>
+          )}
+
+          {locationError ? (
+            <div className="mx-auto mt-4 max-w-[720px] rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-100 px-2">
+              {locationError}
             </div>
           ) : null}
         </div>
-
-        {(nearbyOnly || mapView || shopTraderId) && (
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/45">
-            {shopTraderId && (
-              <button
-                type="button"
-                onClick={() => setShopTraderId(null)}
-                className="inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-orange-300"
-              >
-                {activeShopName || 'Shop'} <X size={12} />
-              </button>
-            )}
-            {nearbyOnly && (
-              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-300">
-                Nearby only
-              </span>
-            )}
-            {mapView && (
-              <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-blue-300">
-                Map view enabled
-              </span>
-            )}
-          </div>
-        )}
-
-        {locationError ? (
-          <div className="mx-auto mt-4 max-w-[720px] rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-100">
-            {locationError}
-          </div>
-        ) : null}
       </div>
 
-      {mapView ? (
-        <div className="mx-auto mb-6 w-full max-w-[980px] px-3 md:px-0">
-          <MapView
-            traders={traderRecords}
-            userLocation={userLocation}
-            radius={nearbyOnly ? 30 : undefined}
-            onTraderClick={(trader) => {
-              if (trader?.id) {
-                setShopTraderId(String(trader.id));
-                setSearchMode('shops');
-              }
-            }}
-            searchQuery={query}
-            allProducts={products}
-          />
-        </div>
-      ) : null}
+      {/* Scrollable Content Area with Snap */}
+      <div className="flex-1 overflow-y-auto scroll-snap-mandatory" style={{ scrollSnapType: 'y mandatory' }}>
+        {mapView ? (
+          <div className="mx-auto mb-6 w-full max-w-[980px] px-3 md:px-0">
+            <MapView
+              traders={traderRecords}
+              userLocation={userLocation}
+              radius={nearbyOnly ? 30 : undefined}
+              onTraderClick={(trader) => {
+                if (trader?.id) {
+                  setShopTraderId(String(trader.id));
+                  setSearchMode('shops');
+                }
+              }}
+              searchQuery={query}
+              allProducts={products}
+            />
+          </div>
+        ) : null}
 
-      {error ? (
-        <div className="mx-auto max-w-[520px] rounded-3xl border border-red-500/20 bg-red-500/10 p-6 text-sm font-bold text-red-100">
-          {error}
-        </div>
-      ) : null}
+        {error ? (
+          <div className="mx-auto max-w-[520px] rounded-3xl border border-red-500/20 bg-red-500/10 p-6 text-sm font-bold text-red-100">
+            {error}
+          </div>
+        ) : null}
 
-      {!error && displayProducts.length === 0 ? (
-        <div className="mx-auto max-w-[520px] rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
-          <Package className="mx-auto mb-4 text-white/20" size={44} />
-          <p className="text-lg font-black text-white">No matching listings</p>
-          <p className="mt-2 text-sm font-bold text-white/45">Try a different product, shop, or category.</p>
-        </div>
-      ) : null}
+        {!error && displayProducts.length === 0 ? (
+          <div className="mx-auto max-w-[520px] rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
+            <Package className="mx-auto mb-4 text-white/20" size={44} />
+            <p className="text-lg font-black text-white">No matching listings</p>
+            <p className="mt-2 text-sm font-bold text-white/45">Try a different product, shop, or category.</p>
+          </div>
+        ) : null}
 
-      <div className="min-h-full h-auto overflow-y-auto px-3 pr-3 md:px-0 md:pr-0">
-        <div className="flex flex-col items-center gap-6">
+        <div className="min-h-full h-auto px-3 pr-3 md:px-0 md:pr-0 pb-[calc(7rem+env(safe-area-inset-bottom))]">
+          <div className="flex flex-col items-center gap-6">
           {displayProducts.map((product) => {
             const background = product.mediaBlocks.find((block) => block.type === 'video' || block.type === 'image');
             const textOverlays = product.mediaBlocks.filter(
@@ -850,6 +855,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               </motion.article>
             );
           })}
+          </div>
         </div>
       </div>
 

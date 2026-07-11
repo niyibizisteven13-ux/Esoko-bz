@@ -1,0 +1,118 @@
+import { apiGet, apiPost } from './apiClient';
+
+export interface ChatConversationSummary {
+  id: string;
+  accountNumber: string;
+  name: string;
+  initials: string;
+  avatarColor: string;
+  online: boolean;
+  lastMessagePreview: string;
+  lastMessageTime: string;
+  lastMessageRead?: string;
+  unreadCount: number;
+  profilePhoto?: string | null;
+  lastSeen?: string | null;
+}
+
+export interface ChatMessageShape {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  text?: string;
+  attachment?: {
+    type: 'file' | 'voice';
+    name: string;
+    meta?: string;
+    duration?: string;
+    url?: string;
+  };
+  timestamp: string;
+  status?: string;
+}
+
+function formatTimestamp(timestamp?: string) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export function normalizeChatMessage(payload: any, currentAccountNumber: string): ChatMessageShape {
+  const senderAccountNumber = payload.senderAccountNumber || payload.from || payload.senderId || '';
+  const senderId = senderAccountNumber === currentAccountNumber ? 'me' : senderAccountNumber;
+  return {
+    id: payload.id,
+    conversationId: payload.conversationId,
+    senderId,
+    text: payload.text || undefined,
+    attachment: payload.attachment
+      ? {
+          type: payload.attachment.type || 'file',
+          name: payload.attachment.name || 'Attachment',
+          meta: payload.attachment.meta || payload.attachment.mimeType || undefined,
+          url: payload.attachment.url || undefined,
+        }
+      : payload.attachmentType
+        ? {
+            type: payload.attachmentType,
+            name: payload.attachmentName || 'Attachment',
+            meta: payload.attachmentMimeType || undefined,
+            url: payload.attachmentUrl || undefined,
+          }
+        : undefined,
+    timestamp: formatTimestamp(payload.timestamp || payload.createdAt),
+    status: payload.status || 'sent',
+  };
+}
+
+export function normalizeConversationSummary(payload: any, _currentAccountNumber: string): ChatConversationSummary {
+  return {
+    id: payload.id,
+    accountNumber: payload.accountNumber,
+    name: payload.name || payload.accountNumber,
+    initials: payload.initials || '?',
+    avatarColor: payload.avatarColor || '#e8622c',
+    online: Boolean(payload.online),
+    lastMessagePreview: payload.lastMessagePreview || 'No messages yet',
+    lastMessageTime: payload.lastMessageTime || '',
+    lastMessageRead: payload.lastMessageRead,
+    unreadCount: Number(payload.unreadCount || 0),
+    profilePhoto: payload.profilePhoto || null,
+    lastSeen: payload.lastSeen || null,
+  };
+}
+
+export async function fetchConversations(currentAccountNumber: string) {
+  const data = await apiGet<{ conversations: any[] }>('/api/conversations');
+  return data.conversations.map((conversation) => normalizeConversationSummary(conversation, currentAccountNumber));
+}
+
+export async function fetchConversationMessages(conversationId: string, currentAccountNumber: string) {
+  const data = await apiGet<{ messages: any[] }>(`/api/conversations/${conversationId}/messages`);
+  return data.messages.map((message) => normalizeChatMessage(message, currentAccountNumber));
+}
+
+export async function createConversation(accountNumber: string, displayName: string | undefined, currentAccountNumber: string) {
+  const data = await apiPost<{ conversation: any }>('/api/conversations', { accountNumber, displayName });
+  return normalizeConversationSummary(data.conversation, currentAccountNumber);
+}
+
+export async function sendChatMessage(conversationId: string, text: string, currentAccountNumber: string) {
+  const data = await apiPost<{ message: any }>(`/api/conversations/${conversationId}/messages`, { text });
+  return normalizeChatMessage(data.message, currentAccountNumber);
+}
+
+export async function sendChatAttachment(conversationId: string, file: File, currentAccountNumber: string) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const data = await apiPost<{ message: any; attachment: any }>(`/api/conversations/${conversationId}/attachments`, formData);
+  return {
+    message: normalizeChatMessage(data.message, currentAccountNumber),
+    attachment: data.attachment,
+  };
+}
+
+export async function lookupChatAccount(accountNumber: string) {
+  return apiGet<any>(`/api/accounts/${accountNumber}`);
+}

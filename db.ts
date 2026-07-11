@@ -1096,6 +1096,50 @@ export default function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (trader_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS chat_conversations (
+      id TEXT PRIMARY KEY,
+      accountNumberA TEXT NOT NULL,
+      accountNumberB TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_conversation_participants (
+      conversationId TEXT NOT NULL,
+      accountNumber TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (conversationId, accountNumber),
+      FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      senderAccountNumber TEXT NOT NULL,
+      recipientAccountNumber TEXT NOT NULL,
+      text TEXT,
+      attachmentType TEXT,
+      attachmentName TEXT,
+      attachmentMimeType TEXT,
+      attachmentUrl TEXT,
+      attachmentSize INTEGER,
+      clientMessageId TEXT,
+      status TEXT DEFAULT 'sent',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_presence (
+      accountNumber TEXT PRIMARY KEY,
+      userId TEXT,
+      online INTEGER DEFAULT 0,
+      lastSeen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 
   [
@@ -1214,6 +1258,10 @@ export default function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_live_participants_session_lastSeenAt ON live_participants(sessionId, lastSeenAt DESC);
     CREATE INDEX IF NOT EXISTS idx_notifications_userId ON notifications(userId);
     CREATE INDEX IF NOT EXISTS idx_notifications_userId_createdAt ON notifications(userId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_conversations_accountNumbers ON chat_conversations(accountNumberA, accountNumberB);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_createdAt ON chat_messages(conversationId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_clientMessageId ON chat_messages(clientMessageId);
+    CREATE INDEX IF NOT EXISTS idx_chat_presence_online ON chat_presence(online);
     CREATE INDEX IF NOT EXISTS idx_tickets_createdBy ON tickets(createdBy);
     CREATE INDEX IF NOT EXISTS idx_tickets_assignedTo ON tickets(assignedTo);
     CREATE INDEX IF NOT EXISTS idx_system_logs_createdAt ON system_logs(createdAt);

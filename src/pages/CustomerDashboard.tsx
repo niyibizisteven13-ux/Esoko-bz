@@ -305,15 +305,15 @@ export default function CustomerDashboard() {
     <div className="min-h-screen bg-[#050505] flex flex-col md:flex-row selection:bg-orange-500/30 selection:text-white transition-colors duration-300 overflow-hidden text-neutral-100">
       <AnimatePresence>{isChangingTab && <SlitLoader />}</AnimatePresence>
 
-      {/* Sidebar - Desktop Only */}
+      {/* Sidebar - Desktop Only (Fixed) */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out md:relative md:translate-x-0 hidden md:flex flex-col border-r border-white/5',
-          isSidebarOpen ? 'translate-x-0' : '-translate-x-full',
+          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out hidden md:flex md:translate-x-0 flex-col border-r border-white/5 h-screen',
+          isSidebarOpen ? 'translate-x-0' : 'md:translate-x-0 -translate-x-full',
           isSidebarCollapsed ? 'w-20' : 'w-64'
         )}
       >
-        <div className="h-full flex flex-col p-4 overflow-y-auto no-scrollbar">
+        <div className="h-full flex flex-col p-4">
           <div className="flex items-center justify-between mb-8 shrink-0 px-2">
             {!isSidebarCollapsed && <Logo dark className="scale-90 origin-left" />}
             <button
@@ -647,7 +647,7 @@ export default function CustomerDashboard() {
       {/* Main Content */}
       <main
         id="main-scroll-container"
-        className="flex-1 h-screen overflow-y-auto relative bg-[#050505] transition-colors"
+        className="flex-1 min-h-screen overflow-y-auto relative bg-[#050505] transition-colors"
       >
         {/* Mobile Header */}
         <header className="md:hidden bg-[#050505] border-b border-white/5 px-4 py-3 sticky top-0 z-40 flex items-center justify-between shadow-sm">

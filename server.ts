@@ -16,6 +16,8 @@ import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import https from 'https';
+import { createServer as createHttpServer, type Server as HttpServer } from 'http';
+import { WebSocketServer } from 'ws';
 import { loadAppConfig } from './lib/env.ts';
 import { createIdempotencyStore } from './lib/idempotency.ts';
 import { errorHandler, validateRequest } from './lib/middleware.ts';
@@ -45,7 +47,12 @@ import {
 } from './lib/postgresAccountStore.ts';
 import { LoginSchema, RegisterSchema } from './src/lib/validation.ts';
 import type { Request, Response, NextFunction, CookieOptions } from 'express';
-import type { Server } from 'http';
+import {
+  CHAT_ALLOWED_ATTACHMENT_MIME_TYPES,
+  CHAT_ATTACHMENT_MAX_BYTES,
+  buildConversationKey,
+  getPeerAccountNumber,
+} from './lib/chatHub.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -347,7 +354,7 @@ const LOAN_WHATSAPP_NUMBER = env.LOAN_WHATSAPP_NUMBER || '+250795806631';
 const WHATSAPP_OTP_SENDER = env.WHATSAPP_OTP_SENDER || env.VITE_SUPPORT_WHATSAPP || '+250795806631';
 const WHATSAPP_OTP_PROVIDER_URL = env.WHATSAPP_OTP_PROVIDER_URL || '';
 const WHATSAPP_OTP_PROVIDER_TOKEN = env.WHATSAPP_OTP_PROVIDER_TOKEN || '';
-let activeServer: Server | null = null;
+let activeServer: HttpServer | null = null;
 let isShuttingDown = false;
 let loanReminderInterval: NodeJS.Timeout | null = null;
 const RAW_JWT_SECRET_KEY = JWT_SECRET || config.devJwtSecret;
@@ -530,6 +537,634 @@ const upload = multer({
     }
   },
 });
+
+const chatUpload = multer({
+  storage,
+  limits: { fileSize: CHAT_ATTACHMENT_MAX_BYTES },
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    if (CHAT_ALLOWED_ATTACHMENT_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error('Unsupported attachment type'));
+  },
+});
+
+function resolveChatAccountNumber(user: any) {
+  const candidate = String(user?.appNumber || user?.id || '').trim();
+  return candidate || 'unknown';
+}
+
+function ensureChatAccountRecord(user: any) {
+  const accountNumber = resolveChatAccountNumber(user);
+  if (!accountNumber || accountNumber === 'unknown') {
+    return null;
+  }
+  db.prepare(
+    `
+      INSERT OR IGNORE INTO chat_presence (accountNumber, userId, online, lastSeen, updatedAt)
+      VALUES (?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `
+  ).run(accountNumber, user.id);
+  return accountNumber;
+}
+
+function ensureConversationRecord(accountNumberA: string, accountNumberB: string) {
+  const conversationId = buildConversationKey(accountNumberA, accountNumberB);
+  const existing = db.prepare('SELECT id FROM chat_conversations WHERE id = ?').get(conversationId) as any;
+  if (existing) {
+    return conversationId;
+  }
+  db.prepare(
+    `
+      INSERT INTO chat_conversations (id, accountNumberA, accountNumberB, createdAt, updatedAt)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `
+  ).run(conversationId, accountNumberA, accountNumberB);
+  db.prepare(
+    `
+      INSERT OR IGNORE INTO chat_conversation_participants (conversationId, accountNumber, createdAt, updatedAt)
+      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `
+  ).run(conversationId, accountNumberA);
+  db.prepare(
+    `
+      INSERT OR IGNORE INTO chat_conversation_participants (conversationId, accountNumber, createdAt, updatedAt)
+      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `
+  ).run(conversationId, accountNumberB);
+  return conversationId;
+}
+
+function updateConversationTimestamp(conversationId: string) {
+  db.prepare(`UPDATE chat_conversations SET updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(conversationId);
+}
+
+function updatePresence(accountNumber: string, online: boolean) {
+  db.prepare(
+    `
+      INSERT INTO chat_presence (accountNumber, userId, online, lastSeen, updatedAt)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(accountNumber) DO UPDATE SET
+        online = excluded.online,
+        lastSeen = CURRENT_TIMESTAMP,
+        updatedAt = CURRENT_TIMESTAMP
+    `
+  ).run(accountNumber, null, online ? 1 : 0);
+}
+
+function serializeConversationSummary(row: any, currentAccountNumber: string) {
+  const peerAccountNumber = row.accountNumberA === currentAccountNumber ? row.accountNumberB : row.accountNumberA;
+  const peerUser = db.prepare('SELECT id, name, profilePhoto, appNumber FROM users WHERE appNumber = ?').get(peerAccountNumber) as any;
+  const presence = db.prepare('SELECT online, lastSeen FROM chat_presence WHERE accountNumber = ?').get(peerAccountNumber) as any;
+  const latestMessage = db
+    .prepare(
+      `
+        SELECT id, text, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, status, createdAt
+        FROM chat_messages
+        WHERE conversationId = ?
+        ORDER BY createdAt DESC, id DESC
+        LIMIT 1
+      `
+    )
+    .get(row.id) as any;
+  return {
+    id: row.id,
+    accountNumber: peerAccountNumber,
+    name: peerUser?.name || peerAccountNumber,
+    initials: (peerUser?.name || peerAccountNumber)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part: string) => part[0]?.toUpperCase() || '?')
+      .join('') || '?',
+    avatarColor: '#e8622c',
+    online: Boolean(presence?.online),
+    lastMessagePreview: latestMessage?.text || (latestMessage?.attachmentName ? `📎 ${latestMessage.attachmentName}` : ''),
+    lastMessageTime: latestMessage?.createdAt || row.updatedAt,
+    lastMessageRead: latestMessage?.status || 'sent',
+    unreadCount: 0,
+    profilePhoto: peerUser?.profilePhoto || null,
+    lastSeen: presence?.lastSeen || null,
+  };
+}
+
+function extractMessageEnvelope(payload: any) {
+  return {
+    id: payload.id,
+    conversationId: payload.conversationId,
+    senderAccountNumber: payload.senderAccountNumber,
+    recipientAccountNumber: payload.recipientAccountNumber,
+    text: payload.text || undefined,
+    clientMessageId: payload.clientMessageId,
+    attachmentType: payload.attachmentType || null,
+    attachmentName: payload.attachmentName || null,
+    attachmentMimeType: payload.attachmentMimeType || null,
+    attachmentUrl: payload.attachmentUrl || null,
+    attachmentSize: payload.attachmentSize || null,
+    status: payload.status || 'sent',
+    createdAt: payload.createdAt || new Date().toISOString(),
+  };
+}
+
+function persistChatMessage(input: {
+  conversationId: string;
+  senderAccountNumber: string;
+  recipientAccountNumber: string;
+  text?: string | null;
+  attachmentType?: string | null;
+  attachmentName?: string | null;
+  attachmentMimeType?: string | null;
+  attachmentUrl?: string | null;
+  attachmentSize?: number | null;
+  clientMessageId: string;
+  status?: string;
+}) {
+  const messageId = uuidv4();
+  const createdAt = new Date().toISOString();
+  db.prepare(
+    `
+      INSERT INTO chat_messages (
+        id,
+        conversationId,
+        senderAccountNumber,
+        recipientAccountNumber,
+        text,
+        attachmentType,
+        attachmentName,
+        attachmentMimeType,
+        attachmentUrl,
+        attachmentSize,
+        clientMessageId,
+        status,
+        createdAt,
+        updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    messageId,
+    input.conversationId,
+    input.senderAccountNumber,
+    input.recipientAccountNumber,
+    input.text || null,
+    input.attachmentType || null,
+    input.attachmentName || null,
+    input.attachmentMimeType || null,
+    input.attachmentUrl || null,
+    input.attachmentSize || null,
+    input.clientMessageId,
+    input.status || 'sent',
+    createdAt,
+    createdAt
+  );
+  updateConversationTimestamp(input.conversationId);
+  return extractMessageEnvelope({
+    id: messageId,
+    conversationId: input.conversationId,
+    senderAccountNumber: input.senderAccountNumber,
+    recipientAccountNumber: input.recipientAccountNumber,
+    text: input.text || undefined,
+    clientMessageId: input.clientMessageId,
+    attachmentType: input.attachmentType || null,
+    attachmentName: input.attachmentName || null,
+    attachmentMimeType: input.attachmentMimeType || null,
+    attachmentUrl: input.attachmentUrl || null,
+    attachmentSize: input.attachmentSize || null,
+    status: input.status || 'sent',
+    createdAt,
+  });
+}
+
+function broadcastChatMessage(message: any, sockets: Map<string, Set<any>>) {
+  const payload = {
+    type: 'message',
+    ...message,
+  };
+  const recipientSockets = sockets.get(message.recipientAccountNumber) || new Set();
+  for (const socket of Array.from(recipientSockets)) {
+    if (socket.readyState === 1) {
+      socket.send(JSON.stringify(payload));
+    }
+  }
+}
+
+function emitChatStatus(senderAccountNumber: string, clientMessageId: string, status: string, sockets: Map<string, Set<any>>) {
+  const payload = {
+    type: 'status',
+    clientMessageId,
+    status,
+  };
+  const senderSockets = sockets.get(senderAccountNumber) || new Set();
+  for (const socket of Array.from(senderSockets)) {
+    if (socket.readyState === 1) {
+      socket.send(JSON.stringify(payload));
+    }
+  }
+}
+
+function flushPendingChatMessages(accountNumber: string, sockets: Map<string, Set<any>>) {
+  const queuedMessages = db
+    .prepare(
+      `
+        SELECT *
+        FROM chat_messages
+        WHERE recipientAccountNumber = ? AND status = 'sent'
+        ORDER BY createdAt ASC, id ASC
+      `
+    )
+    .all(accountNumber) as any[];
+  for (const message of queuedMessages) {
+    const payload = {
+      type: 'message',
+      id: message.id,
+      conversationId: message.conversationId,
+      from: message.senderAccountNumber,
+      text: message.text || undefined,
+      clientMessageId: message.clientMessageId,
+      attachment: message.attachmentType
+        ? {
+            type: message.attachmentType,
+            name: message.attachmentName,
+            mimeType: message.attachmentMimeType,
+            size: message.attachmentSize,
+            url: message.attachmentUrl,
+          }
+        : undefined,
+      timestamp: message.createdAt,
+    };
+    for (const socket of Array.from(sockets.get(accountNumber) || [])) {
+      if (socket.readyState === 1) {
+        socket.send(JSON.stringify(payload));
+      }
+    }
+    db.prepare(`UPDATE chat_messages SET status = 'delivered', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(message.id);
+    emitChatStatus(message.senderAccountNumber, message.clientMessageId, 'delivered', sockets);
+  }
+}
+
+function attachMessengerRoutes() {
+  app.get('/api/accounts/:accountNumber', authenticate, (req: any, res: Response) => {
+    const accountNumber = String(req.params.accountNumber || '').trim();
+    if (!accountNumber) {
+      res.status(400).json({ error: 'Account number is required' });
+      return;
+    }
+    const row = db
+      .prepare(
+        `
+          SELECT u.appNumber, u.name, u.profilePhoto, cp.online, cp.lastSeen
+          FROM users u
+          LEFT JOIN chat_presence cp ON cp.accountNumber = u.appNumber
+          WHERE u.appNumber = ?
+          LIMIT 1
+        `
+      )
+      .get(accountNumber) as any;
+    if (!row) {
+      res.status(404).json({ error: 'Account not found' });
+      return;
+    }
+    res.json({
+      accountNumber: row.appNumber,
+      name: row.name,
+      displayName: row.name,
+      avatar: row.profilePhoto || null,
+      online: Boolean(row.online),
+      lastSeen: row.lastSeen || null,
+    });
+  });
+
+  app.get('/api/conversations', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const rows = db
+      .prepare(
+        `
+          SELECT id, accountNumberA, accountNumberB, updatedAt
+          FROM chat_conversations
+          WHERE accountNumberA = ? OR accountNumberB = ?
+          ORDER BY updatedAt DESC
+        `
+      )
+      .all(accountNumber, accountNumber) as any[];
+    res.json({ conversations: rows.map((row) => serializeConversationSummary(row, accountNumber)) });
+  });
+
+  app.post('/api/conversations', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const recipientAccountNumber = String(req.body?.accountNumber || '').trim();
+    const displayName = String(req.body?.displayName || '').trim();
+
+    if (!recipientAccountNumber) {
+      res.status(400).json({ error: 'Account number is required' });
+      return;
+    }
+    if (recipientAccountNumber === accountNumber) {
+      res.status(400).json({ error: 'You cannot start a conversation with yourself' });
+      return;
+    }
+
+    const recipientUser = db.prepare('SELECT id, name, appNumber FROM users WHERE appNumber = ?').get(recipientAccountNumber) as any;
+    if (!recipientUser) {
+      res.status(404).json({ error: 'Account not found' });
+      return;
+    }
+
+    const conversationId = ensureConversationRecord(accountNumber, recipientAccountNumber);
+    const row = db.prepare('SELECT id, accountNumberA, accountNumberB, updatedAt FROM chat_conversations WHERE id = ?').get(conversationId) as any;
+
+    res.json({
+      conversation: {
+        ...serializeConversationSummary(row, accountNumber),
+        name: displayName || serializeConversationSummary(row, accountNumber).name,
+      },
+    });
+  });
+
+  app.post('/api/conversations/:id/messages', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+
+    const text = String(req.body?.text || '').trim();
+    if (!text) {
+      res.status(400).json({ error: 'Message text is required' });
+      return;
+    }
+
+    const peerAccountNumber = getPeerAccountNumber(req.params.id, accountNumber);
+    const message = persistChatMessage({
+      conversationId: req.params.id,
+      senderAccountNumber: accountNumber,
+      recipientAccountNumber: peerAccountNumber,
+      text,
+      clientMessageId: `msg-${uuidv4()}`,
+      status: 'sent',
+    });
+
+    const sockets = chatSocketsByAccount.get(accountNumber) || new Set();
+    for (const socket of Array.from(sockets)) {
+      if (socket.readyState === 1) {
+        socket.send(JSON.stringify({ type: 'message', ...message, from: accountNumber, timestamp: message.createdAt }));
+      }
+    }
+    broadcastChatMessage({ ...message, recipientAccountNumber: peerAccountNumber, from: accountNumber }, chatSocketsByAccount);
+    emitChatStatus(accountNumber, message.clientMessageId, 'delivered', chatSocketsByAccount);
+
+    res.json({ message });
+  });
+
+  app.get('/api/conversations/:id/messages', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    const limit = Math.min(100, Number(req.query.limit || 50));
+    const before = String(req.query.before || '');
+    const whereClause = before ? 'conversationId = ? AND createdAt < ?' : 'conversationId = ?';
+    const params: any[] = [req.params.id];
+    if (before) params.push(before);
+    const rows = db
+      .prepare(
+        `
+          SELECT id, conversationId, senderAccountNumber, recipientAccountNumber, text, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, clientMessageId, status, createdAt
+          FROM chat_messages
+          WHERE ${whereClause}
+          ORDER BY createdAt DESC, id DESC
+          LIMIT ?
+        `
+      )
+      .all(...params, limit) as any[];
+
+    res.json({
+      messages: rows.reverse().map((row) => ({
+        id: row.id,
+        conversationId: row.conversationId,
+        senderId: row.senderAccountNumber === accountNumber ? 'me' : row.senderAccountNumber,
+        text: row.text || undefined,
+        attachment: row.attachmentType
+          ? {
+              type: row.attachmentType,
+              name: row.attachmentName,
+              mimeType: row.attachmentMimeType,
+              size: row.attachmentSize,
+              url: row.attachmentUrl,
+            }
+          : undefined,
+        timestamp: row.createdAt,
+        status: row.status,
+        clientMessageId: row.clientMessageId,
+      })),
+    });
+  });
+
+  app.post('/api/conversations/:id/attachments', authenticate, chatUpload.single('file'), (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' });
+      return;
+    }
+    const peerAccountNumber = getPeerAccountNumber(req.params.id, accountNumber);
+    const fileUrl = `/uploads/${req.file.filename}`;
+    const message = persistChatMessage({
+      conversationId: req.params.id,
+      senderAccountNumber: accountNumber,
+      recipientAccountNumber: peerAccountNumber,
+      attachmentType: 'file',
+      attachmentName: req.file.originalname,
+      attachmentMimeType: req.file.mimetype,
+      attachmentUrl: fileUrl,
+      attachmentSize: req.file.size,
+      clientMessageId: `attach-${uuidv4()}`,
+      status: 'sent',
+    });
+    const sockets = chatSocketsByAccount.get(accountNumber) || new Set();
+    for (const socket of Array.from(sockets)) {
+      if (socket.readyState === 1) {
+        socket.send(JSON.stringify({ type: 'message', ...message, from: accountNumber, timestamp: message.createdAt }));
+      }
+    }
+    broadcastChatMessage(
+      {
+        ...message,
+        recipientAccountNumber: peerAccountNumber,
+        from: accountNumber,
+        text: undefined,
+        attachment: {
+          type: 'file',
+          name: req.file.originalname,
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          url: fileUrl,
+        },
+      },
+      chatSocketsByAccount
+    );
+    emitChatStatus(accountNumber, message.clientMessageId, 'delivered', chatSocketsByAccount);
+    res.json({
+      success: true,
+      message,
+      attachment: {
+        url: fileUrl,
+        name: req.file.originalname,
+        size: req.file.size,
+        mimeType: req.file.mimetype,
+      },
+    });
+  });
+
+  app.get('/api/calls/turn-credentials', authenticate, (_req: any, res: Response) => {
+    res.json({
+      iceServers: [
+        { urls: ['stun:stun.l.google.com:19302'] },
+        ...(process.env.TURN_SERVER_URL
+          ? [{ urls: [process.env.TURN_SERVER_URL], username: process.env.TURN_SERVER_USERNAME || '', credential: process.env.TURN_SERVER_CREDENTIAL || '' }]
+          : []),
+      ],
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    });
+  });
+}
+
+const chatSocketsByAccount = new Map<string, Set<any>>();
+
+function initializeMessengerSocketServer(httpServer: HttpServer) {
+  const wsServer = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (req: any, socket: any, head: Buffer) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const token = String(url.searchParams.get('token') || req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const cookieHeader = String(req.headers.cookie || '');
+    const cookies = new Map<string, string>();
+    for (const part of cookieHeader.split(';')) {
+      const [rawKey, ...rawValue] = part.split('=');
+      if (!rawKey) continue;
+      const key = rawKey.trim();
+      const value = rawValue.join('=').trim();
+      if (key) cookies.set(key, value);
+    }
+    const cookieToken = cookies.get('nexus_auth_token') || '';
+    const bearerToken = token || cookieToken;
+    if (!bearerToken) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    let decodedUser: any = null;
+    try {
+      decodedUser = jwt.verify(bearerToken, JWT_SECRET_KEY) as any;
+    } catch {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decodedUser.userId) as any;
+    if (!user) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const accountNumber = ensureChatAccountRecord(user);
+    if (!accountNumber) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    wsServer.handleUpgrade(req, socket, head, (socketInstance: any) => {
+      wsServer.emit('connection', socketInstance, user, accountNumber);
+    });
+  });
+
+  wsServer.on('connection', (socket: any, user: any, accountNumber: string) => {
+    const sockets = chatSocketsByAccount.get(accountNumber) || new Set();
+    sockets.add(socket);
+    chatSocketsByAccount.set(accountNumber, sockets);
+    updatePresence(accountNumber, true);
+    flushPendingChatMessages(accountNumber, chatSocketsByAccount);
+
+    socket.on('message', (raw: any) => {
+      try {
+        const payload = JSON.parse(raw.toString());
+        if (payload.type === 'message') {
+          const peerAccountNumber = getPeerAccountNumber(payload.conversationId, accountNumber);
+          const message = persistChatMessage({
+            conversationId: payload.conversationId,
+            senderAccountNumber: accountNumber,
+            recipientAccountNumber: peerAccountNumber,
+            text: payload.text || undefined,
+            clientMessageId: payload.clientMessageId || `msg-${uuidv4()}`,
+          });
+          emitChatStatus(accountNumber, message.clientMessageId, 'sent', chatSocketsByAccount);
+          broadcastChatMessage({ ...message, from: accountNumber, recipientAccountNumber: peerAccountNumber }, chatSocketsByAccount);
+          emitChatStatus(accountNumber, message.clientMessageId, 'delivered', chatSocketsByAccount);
+          return;
+        }
+        if (payload.type === 'status' && payload.status === 'read') {
+          db.prepare(`UPDATE chat_messages SET status = 'read', updatedAt = CURRENT_TIMESTAMP WHERE clientMessageId = ?`).run(payload.clientMessageId);
+          emitChatStatus(accountNumber, payload.clientMessageId, 'read', chatSocketsByAccount);
+          return;
+        }
+        if (payload.type === 'call:offer' || payload.type === 'call:answer' || payload.type === 'call:ice-candidate' || payload.type === 'call:hangup' || payload.type === 'call:reject') {
+          const targetAccount = payload.to || payload.recipientAccountNumber;
+          const relayPayload = {
+            ...payload,
+            from: accountNumber,
+          };
+          const targetSockets = chatSocketsByAccount.get(targetAccount) || new Set();
+          for (const targetSocket of Array.from(targetSockets)) {
+            if (targetSocket.readyState === 1) {
+              targetSocket.send(JSON.stringify(relayPayload));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Chat socket message error', error);
+      }
+    });
+
+    socket.on('close', () => {
+      const currentSockets = chatSocketsByAccount.get(accountNumber) || new Set();
+      currentSockets.delete(socket);
+      if (currentSockets.size === 0) {
+        chatSocketsByAccount.delete(accountNumber);
+      } else {
+        chatSocketsByAccount.set(accountNumber, currentSockets);
+      }
+      updatePresence(accountNumber, false);
+    });
+  });
+}
 
 // Basic magic-byte verification for uploads to harden MIME-only checks.
 function detectFileTypeByMagic(filePath: string) {
@@ -2679,6 +3314,8 @@ app.use('/api', (req: any, res, next) => {
   next();
 });
 
+attachMessengerRoutes();
+
 app.get('/api/events', authenticate, (req: any, res): any => {
   const clientId = uuidv4();
 
@@ -3816,6 +4453,17 @@ function canAccessGenericDocument(
 ) {
   if (!document || !req.user?.id) return false;
   if (isElevatedRole(req.user.role)) return true;
+  
+  // Allow traders to access their own trader_financials documents
+  if (collectionName === 'trader_financials') {
+    const effectiveTraderId = req.effectiveTraderId || req.user.activeAccountId;
+    if (effectiveTraderId && document.traderId === effectiveTraderId) return true;
+    if (document.createdBy === req.user.id) return true;
+    // Also allow if traderId matches the user's ID directly (for personal trader records)
+    if (document.traderId === req.user.id) return true;
+    return false;
+  }
+  
   if (restrictedGenericCollections.has(collectionName)) return false;
 
   const teamMembershipId = String(req.cookies?.nexus_team_access || '');
@@ -3837,6 +4485,20 @@ function prepareGenericDocumentForWrite(
   body: Record<string, any>
 ) {
   if (isElevatedRole(req.user?.role)) return body;
+  
+  // Allow traders to write to their own trader_financials documents
+  if (collectionName === 'trader_financials') {
+    const next = { ...body };
+    const effectiveTraderId = req.effectiveTraderId || req.user.activeAccountId || req.user.id;
+    if (!next.traderId && effectiveTraderId) {
+      next.traderId = effectiveTraderId;
+    }
+    if (!next.createdBy) {
+      next.createdBy = req.user.id;
+    }
+    return canAccessGenericDocument(req, collectionName, next) ? next : null;
+  }
+  
   if (restrictedGenericCollections.has(collectionName)) return null;
 
   const next = { ...body };
@@ -5738,6 +6400,84 @@ app.post('/api/traders/team/members/:id/revoke', authenticate, (req: any, res): 
   res.json({ success: true });
 });
 
+  // Branch management APIs
+  app.get('/api/traders/:traderId/branches', authenticate, (req: any, res): any => {
+    const traderId = String(req.params.traderId || '');
+    if (!traderId) return res.status(400).json({ error: 'Missing traderId' });
+    const rows = db
+      .prepare('SELECT id, traderId, name, location, appNumber, status, createdAt, updatedAt FROM branches WHERE traderId = ? ORDER BY createdAt DESC')
+      .all(traderId) as any[];
+    return res.json({ success: true, branches: rows });
+  });
+
+  app.post('/api/branches', authenticate, (req: any, res): any => {
+    try {
+      // traderId may be supplied by admin or inferred from authenticated trader
+      const traderId = req.user.role === 'trader' ? req.user.id : String(req.body.traderId || '');
+      if (!traderId) return res.status(400).json({ error: 'Missing traderId' });
+
+      const name = String(req.body.name || '').trim();
+      const location = String(req.body.location || '').trim() || null;
+      const providedAppNumber = String(req.body.appNumber || '').trim();
+
+      if (!name) return res.status(400).json({ error: 'Branch name is required' });
+
+      // generate unique 8-digit app number if not provided
+      function generateBranchAppNumber() {
+        for (let i = 0; i < 30; i += 1) {
+          const num = String(Math.floor(10000000 + Math.random() * 90000000));
+          const existsUser = db.prepare('SELECT id FROM users WHERE appNumber = ?').get(num);
+          const existsBranch = db.prepare('SELECT id FROM branches WHERE appNumber = ?').get(num);
+          if (!existsUser && !existsBranch) return num;
+        }
+        return uuidv4().slice(0, 8);
+      }
+
+      const appNumber = providedAppNumber && /^[0-9]{8}$/.test(providedAppNumber) ? providedAppNumber : generateBranchAppNumber();
+
+      // ensure no duplicate branch name under same trader
+      const existing = db.prepare('SELECT * FROM branches WHERE traderId = ? AND lower(name) = lower(?)').get(traderId, name) as any;
+      if (existing) return res.status(409).json({ error: 'Branch with that name already exists' });
+
+      const id = uuidv4();
+      db.prepare('INSERT INTO branches (id, traderId, name, location, appNumber, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(id, traderId, name, location, appNumber, 'active');
+      const row = db.prepare('SELECT id, traderId, name, location, appNumber, status, createdAt, updatedAt FROM branches WHERE id = ?').get(id) as any;
+      publishLiveSync({ collection: 'branches', action: 'created', traderId });
+      return res.json({ success: true, branch: row });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/branches/app/:appNumber', authenticate, (req: any, res): any => {
+    const appNumber = String(req.params.appNumber || '').trim();
+    if (!/^[0-9]{8}$/.test(appNumber)) return res.status(400).json({ error: 'Invalid app number' });
+    const branch = db.prepare('SELECT id, traderId, name, location, appNumber, status, createdAt, updatedAt FROM branches WHERE appNumber = ?').get(appNumber) as any;
+    if (!branch) return res.status(404).json({ error: 'Branch not found' });
+    return res.json({ success: true, branch });
+  });
+
+  app.post('/api/branches/:branchId/accounts', authenticate, (req: any, res): any => {
+    try {
+      const branchId = String(req.params.branchId || '');
+      const userId = String(req.body.userId || '');
+      const role = String(req.body.role || 'staff');
+      const permissions = Array.isArray(req.body.permissions) ? req.body.permissions : [];
+      if (!branchId || !userId) return res.status(400).json({ error: 'branchId and userId required' });
+
+      const branch = db.prepare('SELECT * FROM branches WHERE id = ?').get(branchId) as any;
+      if (!branch) return res.status(404).json({ error: 'Branch not found' });
+
+      const id = uuidv4();
+      db.prepare('INSERT OR REPLACE INTO branch_accounts (id, branchId, userId, role, permissions, active, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(id, branchId, userId, role, JSON.stringify(permissions));
+      const ba = db.prepare('SELECT * FROM branch_accounts WHERE id = ?').get(id) as any;
+      publishLiveSync({ collection: 'branch_accounts', action: 'created', traderId: branch.traderId, id: ba.id });
+      return res.json({ success: true, branchAccount: ba });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
 app.post('/api/auth/send-verification-email', authenticate, async (req: any, res): Promise<any> => {
   try {
     const user = req.user;
@@ -5769,6 +6509,29 @@ app.post('/api/auth/send-verification-email', authenticate, async (req: any, res
   } catch (error: any) {
     console.error('Verification email failed:', error);
     res.status(500).json({ error: 'Failed to send verification email', details: error.message });
+  }
+});
+
+// Branch switch endpoint: set branch access in a server-side session cookie
+app.post('/api/branches/:branchId/switch', authenticate, (req: any, res): any => {
+  try {
+    const branchId = String(req.params.branchId || '');
+    if (!branchId) return res.status(400).json({ error: 'branchId required' });
+    const ba = db.prepare('SELECT b.id, b.traderId, b.name, b.appNumber FROM branches b WHERE id = ?').get(branchId) as any;
+    if (!ba) return res.status(404).json({ error: 'Branch not found' });
+
+    // Ensure user has access to this branch via branch_accounts or is the trader owner
+    const userId = req.user.id;
+    const isOwner = req.user.role === 'trader' && req.user.id === ba.traderId;
+    const hasAccount = db.prepare('SELECT * FROM branch_accounts WHERE branchId = ? AND userId = ? AND active = 1').get(branchId, userId) as any;
+    if (!isOwner && !hasAccount) return res.status(403).json({ error: 'You do not have access to this branch' });
+
+    // Set cookie for branch access (short-lived session cookie)
+    const cookieValue = JSON.stringify({ branchId: ba.id, traderId: ba.traderId, appNumber: ba.appNumber });
+    res.cookie('nexus_branch_access', cookieValue, { httpOnly: true, sameSite: 'lax' });
+    return res.json({ success: true, branch: ba });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -6357,6 +7120,7 @@ app.get('/api/products', authenticate, (req: any, res): any => {
   const conditions: string[] = [];
   const params: any[] = [];
   const activeTeam = getActiveTeamContext(req);
+  const branchAccess = (req as any).branchAccess as any | undefined;
   const requestedTraderId = req.query.traderId ? String(req.query.traderId) : '';
 
   if (
@@ -6368,7 +7132,10 @@ app.get('/api/products', authenticate, (req: any, res): any => {
     return res.status(403).json({ error: 'You can only view products for the invited shop' });
   }
 
-  if (activeTeam?.traderId && !requestedTraderId) {
+  if (branchAccess && !requestedTraderId) {
+    conditions.push('p.traderId = ?');
+    params.push(branchAccess.traderId);
+  } else if (activeTeam?.traderId && !requestedTraderId) {
     conditions.push('p.traderId = ?');
     params.push(activeTeam.traderId);
   } else if (req.query.traderId) {
@@ -6728,7 +7495,7 @@ app.get('/api/reports/business-summary/:traderId', authenticate, (req: any, res)
       .count || 0;
   const todaySales =
     (db.prepare(
-      'SELECT COALESCE(SUM(totalAmount), 0) as total FROM purchases WHERE traderId = ? AND status = ? AND DATE(createdAt) = DATE(CURRENT_TIMESTAMP, "localtime")'
+      "SELECT COALESCE(SUM(totalAmount), 0) as total FROM purchases WHERE traderId = ? AND status = ? AND DATE(createdAt) = DATE('now')"
     ).get(traderId, 'approved') as any).total || 0;
   const lowStockCount =
     (db.prepare(
@@ -6878,6 +7645,7 @@ app.get('/api/purchases', authenticate, (req: any, res): any => {
   const { limit, offset } = parseLimitOffset(req.query);
   const conditions: string[] = [];
   const params: any[] = [];
+  const branchAccess = (req as any).branchAccess as any | undefined;
   if (req.query.customerId) {
     conditions.push('p.customerId = ?');
     params.push(req.query.customerId);
@@ -6885,6 +7653,10 @@ app.get('/api/purchases', authenticate, (req: any, res): any => {
   if (req.query.traderId) {
     conditions.push('p.traderId = ?');
     params.push(req.query.traderId);
+  } else if (branchAccess) {
+    // If branch access is present and traderId not explicitly requested, scope to branch's trader
+    conditions.push('p.traderId = ?');
+    params.push(branchAccess.traderId);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const purchases = db
@@ -6938,8 +7710,9 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
     const quantity = Math.max(1, Math.floor(asNumber(req.body.quantity, 1)));
     const customerId = req.body.customerId || req.user.id;
     const activeTeam = getActiveTeamContext(req);
+    const branchAccess = (req as any).branchAccess as any | undefined;
     const isTraderRecordedSale =
-      (req.user.role === 'trader' || Boolean(activeTeam?.traderId)) &&
+      (req.user.role === 'trader' || Boolean(activeTeam?.traderId) || Boolean(branchAccess?.id)) &&
       req.body.recordedBy === 'trader';
     const wantsDelivery = Boolean(req.body.isDelivery);
     const idemKey = idempotency.requireKey(req, res);
@@ -6956,13 +7729,16 @@ app.post('/api/purchases', authenticate, (req: any, res): any => {
     const result = db.transaction(() => {
       const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId) as any;
       if (!product) throw new Error('Product not found');
+      // If branch access exists, ensure product belongs to the same trader
+      const branchAccess = (req as any).branchAccess as any | undefined;
+      if (branchAccess && product.traderId !== branchAccess.traderId) throw new Error('You can only purchase products from your active branch');
       if (product.status !== 'available') throw new Error('Product is not available');
       if (product.stock < quantity) throw new Error('Not enough stock available');
 
       const customer = db.prepare('SELECT * FROM users WHERE id = ?').get(customerId) as any;
       const trader = db.prepare('SELECT * FROM users WHERE id = ?').get(product.traderId) as any;
       if (!customer || !trader) throw new Error('Customer or trader not found');
-      const saleTraderId = activeTeam?.traderId || req.user.id;
+      const saleTraderId = branchAccess?.traderId || activeTeam?.traderId || req.user.id;
       if (isTraderRecordedSale && product.traderId !== saleTraderId) {
         throw new Error('You can only record sales for your own products');
       }
@@ -13253,8 +14029,14 @@ async function startServer() {
     if (hmrPort !== desiredHmrPort) {
       console.warn(`HMR port ${desiredHmrPort} is already in use; falling back to ${hmrPort}.`);
     }
+    // Disable HMR websocket by default when running inside this Express-based
+    // dev middleware. The Vite client will otherwise attempt a WS connection
+    // to a separate HMR port which can fail (connection refused) and break
+    // client-side execution. If you want HMR, set process.env.ENABLE_HMR
+    // to 'true' and ensure HMR_PORT is available.
+    const enableHmr = String(process.env.ENABLE_HMR || 'false').toLowerCase() === 'true';
     vite = await createViteServer({
-      server: { middlewareMode: true, hmr: { port: hmrPort } },
+      server: { middlewareMode: true, hmr: enableHmr ? { port: hmrPort } : false },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -13292,33 +14074,30 @@ async function startServer() {
   const sslKeyPath = process.env.SSL_KEY_PATH;
   const sslCertPath = process.env.SSL_CERT_PATH;
 
-  if (sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
-    try {
-      const sslOptions = {
-        key: fs.readFileSync(sslKeyPath),
-        cert: fs.readFileSync(sslCertPath),
-      };
-      activeServer = https.createServer(sslOptions, app).listen(listenPort, () => {
-        console.log(`🔒 HTTPS Server running at https://localhost:${listenPort}`);
-        console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
-        console.log('Self-contained mode: Firebase and Firestore are not used.');
-      });
-    } catch (error) {
-      console.error('Failed to start HTTPS server:', error);
-      console.log('Falling back to HTTP...');
-      activeServer = app.listen(listenPort, () => {
-        console.log(`⚠️  HTTP Server running at http://localhost:${listenPort} (HTTPS failed)`);
-        console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
-        console.log('Self-contained mode: Firebase and Firestore are not used.');
-      });
+  const createServerWithMessenger = () => {
+    if (sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
+      try {
+        const sslOptions = {
+          key: fs.readFileSync(sslKeyPath),
+          cert: fs.readFileSync(sslCertPath),
+        };
+        return https.createServer(sslOptions, app);
+      } catch (error) {
+        console.error('Failed to start HTTPS server:', error);
+        console.log('Falling back to HTTP...');
+        return createHttpServer(app);
+      }
     }
-  } else {
-    activeServer = app.listen(listenPort, () => {
-      console.log(`Server running at http://localhost:${listenPort}`);
-      console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
-      console.log('Self-contained mode: Firebase and Firestore are not used.');
-    });
-  }
+    return createHttpServer(app);
+  };
+
+  activeServer = createServerWithMessenger().listen(listenPort, () => {
+    const protocol = sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath) ? 'https' : 'http';
+    console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://localhost:${listenPort}`);
+    console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
+    console.log('Self-contained mode: Firebase and Firestore are not used.');
+  });
+  initializeMessengerSocketServer(activeServer);
 
   startLoanPaymentReminderScheduler();
 }
