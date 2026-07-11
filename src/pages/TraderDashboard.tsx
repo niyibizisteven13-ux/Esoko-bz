@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
@@ -57,6 +57,15 @@ import { getTransactions } from '../services/transactionService';
 import { getCurrentUser } from '../services/sessionService';
 import { getBusinessSummary } from '../services/reportService';
 import { getBusinessAlerts } from '../services/alertService';
+import {
+  createConversation,
+  fetchConversationMessages,
+  fetchConversations,
+  lookupChatAccount,
+  normalizeChatMessage,
+  sendChatAttachment,
+  sendChatMessage,
+} from '../services/chatService';
 
 const TraderOverview = React.lazy(() => import('../components/trader/TraderOverview'));
 const TraderProducts = React.lazy(() => import('../components/trader/TraderProducts'));
@@ -73,7 +82,36 @@ const TraderDeliveries = React.lazy(() => import('../components/trader/TraderDel
 const TraderCustomers = React.lazy(() => import('../components/trader/TraderCustomers'));
 const TraderSuppliers = React.lazy(() => import('../components/trader/TraderSuppliers'));
 const TraderBulkRequests = React.lazy(() => import('../components/trader/TraderBulkRequests'));
-const TraderChat = React.lazy<React.ComponentType<{ traderId?: string }>>(
+const TraderChat = React.lazy<React.ComponentType<{
+  traderId?: string;
+  contacts?: Array<{
+    id: string;
+    accountNumber: string;
+    name: string;
+    initials: string;
+    avatarColor: string;
+    online: boolean;
+    lastMessagePreview: string;
+    lastMessageTime: string;
+    lastMessageRead?: 'sent' | 'delivered' | 'read';
+    unreadCount: number;
+  }>;
+  messages?: Array<{
+    id: string;
+    conversationId: string;
+    senderId: string;
+    text?: string;
+    attachment?: { type: 'file' | 'voice'; name: string; meta?: string; duration?: string; url?: string };
+    timestamp: string;
+    status?: 'sent' | 'delivered' | 'read';
+  }>;
+  selectedConversationId?: string;
+  onSelectConversation?: (conversationId: string) => void | Promise<void>;
+  onSendMessage?: (conversationId: string, text: string) => void | Promise<void>;
+  onSendFile?: (conversationId: string, file: File) => void | Promise<void>;
+  onAddContact?: (accountNumber: string, displayName?: string) => Promise<any>;
+  onStartCall?: (conversationId: string, type: 'voice' | 'video') => void;
+}>>(
   () => import('../components/trader/TraderChat')
 );
 const TraderTaxChamber = React.lazy(() => import('../components/trader/TraderTaxChamber'));
@@ -164,6 +202,10 @@ export default function TraderDashboard() {
   const [showPreferences, setShowPreferences] = useState(false);
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showMoreHeader, setShowMoreHeader] = useState(false);
+  const [chatConversations, setChatConversations] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
+  const wsRef = useRef<WebSocket | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -201,6 +243,7 @@ export default function TraderDashboard() {
   const dashboardTraderId =
     activeTeamContext?.traderId || userData?.uid || userData?.id || auth.currentUser?.uid || '';
   const actingUserId = auth.currentUser?.uid || userData?.uid || userData?.id || '';
+  const chatAccountNumber = userData?.appNumber || dashboardTraderId || '';
 
   console.debug('[TraderDashboard] dashboardTraderId computed', {
     dashboardTraderId,
@@ -209,6 +252,146 @@ export default function TraderDashboard() {
     userDataId: userData?.id,
     userDataUid: userData?.uid,
   });
+
+  const handleChatSendMessage = useCallback(async (conversationId: string, text: string) => {
+    if (!chatAccountNumber) return;
+    try {
+      const message = await sendChatMessage(conversationId, text, chatAccountNumber);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                lastMessagePreview: text,
+                lastMessageTime: message.timestamp || '',
+                lastMessageRead: message.status || 'sent',
+              }
+            : conversation
+        )
+      );
+    } catch (error) {
+      console.error('[TraderDashboard] failed to send chat message', error);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatSendFile = useCallback(async (conversationId: string, file: File) => {
+    if (!chatAccountNumber) return;
+    try {
+      const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                lastMessagePreview: `📎 ${file.name}`,
+                lastMessageTime: message.timestamp || '',
+                lastMessageRead: message.status || 'sent',
+              }
+            : conversation
+        )
+      );
+    } catch (error) {
+      console.error('[TraderDashboard] failed to upload chat attachment', error);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatAddContact = useCallback(async (accountNumber: string, displayName?: string) => {
+    if (!chatAccountNumber) return null;
+    const trimmedAccount = accountNumber.trim();
+    if (!/^[0-9]{8}$/.test(trimmedAccount)) return null;
+    const account = await lookupChatAccount(trimmedAccount);
+    if (!account?.accountNumber) return null;
+    const conversation = await createConversation(trimmedAccount, displayName, chatAccountNumber);
+    setChatConversations((prev) => (prev.some((item) => item.id === conversation.id) ? prev : [conversation, ...prev]));
+    setSelectedChatConversationId(conversation.id);
+    setChatMessages([]);
+    return {
+      id: conversation.id,
+      accountNumber: conversation.accountNumber,
+      name: conversation.name,
+      initials: conversation.initials,
+      avatarColor: conversation.avatarColor,
+      online: conversation.online,
+      lastMessagePreview: conversation.lastMessagePreview,
+      lastMessageTime: conversation.lastMessageTime,
+      unreadCount: conversation.unreadCount,
+    };
+  }, [chatAccountNumber]);
+
+  const handleChatStartCall = useCallback((_conversationId: string, _type: 'voice' | 'video') => {
+    console.info('[TraderDashboard] chat call requested');
+  }, []);
+
+  const handleChatConversationSelect = useCallback(async (conversationId: string) => {
+    if (!chatAccountNumber || selectedChatConversationId === conversationId) return;
+    setSelectedChatConversationId(conversationId);
+    try {
+      const messages = await fetchConversationMessages(conversationId, chatAccountNumber);
+      setChatMessages(messages);
+    } catch (error) {
+      console.error('[TraderDashboard] failed to load chat messages for conversation', conversationId, error);
+      setChatMessages([]);
+    }
+  }, [chatAccountNumber, selectedChatConversationId]);
+
+  useEffect(() => {
+    if (!chatAccountNumber) return;
+
+    let isCancelled = false;
+    const loadChatState = async () => {
+      const conversations = await fetchConversations(chatAccountNumber);
+      if (isCancelled) return;
+      setChatConversations(conversations);
+      if (conversations[0]) {
+        setSelectedChatConversationId(conversations[0].id);
+        const messages = await fetchConversationMessages(conversations[0].id, chatAccountNumber);
+        if (!isCancelled) {
+          setChatMessages(messages);
+        }
+      }
+    };
+
+    loadChatState().catch((error) => {
+      console.error('[TraderDashboard] failed to load chat state', error);
+    });
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(`${protocol}//${window.location.host}/`);
+    wsRef.current = socket;
+
+    socket.addEventListener('message', (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type !== 'message') return;
+        const normalized = normalizeChatMessage(payload, chatAccountNumber);
+        setChatMessages((prev) => (prev.some((message) => message.id === normalized.id) ? prev : [...prev, normalized]));
+        setChatConversations((prev) => {
+          if (prev.some((conversation) => conversation.id === normalized.conversationId)) {
+            return prev.map((conversation) =>
+              conversation.id === normalized.conversationId
+                ? {
+                    ...conversation,
+                    lastMessagePreview: normalized.text || '📎 Attachment',
+                    lastMessageTime: normalized.timestamp || '',
+                  }
+                : conversation
+            );
+          }
+          return prev;
+        });
+      } catch (error) {
+        console.error('[TraderDashboard] failed to parse chat socket payload', error);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [chatAccountNumber]);
 
   const handleTabChange = (
     tab: Tab,
@@ -297,12 +480,50 @@ export default function TraderDashboard() {
     try {
       const current = auth.currentUser || (await getCurrentUser());
       if (!current) return;
+      // If branch access is set server-side, the API will scope data to branch via traderId; we still use uid as primary
       const uid = current.activeTeamContext?.traderId || current.uid || current.id;
       if (!uid) return;
       const userResponse = await getUser(uid);
       setUserData(userResponse.user);
     } catch (err) {
       console.error('Failed to refresh user data:', err);
+    }
+  };
+
+  // Branch switching UI actions
+  const [branches, setBranches] = useState<any[]>([]);
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
+
+  const loadBranches = async () => {
+    try {
+      const traderId = userData?.id || userData?.uid || '';
+      if (!traderId) return;
+      const res = await fetch(`/api/traders/${traderId}/branches`, { credentials: 'include' });
+      const payload = await res.json();
+      if (payload.success) setBranches(payload.branches || []);
+    } catch (err) {
+      console.error('Failed to load branches', err);
+    }
+  };
+
+  useEffect(() => {
+    // Load branches when user data becomes available
+    if (userData) loadBranches().catch((e) => console.error('loadBranches failed', e));
+  }, [userData]);
+
+  const switchBranch = async (branchId: string) => {
+    try {
+      const res = await fetch(`/api/branches/${branchId}/switch`, { method: 'POST', credentials: 'include' });
+      const payload = await res.json();
+      if (payload.success) {
+        setActiveBranchId(branchId);
+        // reload data scoped to branch
+        await refreshSalesLogData();
+      } else {
+        console.warn('Switch branch failed', payload.error);
+      }
+    } catch (err) {
+      console.error('Switch branch error', err);
     }
   };
 
@@ -723,6 +944,27 @@ export default function TraderDashboard() {
                     </p>
                   </div>
                 </button>
+
+                {!isSidebarCollapsed && (
+                  <div className="mt-3 px-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Branch</p>
+                    <div className="mt-2 space-y-2">
+                      {branches.length === 0 && (
+                        <div className="text-[11px] text-white/40">No branches</div>
+                      )}
+                      {branches.map((b) => (
+                        <button
+                          key={b.id}
+                          onClick={() => switchBranch(b.id)}
+                          className={cn('w-full text-left px-3 py-2 rounded-lg hover:bg-white/5', activeBranchId === b.id ? 'bg-white/5' : '')}
+                        >
+                          <div className="text-sm font-semibold truncate">{b.name}</div>
+                          <div className="text-[11px] text-white/50 truncate">{b.appNumber}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Live Sync Indicator */}
 
@@ -1159,7 +1401,7 @@ export default function TraderDashboard() {
           className={cn(
             "mx-auto transition-all duration-200",
             activeTab === 'chat'
-              ? "p-0 max-w-none w-full flex-1 h-full flex flex-col pb-0"
+              ? "p-0 max-w-none w-full flex-1 h-full min-h-0 overflow-hidden flex flex-col pb-0"
               : "p-3 sm:p-4 md:p-8 max-w-7xl space-y-4 sm:space-y-6 md:space-y-8 pb-40 sm:pb-32 md:pb-8"
           )}
         >
@@ -1276,6 +1518,7 @@ export default function TraderDashboard() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
+              className={activeTab === 'chat' ? 'flex-1 min-h-0 h-full overflow-hidden flex flex-col' : undefined}
             >
               <React.Suspense fallback={<TabLoading />}>
                 {activeTab === 'overview' && (
@@ -1461,7 +1704,19 @@ export default function TraderDashboard() {
                 {activeTab === 'customers' && <TraderCustomers purchases={purchases} />}
                 {activeTab === 'suppliers' && <TraderSuppliers />}
                 {activeTab === 'bulkRequests' && <TraderBulkRequests traderId={dashboardTraderId} />}
-                {activeTab === 'chat' && <TraderChat traderId={dashboardTraderId} />}
+                {activeTab === 'chat' && (
+                  <TraderChat
+                    traderId={chatAccountNumber || dashboardTraderId}
+                    contacts={chatConversations}
+                    messages={chatMessages}
+                    selectedConversationId={selectedChatConversationId}
+                    onSelectConversation={handleChatConversationSelect}
+                    onSendMessage={handleChatSendMessage}
+                    onSendFile={handleChatSendFile}
+                    onAddContact={handleChatAddContact}
+                    onStartCall={handleChatStartCall}
+                  />
+                )}
                 {activeTab === 'support' && (
                   <SupportTab userId={actingUserId || dashboardTraderId} role="trader" />
                 )}
@@ -1882,9 +2137,7 @@ function MobileTabItem({
       onClick={onClick}
       className={cn(
         'flex flex-col items-center justify-center gap-2 p-4 rounded-[1.5rem] border-2 transition-all text-center relative',
-        active
-          ? 'bg-orange-600 border-orange-600 text-white shadow-lg'
-          : 'bg-white/5 border-white/5 text-white/40 hover:bg-white/10'
+        active ? 'text-orange-500 bg-white/5' : 'text-white/40 hover:text-white/60 hover:bg-white/5'
       )}
     >
       <div className={active ? 'text-white' : 'text-white/40 text-orange-500'}>{icon}</div>
