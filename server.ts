@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
-import initializeDatabase from './db.ts';
+import db from './db.ts';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
@@ -278,7 +278,6 @@ async function sendAppEmail(mailOptions: {
   }
 }
 
-const db = initializeDatabase();
 const accountStoreBackend = isPostgresAccountStoreEnabled() ? 'sqlite+postgres-accounts' : 'sqlite';
 
 function mirrorAccountState(userId: string) {
@@ -628,6 +627,8 @@ function serializeConversationSummary(row: any, currentAccountNumber: string) {
       `
     )
     .get(row.id) as any;
+  const mutedAccounts = String(row.mutedBy || '').split(',').filter(Boolean);
+  const blockedAccounts = String(row.blockedBy || '').split(',').filter(Boolean);
   return {
     id: row.id,
     accountNumber: peerAccountNumber,
@@ -646,6 +647,8 @@ function serializeConversationSummary(row: any, currentAccountNumber: string) {
     unreadCount: 0,
     profilePhoto: peerUser?.profilePhoto || null,
     lastSeen: presence?.lastSeen || null,
+    muted: mutedAccounts.includes(currentAccountNumber),
+    blocked: blockedAccounts.includes(currentAccountNumber),
   };
 }
 
@@ -662,6 +665,8 @@ function extractMessageEnvelope(payload: any) {
     attachmentMimeType: payload.attachmentMimeType || null,
     attachmentUrl: payload.attachmentUrl || null,
     attachmentSize: payload.attachmentSize || null,
+    replyToMessageId: payload.replyToMessageId || null,
+    reactions: payload.reactions || null,
     status: payload.status || 'sent',
     createdAt: payload.createdAt || new Date().toISOString(),
   };
@@ -677,6 +682,8 @@ function persistChatMessage(input: {
   attachmentMimeType?: string | null;
   attachmentUrl?: string | null;
   attachmentSize?: number | null;
+  replyToMessageId?: string | null;
+  reactions?: string | null;
   clientMessageId: string;
   status?: string;
 }) {
@@ -696,10 +703,12 @@ function persistChatMessage(input: {
         attachmentUrl,
         attachmentSize,
         clientMessageId,
+        replyToMessageId,
+        reactions,
         status,
         createdAt,
         updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   ).run(
     messageId,
@@ -713,6 +722,8 @@ function persistChatMessage(input: {
     input.attachmentUrl || null,
     input.attachmentSize || null,
     input.clientMessageId,
+    input.replyToMessageId || null,
+    input.reactions || null,
     input.status || 'sent',
     createdAt,
     createdAt
@@ -730,6 +741,8 @@ function persistChatMessage(input: {
     attachmentMimeType: input.attachmentMimeType || null,
     attachmentUrl: input.attachmentUrl || null,
     attachmentSize: input.attachmentSize || null,
+    replyToMessageId: input.replyToMessageId || null,
+    reactions: input.reactions || null,
     status: input.status || 'sent',
     createdAt,
   });
@@ -839,7 +852,7 @@ function attachMessengerRoutes() {
     const rows = db
       .prepare(
         `
-          SELECT id, accountNumberA, accountNumberB, updatedAt
+          SELECT id, accountNumberA, accountNumberB, mutedBy, blockedBy, updatedAt
           FROM chat_conversations
           WHERE accountNumberA = ? OR accountNumberB = ?
           ORDER BY updatedAt DESC
@@ -847,6 +860,88 @@ function attachMessengerRoutes() {
       )
       .all(accountNumber, accountNumber) as any[];
     res.json({ conversations: rows.map((row) => serializeConversationSummary(row, accountNumber)) });
+  });
+
+  app.put('/api/conversations/:id/mute', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const muted = Boolean(req.body?.muted);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    const existingMutedBy = String(conversation.mutedBy || '').split(',').filter(Boolean);
+    const nextMutedBy = new Set(existingMutedBy);
+    if (muted) nextMutedBy.add(accountNumber); else nextMutedBy.delete(accountNumber);
+    db.prepare(`UPDATE chat_conversations SET mutedBy = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      Array.from(nextMutedBy).join(','),
+      req.params.id,
+    );
+    res.json({ success: true });
+  });
+
+  app.post('/api/conversations/:id/clear', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    db.prepare(`DELETE FROM chat_messages WHERE conversationId = ?`).run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.put('/api/conversations/:id/block', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const blocked = Boolean(req.body?.blocked);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    const existingBlockedBy = String(conversation.blockedBy || '').split(',').filter(Boolean);
+    const nextBlockedBy = new Set(existingBlockedBy);
+    if (blocked) nextBlockedBy.add(accountNumber); else nextBlockedBy.delete(accountNumber);
+    db.prepare(`UPDATE chat_conversations SET blockedBy = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      Array.from(nextBlockedBy).join(','),
+      req.params.id,
+    );
+    res.json({ success: true });
+  });
+
+  app.delete('/api/conversations/:id', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const conversation = db
+      .prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?')
+      .get(req.params.id) as any;
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+    db.prepare('DELETE FROM chat_conversations WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
   });
 
   app.post('/api/conversations', authenticate, (req: any, res: Response) => {
@@ -906,6 +1001,7 @@ function attachMessengerRoutes() {
       senderAccountNumber: accountNumber,
       recipientAccountNumber: peerAccountNumber,
       text,
+      replyToMessageId: req.body?.replyToMessageId || null,
       clientMessageId: `msg-${uuidv4()}`,
       status: 'sent',
     });
@@ -943,7 +1039,7 @@ function attachMessengerRoutes() {
     const rows = db
       .prepare(
         `
-          SELECT id, conversationId, senderAccountNumber, recipientAccountNumber, text, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, clientMessageId, status, createdAt
+          SELECT id, conversationId, senderAccountNumber, recipientAccountNumber, text, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, clientMessageId, replyToMessageId, reactions, status, createdAt
           FROM chat_messages
           WHERE ${whereClause}
           ORDER BY createdAt DESC, id DESC
@@ -970,7 +1066,68 @@ function attachMessengerRoutes() {
         timestamp: row.createdAt,
         status: row.status,
         clientMessageId: row.clientMessageId,
+        replyToMessageId: row.replyToMessageId || null,
+        reactions: row.reactions ? JSON.parse(row.reactions) : undefined,
       })),
+    });
+  });
+
+  app.post('/api/messages/:id/reactions', authenticate, (req: any, res: Response) => {
+    const accountNumber = resolveChatAccountNumber(req.user);
+    const message = db.prepare('SELECT id, conversationId, senderAccountNumber, recipientAccountNumber, reactions FROM chat_messages WHERE id = ?').get(req.params.id) as any;
+    if (!message) {
+      res.status(404).json({ error: 'Message not found' });
+      return;
+    }
+
+    const conversation = db.prepare('SELECT id, accountNumberA, accountNumberB FROM chat_conversations WHERE id = ?').get(message.conversationId) as any;
+    if (!conversation || ![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+      res.status(403).json({ error: 'Conversation access denied' });
+      return;
+    }
+
+    const emoji = String(req.body?.emoji || '').trim();
+    if (!emoji) {
+      res.status(400).json({ error: 'Emoji is required' });
+      return;
+    }
+
+    const currentReactions = message.reactions ? JSON.parse(message.reactions) : {};
+    const users = Array.isArray(currentReactions[emoji]) ? currentReactions[emoji] : [];
+    const nextUsers = users.includes(accountNumber)
+      ? users.filter((userId: string) => userId !== accountNumber)
+      : [...users, accountNumber];
+
+    const nextReactions = { ...currentReactions };
+    if (nextUsers.length > 0) {
+      nextReactions[emoji] = nextUsers;
+    } else {
+      delete nextReactions[emoji];
+    }
+
+    const serialized = JSON.stringify(nextReactions);
+    const updatedAt = new Date().toISOString();
+    db.prepare(`UPDATE chat_messages SET reactions = ?, updatedAt = ? WHERE id = ?`).run(serialized, updatedAt, req.params.id);
+
+    const updatedMessage = db.prepare('SELECT id, conversationId, senderAccountNumber, recipientAccountNumber, text, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, clientMessageId, replyToMessageId, reactions, status, createdAt FROM chat_messages WHERE id = ?').get(req.params.id) as any;
+    res.json({
+      message: {
+        id: updatedMessage.id,
+        conversationId: updatedMessage.conversationId,
+        senderId: updatedMessage.senderAccountNumber === accountNumber ? 'me' : updatedMessage.senderAccountNumber,
+        text: updatedMessage.text || undefined,
+        attachment: updatedMessage.attachmentType ? {
+          type: updatedMessage.attachmentType,
+          name: updatedMessage.attachmentName,
+          mimeType: updatedMessage.attachmentMimeType,
+          size: updatedMessage.attachmentSize,
+          url: updatedMessage.attachmentUrl,
+        } : undefined,
+        timestamp: updatedMessage.createdAt,
+        status: updatedMessage.status,
+        replyToMessageId: updatedMessage.replyToMessageId || null,
+        reactions: updatedMessage.reactions ? JSON.parse(updatedMessage.reactions) : undefined,
+      },
     });
   });
 
@@ -1002,6 +1159,7 @@ function attachMessengerRoutes() {
       attachmentMimeType: req.file.mimetype,
       attachmentUrl: fileUrl,
       attachmentSize: req.file.size,
+      replyToMessageId: req.body?.replyToMessageId || null,
       clientMessageId: `attach-${uuidv4()}`,
       status: 'sent',
     });
@@ -1147,6 +1305,79 @@ function initializeMessengerSocketServer(httpServer: HttpServer) {
               targetSocket.send(JSON.stringify(relayPayload));
             }
           }
+        }
+
+        // New WebRTC signaling message forms used by the client hook
+        if (payload.type === 'call_offer') {
+          // payload: { type: 'call_offer', conversationId, toAccountNumber, sdp, callType }
+          const fromAccountNumber = accountNumber;
+          const targetSockets = chatSocketsByAccount.get(payload.toAccountNumber) || new Set();
+          if (targetSockets.size === 0) {
+            socket.send(JSON.stringify({ type: 'call_failed', conversationId: payload.conversationId, reason: 'offline' }));
+          } else {
+            for (const targetSocket of Array.from(targetSockets)) {
+              if (targetSocket.readyState === 1) {
+                targetSocket.send(JSON.stringify({
+                  type: 'call_offer',
+                  conversationId: payload.conversationId,
+                  fromAccountNumber,
+                  sdp: payload.sdp,
+                  callType: payload.callType,
+                }));
+              }
+            }
+          }
+          return;
+        }
+
+        if (payload.type === 'call_answer') {
+          // payload: { type: 'call_answer', conversationId, toAccountNumber, sdp }
+          const fromAccountNumber = accountNumber;
+          const targetSockets = chatSocketsByAccount.get(payload.toAccountNumber) || new Set();
+          for (const targetSocket of Array.from(targetSockets)) {
+            if (targetSocket.readyState === 1) {
+              targetSocket.send(JSON.stringify({
+                type: 'call_answer',
+                conversationId: payload.conversationId,
+                fromAccountNumber,
+                sdp: payload.sdp,
+              }));
+            }
+          }
+          return;
+        }
+
+        if (payload.type === 'call_ice_candidate') {
+          // payload: { type: 'call_ice_candidate', conversationId, toAccountNumber, candidate }
+          const fromAccountNumber = accountNumber;
+          const targetSockets = chatSocketsByAccount.get(payload.toAccountNumber) || new Set();
+          for (const targetSocket of Array.from(targetSockets)) {
+            if (targetSocket.readyState === 1) {
+              targetSocket.send(JSON.stringify({
+                type: 'call_ice_candidate',
+                conversationId: payload.conversationId,
+                fromAccountNumber,
+                candidate: payload.candidate,
+              }));
+            }
+          }
+          return;
+        }
+
+        if (payload.type === 'call_end') {
+          // payload: { type: 'call_end', conversationId, toAccountNumber }
+          const fromAccountNumber = accountNumber;
+          const targetSockets = chatSocketsByAccount.get(payload.toAccountNumber) || new Set();
+          for (const targetSocket of Array.from(targetSockets)) {
+            if (targetSocket.readyState === 1) {
+              targetSocket.send(JSON.stringify({
+                type: 'call_end',
+                conversationId: payload.conversationId,
+                fromAccountNumber,
+              }));
+            }
+          }
+          return;
         }
       } catch (error) {
         console.error('Chat socket message error', error);
@@ -1307,7 +1538,7 @@ function createRefreshSession(user: any, req?: Request) {
   return { token: rawToken, tokenId, expiresAt };
 }
 
-function clearAuthCookies(res: Response) {
+export function clearAuthCookies(res: Response) {
   const clearOpts = { httpOnly: true, secure: isProduction, sameSite: config.cookieSameSite };
   res.clearCookie('nexus_auth_token', clearOpts);
   res.clearCookie('nexus_refresh_token', clearOpts);
@@ -1315,7 +1546,7 @@ function clearAuthCookies(res: Response) {
   res.clearCookie('nexus_account_mode', clearOpts);
 }
 
-function issueAuthCookies(req: Request, res: Response, user: any) {
+export function issueAuthCookies(req: Request, res: Response, user: any) {
   const accessToken = createToken(user);
   const refreshSession = createRefreshSession(user, req);
   res.cookie('nexus_auth_token', accessToken, accessCookieOptions);
@@ -1323,7 +1554,7 @@ function issueAuthCookies(req: Request, res: Response, user: any) {
   return { accessToken, refreshTokenId: refreshSession.tokenId };
 }
 
-function revokeUserRefreshSessions(userId: string) {
+export function revokeUserRefreshSessions(userId: string) {
   db.prepare(
     `
     UPDATE refresh_tokens
@@ -1333,7 +1564,7 @@ function revokeUserRefreshSessions(userId: string) {
   ).run(userId);
 }
 
-function consumeRefreshToken(rawRefreshToken: string | undefined, req: Request, res: Response) {
+export function consumeRefreshToken(rawRefreshToken: string | undefined, req: Request, res: Response) {
   if (!rawRefreshToken) return null;
 
   const row = db
@@ -1380,7 +1611,7 @@ function consumeRefreshToken(rawRefreshToken: string | undefined, req: Request, 
   return { user, accessToken };
 }
 
-function publicUser(user: any) {
+export function publicUser(user: any) {
   if (!user) return null;
   const { password, metadata, ...safe } = user;
   let metadataFields: Record<string, any> = {};
@@ -3736,7 +3967,7 @@ function getConfig() {
   };
 }
 
-function logSystem(message: string, level = 'info', source = 'api', userId?: string) {
+export function logSystem(message: string, level = 'info', source = 'api', userId?: string) {
   db.prepare(
     `
     INSERT INTO system_logs (id, message, level, source, userId, createdAt)
@@ -3777,7 +4008,7 @@ function escapeHtml(value: any) {
     .replace(/'/g, '&#39;');
 }
 
-function appBaseUrl(req: any) {
+export function appBaseUrl(req: any) {
   const configured = String(process.env.APP_URL || '')
     .trim()
     .replace(/\/+$/, '');
@@ -3846,7 +4077,7 @@ function ensureWalletActionAllowed(userId: string) {
   return Boolean(userId) && !userHasDeniedLoginHold(userId) && !userHasPendingLoginHold(userId);
 }
 
-function createLoginAlertRecord(user: any, req: any) {
+export function createLoginAlertRecord(user: any, req: any) {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
   const alertId = uuidv4();
@@ -3909,7 +4140,7 @@ function renderLoginAlertResponse(message: string, success = true) {
   `;
 }
 
-async function sendLoginAlertEmail(req: any, user: any, token: string) {
+export async function sendLoginAlertEmail(req: any, user: any, token: string) {
   assertEmailConfigured('Login alert email');
 
   const time = new Date().toLocaleString();
@@ -3964,7 +4195,7 @@ async function createLoginAlertNotification(user: any, message: string, type = '
   ).run(uuidv4(), user.id, 'Login security alert', message, type);
 }
 
-async function processLoginAlertAction(req: any, res: any, action: 'confirm' | 'decline') {
+export async function processLoginAlertAction(req: any, res: any, action: 'confirm' | 'decline') {
   const token = String(req.query.token || '').trim();
   if (!token) {
     return res.status(400).send(renderLoginAlertResponse('Missing or invalid token.', false));
@@ -4060,7 +4291,7 @@ async function sendPasswordResetEmail(req: any, user: any, resetUrl: string) {
   });
 }
 
-async function sendEmailVerificationEmail(req: any, user: any, verificationUrl: string) {
+export async function sendEmailVerificationEmail(req: any, user: any, verificationUrl: string) {
   const isTrader = user.role === 'trader';
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 24px; color: #1f2937;">
@@ -6535,7 +6766,7 @@ app.post('/api/branches/:branchId/switch', authenticate, (req: any, res): any =>
   }
 });
 
-async function findVerificationToken(token: string, email?: string) {
+export async function findVerificationToken(token: string, email?: string) {
   if (!token) return null;
   let query = `
     SELECT evt.*, u.email, u.name, u.emailVerified
@@ -6551,7 +6782,7 @@ async function findVerificationToken(token: string, email?: string) {
   return db.prepare(query).get(...params) as any;
 }
 
-function validateVerificationTokenRow(row: any) {
+export function validateVerificationTokenRow(row: any) {
   if (!row) return { valid: false, error: 'Invalid verification token' };
   if (row.verifiedAt && row.emailVerified) return { valid: true, alreadyVerified: true };
   if (row.verifiedAt)
@@ -6561,7 +6792,7 @@ function validateVerificationTokenRow(row: any) {
   return { valid: true };
 }
 
-async function completeVerification(row: any): Promise<any> {
+export async function completeVerification(row: any): Promise<any> {
   db.transaction(() => {
     db.prepare(
       'UPDATE users SET emailVerified = 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?'

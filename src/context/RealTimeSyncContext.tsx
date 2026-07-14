@@ -1,4 +1,4 @@
-import React, { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getProducts } from '../services/productService';
 import { getPurchases } from '../services/purchaseService';
 import { getTransactions } from '../services/transactionService';
@@ -262,14 +262,14 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
     markFresh();
   }, [markFresh]);
 
-  const value: RealTimeSyncContextType = {
+  const value = useMemo<RealTimeSyncContextType>(() => ({
     syncState,
     subscribeToPurchases,
     subscribeToTransactions,
     subscribeToProducts,
     subscribeToUserData,
     triggerSync,
-  };
+  }), [syncState, subscribeToPurchases, subscribeToTransactions, subscribeToProducts, subscribeToUserData, triggerSync]);
 
   return <RealTimeSyncContext.Provider value={value}>{children}</RealTimeSyncContext.Provider>;
 };

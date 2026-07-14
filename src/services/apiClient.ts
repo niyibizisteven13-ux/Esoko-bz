@@ -35,12 +35,25 @@ function buildQueryString(params: Record<string, string | number | boolean | und
 }
 
 export function getAuthToken(): string | null {
-  // Auth tokens are stored in httpOnly cookies instead of localStorage.
-  return null;
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem('auth_token');
+  } catch {
+    return null;
+  }
 }
 
 export function setAuthToken(_token: string | null) {
-  // No client-side token persistence. Server auth uses secure cookies.
+  if (typeof window === 'undefined') return;
+  try {
+    if (_token === null) {
+      localStorage.removeItem('auth_token');
+    } else {
+      localStorage.setItem('auth_token', _token);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 async function request<T>(
@@ -62,8 +75,8 @@ async function request<T>(
     delete headers['Content-Type'];
   }
 
-  // Add Authorization header only if explicitly provided
-  const token = options.token;
+  // Add Authorization header from options or stored token
+  const token = options.token ?? getAuthToken();
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -74,6 +87,17 @@ async function request<T>(
     body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'include', // Include cookies
   });
+
+  // Handle 401 Unauthorized - clear token and redirect to login
+  if (response.status === 401) {
+    setAuthToken(null);
+    // Dispatch custom event to notify app of auth failure
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { path } }));
+    }
+    const errorBody = await response.text();
+    throw new Error(`Unauthorized (401) - Session expired. Please log in again.`);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();

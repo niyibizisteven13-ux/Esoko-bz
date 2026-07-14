@@ -2,9 +2,7 @@
  * Database test helpers - setup and cleanup for test isolation
  */
 
-import initializeDatabase from '../../db';
-
-const db = initializeDatabase();
+import db from '../../db';
 
 export async function setupTestDb(): Promise<void> {
   // No-op for now; server uses the same test database file.

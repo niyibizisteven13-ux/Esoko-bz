@@ -5,7 +5,7 @@
 import type { Application } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-import initializeDatabase from '../../db';
+import db from '../../db';
 
 export interface TestUser {
   id: string;
@@ -13,8 +13,6 @@ export interface TestUser {
   role: string;
   token: string;
 }
-
-const db = initializeDatabase();
 
 export async function createTestUser(
   app: Application,

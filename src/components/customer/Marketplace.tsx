@@ -58,6 +58,7 @@ type MarketplaceProps = {
   initialSearchMode?: 'products' | 'shops';
   initialNearby?: boolean;
   initialMapView?: boolean;
+  onAskTrader?: (product: Product, message?: string) => void | Promise<void>;
 };
 
 function normalizeMediaBlocks(product: any): MediaBlock[] {
@@ -186,6 +187,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   initialSearchMode = 'products',
   initialNearby = false,
   initialMapView = false,
+  onAskTrader,
 }) => {
   const { t } = useLanguage();
   const [products, setProducts] = useState<Product[]>([]);
@@ -416,24 +418,28 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     if (!commentProduct || !commentText.trim()) return;
     setCommentSaving(true);
     try {
-      const currentUser = auth.currentUser as any;
-      await createTicket({
-        title: `Product question: ${commentProduct.title}`,
-        description: [
-          commentText.trim(),
-          '',
-          `Product: ${commentProduct.title}`,
-          `Seller: ${commentProduct.seller}`,
-          `Product ID: ${commentProduct.id}`,
-          commentProduct.traderId ? `Trader ID: ${commentProduct.traderId}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        status: 'open',
-        priority: 'medium',
-        category: 'product-question',
-        createdBy: currentUser?.uid || currentUser?.id || 'customer',
-      });
+      if (typeof onAskTrader === 'function') {
+        await onAskTrader(commentProduct, commentText.trim());
+      } else {
+        const currentUser = auth.currentUser as any;
+        await createTicket({
+          title: `Product question: ${commentProduct.title}`,
+          description: [
+            commentText.trim(),
+            '',
+            `Product: ${commentProduct.title}`,
+            `Seller: ${commentProduct.seller}`,
+            `Product ID: ${commentProduct.id}`,
+            commentProduct.traderId ? `Trader ID: ${commentProduct.traderId}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          status: 'open',
+          priority: 'medium',
+          category: 'product-question',
+          createdBy: currentUser?.uid || currentUser?.id || 'customer',
+        });
+      }
       setCommentText('');
       setCommentProduct(null);
       setNotice('Your question was sent.');
@@ -458,9 +464,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-screen">
-      {/* Sticky Header Section */}
-      <div className="sticky top-0 z-30 bg-[#050505] pb-4">
+    // Root fills whatever height the parent gives it (see CustomerDashboard: h-[calc(100dvh-56px)] / md:h-[100dvh]).
+    // A single scroll container lives inside this box so the sticky bar has one scroller to pin against
+    // and each card can snap to exactly one viewport height, TikTok-style.
+    <div className="flex flex-col h-full">
+      {/* Sticky/Pinned Header Section */}
+      <div className="sticky top-0 z-30 bg-[#050505] pb-4 shrink-0">
         <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0 pt-4">
           <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
             <div className="relative flex-1">
@@ -566,69 +575,80 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         </div>
       </div>
 
-      {/* Scrollable Content Area with Snap */}
-      <div className="flex-1 overflow-y-auto scroll-snap-mandatory" style={{ scrollSnapType: 'y mandatory' }}>
+      {/* TikTok-style full-height snap scroller: one scroll container, one card per viewport */}
+      <div
+        className="flex-1 min-h-0 overflow-y-scroll snap-y snap-mandatory overscroll-y-contain"
+        style={{ scrollSnapType: 'y mandatory' }}
+      >
         {mapView ? (
-          <div className="mx-auto mb-6 w-full max-w-[980px] px-3 md:px-0">
-            <MapView
-              traders={traderRecords}
-              userLocation={userLocation}
-              radius={nearbyOnly ? 30 : undefined}
-              onTraderClick={(trader) => {
-                if (trader?.id) {
-                  setShopTraderId(String(trader.id));
-                  setSearchMode('shops');
-                }
-              }}
-              searchQuery={query}
-              allProducts={products}
-            />
+          <div className="snap-start h-full w-full flex items-center justify-center px-3 md:px-0">
+            <div className="mx-auto w-full max-w-[980px]">
+              <MapView
+                traders={traderRecords}
+                userLocation={userLocation}
+                radius={nearbyOnly ? 30 : undefined}
+                onTraderClick={(trader) => {
+                  if (trader?.id) {
+                    setShopTraderId(String(trader.id));
+                    setSearchMode('shops');
+                  }
+                }}
+                searchQuery={query}
+                allProducts={products}
+              />
+            </div>
           </div>
         ) : null}
 
         {error ? (
-          <div className="mx-auto max-w-[520px] rounded-3xl border border-red-500/20 bg-red-500/10 p-6 text-sm font-bold text-red-100">
-            {error}
+          <div className="snap-start h-full w-full flex items-center justify-center px-3">
+            <div className="mx-auto max-w-[520px] rounded-3xl border border-red-500/20 bg-red-500/10 p-6 text-sm font-bold text-red-100">
+              {error}
+            </div>
           </div>
         ) : null}
 
         {!error && displayProducts.length === 0 ? (
-          <div className="mx-auto max-w-[520px] rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
-            <Package className="mx-auto mb-4 text-white/20" size={44} />
-            <p className="text-lg font-black text-white">No matching listings</p>
-            <p className="mt-2 text-sm font-bold text-white/45">Try a different product, shop, or category.</p>
+          <div className="snap-start h-full w-full flex items-center justify-center px-3">
+            <div className="mx-auto max-w-[520px] rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
+              <Package className="mx-auto mb-4 text-white/20" size={44} />
+              <p className="text-lg font-black text-white">No matching listings</p>
+              <p className="mt-2 text-sm font-bold text-white/45">Try a different product, shop, or category.</p>
+            </div>
           </div>
         ) : null}
 
-        <div className="min-h-full h-auto px-3 pr-3 md:px-0 md:pr-0 pb-[calc(7rem+env(safe-area-inset-bottom))]">
-          <div className="flex flex-col items-center gap-6">
-          {displayProducts.map((product) => {
-            const background = product.mediaBlocks.find((block) => block.type === 'video' || block.type === 'image');
-            const textOverlays = product.mediaBlocks.filter(
-              (block) => block.type === 'text' || (!block.url && block.type !== 'image' && block.type !== 'video')
-            );
-            const isShopCard = searchMode === 'shops' && !shopTraderId;
-            const liveSession = getLiveSessionForProduct(product);
+        {displayProducts.map((product) => {
+          const background = product.mediaBlocks.find((block) => block.type === 'video' || block.type === 'image');
+          const textOverlays = product.mediaBlocks.filter(
+            (block) => block.type === 'text' || (!block.url && block.type !== 'image' && block.type !== 'video')
+          );
+          const isShopCard = searchMode === 'shops' && !shopTraderId;
+          const liveSession = getLiveSessionForProduct(product);
 
-            return (
+          return (
+            <div
+              key={`${product.id}-slide`}
+              className="snap-start snap-always h-full w-full flex items-center justify-center px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-0"
+            >
               <motion.article
                 key={`${product.id}-${searchMode}-${shopTraderId || 'all'}`}
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.35 }}
                 className={cn(
-                  'snap-start',
                   'mx-auto w-full max-w-[420px]',
-                  'overflow-visible',
+                  'overflow-hidden',
                   'rounded-[2rem]',
                   'border border-white/10',
                   'bg-[#0f0f0f]',
                   'shadow-2xl shadow-black/40',
                   'relative',
-                  'h-auto md:h-[82vh]'
+                  'h-full md:h-[85vh]',
+                  'flex flex-col md:block'
                 )}
               >
-                <div className="relative h-[42vh] min-h-[260px] md:h-[58vh] md:min-h-[420px] overflow-hidden bg-black text-white">
+                <div className="relative h-[42vh] min-h-[220px] md:h-[58vh] md:min-h-[420px] overflow-hidden bg-black text-white shrink-0">
                   {background?.type === 'image' && background.url ? (
                     <img
                       src={background.url}
@@ -684,7 +704,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   )}
                 </div>
 
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-[42vh] min-h-[260px] md:h-[58vh] md:min-h-[420px] bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-[42vh] min-h-[220px] md:h-[58vh] md:min-h-[420px] bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
                     <div className="pointer-events-none absolute left-0 right-0 top-0 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -734,7 +754,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     )}
                   </div>
 
-                  <div className="relative md:absolute inset-x-0 md:top-[58vh] top-auto bottom-0 bg-[#0f0f0f] p-4 z-10 flex flex-col justify-between overflow-hidden">
+                  <div className="relative md:absolute inset-x-0 md:top-[58vh] top-auto bottom-0 bg-[#0f0f0f] p-4 z-10 flex flex-col justify-between flex-1 min-h-0 overflow-y-auto md:overflow-visible">
                     <div>
                       <p className="line-clamp-2 text-[12px] leading-5 text-white/75">{product.description}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -784,8 +804,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       {isShopCard ? <Store size={20} /> : <Eye size={20} />}
                     </button>
 
-                    <button
-                      onClick={() => setCommentProduct(product)}
+                                  <button
+                      onClick={() => {
+                        if (typeof onAskTrader === 'function') {
+                          void onAskTrader(product);
+                        } else {
+                          setCommentProduct(product);
+                        }
+                      }}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
                       aria-label="Ask seller"
                       title={ui.commentsText}
@@ -853,10 +879,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   </div>
 
               </motion.article>
-            );
-          })}
-          </div>
-        </div>
+            </div>
+          );
+        })}
       </div>
 
       <AnimatePresence>
@@ -877,7 +902,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
             product={selectedProduct}
             onClose={() => setSelectedProduct(null)}
             onAsk={() => {
-              setCommentProduct(selectedProduct);
+              if (typeof onAskTrader === 'function') {
+                void onAskTrader(selectedProduct);
+              } else {
+                setCommentProduct(selectedProduct);
+              }
               setSelectedProduct(null);
             }}
             onBuy={() => {

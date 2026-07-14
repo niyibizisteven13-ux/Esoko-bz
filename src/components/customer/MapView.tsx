@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -23,7 +23,16 @@ const CircleAny = Circle as any;
 const PolylineAny = Polyline as any;
 import { useLanguage } from '../../context/LanguageContext';
 import { cn } from '../../lib/utils';
-import { calculateDistance, Coordinates, openGoogleMapsDirections } from '../../lib/locationUtils';
+import {
+  calculateDistance,
+  Coordinates,
+  openGoogleMapsDirections,
+  getRoute,
+  watchUserPosition,
+  distanceToRouteMeters,
+  formatDistanceMeters,
+  RouteStep,
+} from '../../lib/locationUtils';
 
 // Fix for default marker icons in React
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -158,47 +167,11 @@ function getCompassDirection(bearing: number): string {
   return directions[index];
 }
 
-function getTurnCue(bearing: number): string {
-  if (bearing > 22.5 && bearing <= 67.5) return 'Turn slightly right';
-  if (bearing > 67.5 && bearing <= 112.5) return 'Turn right';
-  if (bearing > 112.5 && bearing <= 157.5) return 'Turn sharply right';
-  if (bearing > 157.5 && bearing <= 202.5) return 'Turn back';
-  if (bearing > 202.5 && bearing <= 247.5) return 'Turn sharply left';
-  if (bearing > 247.5 && bearing <= 292.5) return 'Turn left';
-  if (bearing > 292.5 && bearing <= 337.5) return 'Turn slightly left';
-  return 'Go straight';
-}
-
-function getStepInstruction(step: any): string {
-  const type = step?.maneuver?.type || '';
-  const modifier = step?.maneuver?.modifier;
-  const name = step?.name || '';
-
-  if (type === 'depart') {
-    return `Head ${modifier ? modifier + ' ' : ''}${name || 'onto the road'}`.trim();
-  }
-  if (type === 'turn' || type === 'new name') {
-    return `Turn ${modifier || ''}${name ? ` onto ${name}` : ''}`.trim();
-  }
-  if (type === 'arrive') {
-    return 'You are arriving at your destination';
-  }
-  if (type === 'roundabout') {
-    return `Enter the roundabout${step?.maneuver?.exit ? ` and take exit ${step.maneuver.exit}` : ''}${name ? ` onto ${name}` : ''}`.trim();
-  }
-  return `${type ? `${type} ${modifier || ''}` : 'Continue'}${name ? ` onto ${name}` : ''}`.trim();
-}
-
-function getStepDistanceText(step: any): string {
-  if (!step?.distance && step?.distance !== 0) return '';
-  const meters = Math.round(step.distance);
-  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`;
-}
-
-function estimateDrivingTimeMinutes(distanceKm: number): number {
-  const averageKmph = 60;
-  return Math.max(1, Math.round((distanceKm / averageKmph) * 60));
-}
+// Distance, in meters, within which we consider the user to have reached a
+// maneuver point and advance to the next step.
+const STEP_ADVANCE_THRESHOLD_METERS = 40;
+// Distance, in meters, off the planned route line before we trigger a reroute.
+const OFF_ROUTE_THRESHOLD_METERS = 60;
 
 interface MapViewProps {
   traders: any[];
@@ -269,67 +242,84 @@ export default function MapView({
   }, [mappedTraders, selectedTrader]);
 
   const selectedCoordinates = selectedTrader ? getTraderCoordinates(selectedTrader) : null;
-  const routeDistance = userLocation && selectedCoordinates ? calculateDistance(userLocation, selectedCoordinates) : null;
-  const routeBearing = userLocation && selectedCoordinates ? calculateBearing(userLocation, selectedCoordinates) : null;
-  const routeDirection = routeBearing !== null ? getCompassDirection(routeBearing) : null;
   const routePoints = userLocation && selectedCoordinates ? [[userLocation.lat, userLocation.lng], [selectedCoordinates.lat, selectedCoordinates.lng]] : [];
   const isNavigationMode = routePoints.length === 2 && traders.length === 1;
-  const [routeAnnounced, setRouteAnnounced] = useState(false);
-  const [routeGeometry, setRouteGeometry] = useState<Array<[number, number]>>([]);
-  const [routeSteps, setRouteSteps] = useState<any[]>([]);
+
+  // --- Live position tracking -------------------------------------------
+  // While in navigation mode we track the device's live GPS position rather
+  // than relying on the one-time snapshot passed in via `userLocation`.
+  const [liveLocation, setLiveLocation] = useState<Coordinates | null>(userLocation);
+  const liveLocationRef = useRef<Coordinates | null>(userLocation);
+
+  useEffect(() => {
+    liveLocationRef.current = liveLocation;
+  }, [liveLocation]);
+
+  useEffect(() => {
+    if (!isNavigationMode) {
+      setLiveLocation(userLocation);
+      return;
+    }
+    setLiveLocation(userLocation);
+    const stopWatching = watchUserPosition(
+      (coords) => setLiveLocation(coords),
+      (error) => console.warn('Live location tracking error:', error)
+    );
+    return () => stopWatching();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNavigationMode]);
+
+  const routeDirection = useMemo(() => {
+    if (!liveLocation || !selectedCoordinates) return null;
+    return getCompassDirection(calculateBearing(liveLocation, selectedCoordinates));
+  }, [liveLocation, selectedCoordinates]);
+
+  // --- Route fetching (Mapbox, with OSRM fallback baked into getRoute) --
+  const [routeGeometry, setRouteGeometry] = useState<Coordinates[]>([]);
+  const [routeSteps, setRouteSteps] = useState<RouteStep[]>([]);
   const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
   const [routeDurationMinutes, setRouteDurationMinutes] = useState<number | null>(null);
   const [routeFetchError, setRouteFetchError] = useState<string | null>(null);
+  const [routeSource, setRouteSource] = useState<'mapbox' | 'osrm' | 'straight-line' | null>(null);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [rerouteNonce, setRerouteNonce] = useState(0);
+
+  const routeGeometryPositions = useMemo<Array<[number, number]>>(
+    () => routeGeometry.map((c) => [c.lat, c.lng]),
+    [routeGeometry]
+  );
 
   useEffect(() => {
-    if (!isNavigationMode || !selectedCoordinates || !userLocation) {
+    if (!isNavigationMode || !selectedCoordinates) {
       setRouteGeometry([]);
       setRouteSteps([]);
       setRouteDistanceKm(null);
       setRouteDurationMinutes(null);
       setRouteFetchError(null);
-      setRouteAnnounced(false);
+      setRouteSource(null);
+      setCurrentStepIndex(0);
       return;
     }
 
-    const controller = new AbortController();
-    const origin = `${userLocation.lng},${userLocation.lat}`;
-    const destination = `${selectedCoordinates.lng},${selectedCoordinates.lat}`;
-    const url = `https://router.project-osrm.org/route/v1/driving/${origin};${destination}?overview=full&geometries=geojson&steps=true&annotations=true`;
+    const origin = liveLocationRef.current || userLocation;
+    if (!origin) return;
 
+    let cancelled = false;
     setRouteFetchError(null);
 
-    fetch(url, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Routing service returned ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data) => {
-        const route = data?.routes?.[0];
-        if (!route) {
-          throw new Error('No route found');
-        }
-
-        const geometry = (route.geometry?.coordinates || []).map(
-          ([lng, lat]: [number, number]) => [lat, lng] as [number, number]
-        );
-
-        const steps = (route.legs?.[0]?.steps || []).map((step: any) => ({
-          ...step,
-          instruction: getStepInstruction(step),
-        }));
-
-        setRouteGeometry(geometry);
-        setRouteSteps(steps);
-        setRouteDistanceKm(route.distance / 1000);
-        setRouteDurationMinutes(Math.max(1, Math.round(route.duration / 60)));
-        setRouteAnnounced(false);
+    getRoute(origin, selectedCoordinates)
+      .then((route) => {
+        if (cancelled) return;
+        setRouteGeometry(route.geometry);
+        setRouteSteps(route.steps);
+        setRouteDistanceKm(route.distanceKm);
+        setRouteDurationMinutes(route.durationMinutes);
+        setRouteSource(route.source);
+        setCurrentStepIndex(0);
       })
       .catch((error) => {
-        if (error.name !== 'AbortError') {
-          setRouteFetchError(error.message || 'Unable to fetch route');
+        if (!cancelled) {
+          setRouteFetchError(error?.message || 'Unable to fetch route');
           setRouteGeometry([]);
           setRouteSteps([]);
           setRouteDistanceKm(null);
@@ -337,57 +327,81 @@ export default function MapView({
         }
       });
 
-    return () => controller.abort();
-  }, [isNavigationMode, selectedCoordinates, userLocation]);
+    return () => {
+      cancelled = true;
+    };
+    // rerouteNonce is the deliberate trigger for a fresh fetch when the user drifts off-route
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNavigationMode, selectedCoordinates, rerouteNonce]);
 
+  // Advance to the next step once the live position is close to the next maneuver.
   useEffect(() => {
-    if (!isNavigationMode || routeSteps.length === 0 || routeAnnounced) return;
+    if (!isNavigationMode || !liveLocation || routeSteps.length === 0) return;
+    const next = routeSteps[currentStepIndex + 1];
+    if (!next) return;
+    const distanceToNextMeters = calculateDistance(liveLocation, next.location) * 1000;
+    if (distanceToNextMeters < STEP_ADVANCE_THRESHOLD_METERS) {
+      setCurrentStepIndex((i) => Math.min(i + 1, routeSteps.length - 1));
+    }
+  }, [liveLocation, isNavigationMode, routeSteps, currentStepIndex]);
+
+  // Trigger a reroute if the live position drifts too far from the planned route line.
+  useEffect(() => {
+    if (!isNavigationMode || !liveLocation || routeGeometry.length < 2) return;
+    const offRouteMeters = distanceToRouteMeters(liveLocation, routeGeometry);
+    if (offRouteMeters > OFF_ROUTE_THRESHOLD_METERS) {
+      setRerouteNonce((n) => n + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveLocation]);
+
+  // Speak the current maneuver whenever it changes (first load, step advance, or reroute).
+  useEffect(() => {
+    if (!isNavigationMode || routeSteps.length === 0) return;
     if (!window.speechSynthesis) return;
-
-    const nextInstruction = routeSteps[0]?.instruction || 'Head toward your destination';
-    const distanceText = routeDistanceKm !== null ? (routeDistanceKm >= 1 ? `${routeDistanceKm.toFixed(1)} kilometers` : `${Math.round(routeDistanceKm * 1000)} meters`) : '';
-    const instruction = `${nextInstruction}${distanceText ? `, ${distanceText}` : ''}${routeDurationMinutes ? `, about ${routeDurationMinutes} minutes by car` : ''}`;
-
-    const utterance = new SpeechSynthesisUtterance(instruction);
+    const step = routeSteps[currentStepIndex];
+    if (!step) return;
+    const distanceText = formatDistanceMeters(step.distanceMeters);
+    const utterance = new SpeechSynthesisUtterance(
+      `${step.instruction}${distanceText ? `, ${distanceText}` : ''}`
+    );
     utterance.rate = 1;
     utterance.pitch = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
-    setRouteAnnounced(true);
-  }, [isNavigationMode, routeSteps, routeAnnounced, routeDistanceKm, routeDurationMinutes]);
+  }, [currentStepIndex, routeSteps, isNavigationMode]);
+
+  const currentStep = routeSteps[currentStepIndex] || null;
+  const nextStep = routeSteps[currentStepIndex + 1] || null;
+
+  const remainingDistanceKm = useMemo(() => {
+    if (!routeSteps.length) return routeDistanceKm;
+    const remainingMeters = routeSteps
+      .slice(currentStepIndex)
+      .reduce((sum, s) => sum + (s.distanceMeters || 0), 0);
+    return remainingMeters / 1000;
+  }, [routeSteps, currentStepIndex, routeDistanceKm]);
 
   const getNavigationLabel = () => {
-    if (!routeDistanceKm && routeDistanceKm !== 0) return 'Navigation ready';
-    if (routeDistanceKm !== null && routeDistanceKm >= 1)
+    if (currentStep) return currentStep.instruction;
+    if (remainingDistanceKm === null) return 'Navigation ready';
+    if (remainingDistanceKm >= 1)
       return `Drive ${routeDirection || 'toward'} ${selectedTrader?.businessName || selectedTrader?.name}`;
-    if (routeDistanceKm !== null && routeDistanceKm >= 0.25) return 'Continue to destination';
+    if (remainingDistanceKm >= 0.25) return 'Continue to destination';
     return 'You are almost there';
   };
 
   const getNavigationDetails = () => {
-    if (routeDistanceKm === null) return '';
-    const distanceText = routeDistanceKm >= 1 ? `${routeDistanceKm.toFixed(1)} km` : `${Math.round(routeDistanceKm * 1000)} m`;
-    const timeText = routeDurationMinutes ? `${routeDurationMinutes} min` : '';
-    return routeDistanceKm >= 1
-      ? `${distanceText} · ${timeText} · ${routeDirection}`
-      : `${distanceText} · ${timeText}`;
-  };
-
-  const getCurrentStepText = () => {
-    const currentStep = routeSteps[0];
-    if (!currentStep) return '';
-    const stepText = currentStep.instruction || 'Continue toward your destination';
-    const stepDistance = getStepDistanceText(currentStep);
-    const isImmediate = currentStep.distance !== undefined && currentStep.distance < 60;
-    if (isImmediate) {
-      return `Turn now: ${stepText}${stepDistance ? ` · ${stepDistance}` : ''}`;
-    }
-    return `Next: ${stepText}${stepDistance ? ` in ${stepDistance}` : ''}`;
+    if (remainingDistanceKm === null) return '';
+    const distanceText =
+      remainingDistanceKm >= 1 ? `${remainingDistanceKm.toFixed(1)} km` : `${Math.round(remainingDistanceKm * 1000)} m`;
+    const timeText = routeDurationMinutes ? `~${routeDurationMinutes} min` : '';
+    return [distanceText, timeText].filter(Boolean).join(' · ');
   };
 
   const getRouteProgress = () => {
-    if (routeDistanceKm === null) return 0;
-    return Math.min(100, Math.max(0, 100 - (routeDistanceKm / 10) * 100));
+    if (routeDistanceKm === null || remainingDistanceKm === null || routeDistanceKm === 0) return 0;
+    return Math.min(100, Math.max(0, 100 - (remainingDistanceKm / routeDistanceKm) * 100));
   };
 
   const navigationProgress = getRouteProgress();
@@ -399,32 +413,34 @@ export default function MapView({
   );
 
   const getMapOverlay = () => (
-    <div className="absolute left-4 top-4 z-[1000] w-[min(250px,calc(100%-32px))] rounded-2xl bg-[#0a0a0a]/90 backdrop-blur p-3 border border-white/10 shadow-2xl">
+    <div className="absolute left-4 top-4 z-[1000] w-[min(260px,calc(100%-32px))] rounded-2xl bg-[#0a0a0a]/90 backdrop-blur p-3 border border-white/10 shadow-2xl">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[9px] font-black uppercase tracking-[0.3em] text-orange-400">Navigation</p>
+        <div className="min-w-0">
+          <p className="text-[9px] font-black uppercase tracking-[0.3em] text-orange-400">
+            Navigation{routeSource ? ` · ${routeSource === 'mapbox' ? 'Mapbox' : 'OSRM'}` : ''}
+          </p>
           <p className="mt-1 text-sm font-black text-white leading-tight">{getNavigationLabel()}</p>
-          {routeSteps.length > 0 && (
-             <p className="mt-1 text-[11px] text-white/80 leading-tight">
-               {getCurrentStepText()}
-             </p>
-           )}
+          {currentStep && (
+            <p className="mt-1 text-[11px] text-white/80 leading-tight">
+              {formatDistanceMeters(currentStep.distanceMeters)}
+            </p>
+          )}
+          {nextStep && (
+            <p className="mt-1 truncate text-[10px] text-white/50 leading-tight">
+              Then {nextStep.instruction.toLowerCase()}
+            </p>
+          )}
         </div>
         {getNavigationIcon()}
       </div>
       <div className="mt-3 rounded-full bg-white/5 p-2">
         <div className="flex items-center justify-between text-[10px] text-white/70">
-          <span>Distance</span>
+          <span>Remaining</span>
           <span className="font-black text-white">{getNavigationDetails()}</span>
         </div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
           <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${navigationProgress}%` }} />
         </div>
-        {routeDurationMinutes !== null && (
-          <div className="mt-2 text-[10px] text-white/70">
-            Estimated {routeDurationMinutes} minute drive
-          </div>
-        )}
         {routeFetchError && (
           <div className="mt-2 text-[10px] text-red-300">{routeFetchError}</div>
         )}
@@ -464,9 +480,9 @@ export default function MapView({
           }}
         />
 
-        {userLocation && (
+        {liveLocation && (
           <>
-            <MarkerAny position={[userLocation.lat, userLocation.lng]} icon={userIcon}>
+            <MarkerAny position={[liveLocation.lat, liveLocation.lng]} icon={userIcon}>
               <PopupAny className="custom-popup">
                 <div className="p-2 font-black text-blue-500 uppercase tracking-widest text-[10px]">
                   You are here
@@ -475,7 +491,7 @@ export default function MapView({
             </MarkerAny>
             {radius && (
               <CircleAny
-                center={[userLocation.lat, userLocation.lng]}
+                center={[liveLocation.lat, liveLocation.lng]}
                 radius={radius * 1000}
                 pathOptions={{
                   fillColor: '#3b82f6',
@@ -559,7 +575,7 @@ export default function MapView({
                       <button
                         type="button"
                         onClick={() =>
-                          openGoogleMapsDirections(coordinates, userLocation || undefined)
+                          openGoogleMapsDirections(coordinates, liveLocation || undefined)
                         }
                         className="flex items-center gap-2 text-[10px] text-blue-500 font-bold hover:underline"
                       >
@@ -593,19 +609,19 @@ export default function MapView({
           );
         })}
 
-        {routeGeometry.length > 1 ? (
+        {routeGeometryPositions.length > 1 ? (
           <PolylineAny
-            positions={routeGeometry}
+            positions={routeGeometryPositions}
             pathOptions={{
               color: '#2563eb',
               weight: 4,
               opacity: 0.8,
             }}
           />
-        ) : userLocation && selectedCoordinates ? (
+        ) : liveLocation && selectedCoordinates ? (
           <PolylineAny
             positions={[
-              [userLocation.lat, userLocation.lng],
+              [liveLocation.lat, liveLocation.lng],
               [selectedCoordinates.lat, selectedCoordinates.lng],
             ]}
             pathOptions={{
@@ -651,7 +667,7 @@ export default function MapView({
             {mappedTraders.length} mapped shop{mappedTraders.length === 1 ? '' : 's'}
           </div>
           <div className="text-[9px] text-neutral-400">
-            {userLocation ? 'Centered from you' : 'Centered on Kigali'}
+            {liveLocation ? 'Centered from you' : 'Centered on Kigali'}
           </div>
         </div>
       )}
@@ -673,7 +689,7 @@ export default function MapView({
         (() => {
           const coordinates = getTraderCoordinates(selectedTrader);
           const distance =
-            userLocation && coordinates ? calculateDistance(userLocation, coordinates) : null;
+            liveLocation && coordinates ? calculateDistance(liveLocation, coordinates) : null;
           return (
             <div className="absolute inset-x-4 bottom-4 z-[1100] md:left-auto md:right-6 md:bottom-6 md:w-[360px] rounded-3xl border border-white/10 bg-[#0a0a0a]/95 p-4 shadow-2xl backdrop-blur">
               <div className="flex items-start justify-between gap-3">
@@ -724,7 +740,7 @@ export default function MapView({
                 <button
                   type="button"
                   onClick={() =>
-                    coordinates && openGoogleMapsDirections(coordinates, userLocation || undefined)
+                    coordinates && openGoogleMapsDirections(coordinates, liveLocation || undefined)
                   }
                   disabled={!coordinates}
                   className="flex-1 rounded-2xl bg-blue-600 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"

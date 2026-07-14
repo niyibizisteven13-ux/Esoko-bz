@@ -1,4 +1,4 @@
-import initializeDatabase from './db.ts';
+import db from './db.ts';
 
 const BASE_URL = process.env.API_URL || 'http://localhost:5173';
 
@@ -8,7 +8,7 @@ let userId = '';
 let productId = '';
 let passed = 0;
 let failed = 0;
-const localDb = initializeDatabase();
+const localDb = db;
 
 async function request(path: string, options: RequestInit = {}) {
   const response = await requestRaw(path, options);

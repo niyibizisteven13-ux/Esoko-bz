@@ -47,6 +47,20 @@ import { getCurrentUser } from '../services/sessionService';
 // Services
 import { getUser, updateUser } from '../services/userService';
 import { getTransactions } from '../services/transactionService';
+import {
+  ChatConversationSummary,
+  ChatMessageShape,
+  createConversation,
+  fetchConversationMessages,
+  fetchConversations,
+  lookupChatAccount,
+  sendChatAttachment,
+  sendChatMessage,
+  muteConversation,
+  clearChat,
+  blockContact,
+  deleteConversation,
+} from '../services/chatService';
 
 // Sub-components
 import PurchaseHistory from '../components/customer/PurchaseHistory';
@@ -57,6 +71,7 @@ import NearPayDirectoryModal from '../components/customer/NearPayDirectoryModal'
 import NotificationsTab from '../components/NotificationsTab';
 import SupportTab from '../components/SupportTab';
 const VerifiedReports = React.lazy(() => import('../components/VerifiedReports'));
+const TraderChat = React.lazy(() => import('../components/trader/TraderChat'));
 
 import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
@@ -108,6 +123,7 @@ type Tab =
   | 'purchases'
   | 'wallet'
   | 'marketplace'
+  | 'chat'
   | 'profile'
   | 'notifications'
   | 'support'
@@ -153,6 +169,13 @@ export default function CustomerDashboard() {
   const [showScanner, setShowScanner] = useState(false);
   const [showPayCode, setShowPayCode] = useState(false);
   const [showNearPay, setShowNearPay] = useState(false);
+  const [chatConversations, setChatConversations] = useState<ChatConversationSummary[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessageShape[]>([]);
+  const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string>('');
+  const chatAccountNumber = currentUser?.uid || currentUser?.id || '';
+  const customerAppNumber = userData?.appNumber || currentUser?.uid || currentUser?.id || '';
   const { notifications, unreadCount, showToast } = useNotifications();
   const { syncState, subscribeToTransactions, subscribeToUserData } = useRealTimeSync();
 
@@ -239,6 +262,244 @@ export default function CustomerDashboard() {
     };
   }, [subscribeToTransactions, subscribeToUserData]);
 
+  const handleTabChange = (tab: Tab) => {
+    if (tab === activeTab) return;
+    // Instant tab change for better UX
+    setActiveTab(tab);
+    setIsSidebarOpen(false);
+    // Smooth scroll to top after state update
+    setTimeout(() => {
+      const mainEl = document.getElementById('main-scroll-container');
+      if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
+  };
+
+  const loadChatConversations = useCallback(async () => {
+    if (!chatAccountNumber) return;
+    setChatLoading(true);
+    setChatError('');
+    try {
+      const conversations = await fetchConversations(chatAccountNumber);
+      setChatConversations(conversations);
+      setSelectedChatConversationId((current) => current || conversations[0]?.id || '');
+    } catch (err: any) {
+      console.error('[CustomerDashboard] failed to load chat conversations', err);
+      setChatError(err?.message || 'Unable to load chats.');
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatSelectConversation = useCallback((conversationId: string) => {
+    setSelectedChatConversationId(conversationId);
+  }, []);
+
+  useEffect(() => {
+    if (!chatAccountNumber) return;
+    void loadChatConversations();
+  }, [chatAccountNumber, loadChatConversations]);
+
+  useEffect(() => {
+    if (!selectedChatConversationId || !chatAccountNumber) return;
+    let cancelled = false;
+
+    const loadMessages = async () => {
+      try {
+        const messages = await fetchConversationMessages(selectedChatConversationId, chatAccountNumber);
+        if (!cancelled) setChatMessages(messages);
+      } catch (err: any) {
+        console.error('[CustomerDashboard] failed to load messages', err);
+      }
+    };
+
+    void loadMessages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedChatConversationId, chatAccountNumber]);
+
+  const handleAskTrader = useCallback(
+    async (product: any, initialMessage?: string) => {
+      if (!chatAccountNumber || !product?.traderId) return;
+      setActiveTab('chat');
+      setIsSidebarOpen(false);
+      setChatLoading(true);
+      setChatError('');
+
+      try {
+        const existingConversation = chatConversations.find(
+          (conversation) => conversation.accountNumber === String(product.traderId)
+        );
+
+        let conversation = existingConversation;
+        if (!conversation) {
+          try {
+            const account = await lookupChatAccount(String(product.traderId));
+            conversation = await createConversation(
+              String(product.traderId),
+              account?.name || product.seller || undefined,
+              chatAccountNumber
+            );
+          } catch (innerErr) {
+            console.warn('[CustomerDashboard] createConversation fallback', innerErr);
+            conversation = await createConversation(
+              String(product.traderId),
+              product.seller || undefined,
+              chatAccountNumber
+            );
+          }
+
+          if (conversation) {
+            setChatConversations((prev) => [...prev, conversation] as ChatConversationSummary[]);
+          }
+        }
+
+        if (conversation?.id) {
+          setSelectedChatConversationId(conversation.id);
+          if (initialMessage?.trim()) {
+            const sentMessage = await sendChatMessage(conversation.id, initialMessage.trim(), chatAccountNumber);
+            setChatMessages((prev) => [...prev, sentMessage]);
+            setChatConversations((prev) =>
+              prev.map((item) =>
+                item.id === conversation?.id
+                  ? {
+                      ...item,
+                      lastMessagePreview: sentMessage.text || item.lastMessagePreview,
+                      lastMessageTime: sentMessage.timestamp,
+                    }
+                  : item
+              )
+            );
+          }
+        }
+      } catch (err: any) {
+        console.error('[CustomerDashboard] failed to open chat for product ask', err);
+        setChatError(err?.message || 'Unable to open chat.');
+      } finally {
+        setChatLoading(false);
+      }
+    },
+    [chatAccountNumber, chatConversations]
+  );
+
+  const handleChatSendMessage = useCallback(
+    async (conversationId: string, text: string) => {
+      if (!chatAccountNumber) return;
+      try {
+        const message = await sendChatMessage(conversationId, text, chatAccountNumber);
+        setChatMessages((prev) => [...prev, message]);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  lastMessagePreview: text,
+                  lastMessageTime: message.timestamp,
+                }
+              : conversation
+          )
+        );
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to send chat message', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatSendFile = useCallback(
+    async (conversationId: string, file: File) => {
+      if (!chatAccountNumber) return;
+      try {
+        const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber);
+        setChatMessages((prev) => [...prev, message]);
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to send chat attachment', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatAddContact = useCallback(
+    async (accountNumber: string, displayName?: string) => {
+      if (!chatAccountNumber) return null;
+      try {
+        await lookupChatAccount(accountNumber);
+        const conversation = await createConversation(accountNumber, displayName, chatAccountNumber);
+        setChatConversations((prev) => [...prev, conversation]);
+        setSelectedChatConversationId(conversation.id);
+        return conversation;
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to add chat contact', err);
+        return null;
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatMuteConversation = useCallback(
+    async (conversationId: string, muted: boolean) => {
+      if (!chatAccountNumber) return;
+      try {
+        await muteConversation(conversationId, muted, chatAccountNumber);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, muted } : conversation
+          )
+        );
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to mute chat conversation', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatClearConversation = useCallback(
+    async (conversationId: string) => {
+      if (!chatAccountNumber) return;
+      try {
+        await clearChat(conversationId, chatAccountNumber);
+        setChatMessages((prev) => prev.filter((message) => message.conversationId !== conversationId));
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to clear chat conversation', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatBlockContact = useCallback(
+    async (conversationId: string, blocked: boolean) => {
+      if (!chatAccountNumber) return;
+      try {
+        await blockContact(conversationId, blocked, chatAccountNumber);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, blocked } : conversation
+          )
+        );
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to block chat contact', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const handleChatDeleteConversation = useCallback(
+    async (conversationId: string) => {
+      if (!chatAccountNumber) return;
+      try {
+        await deleteConversation(conversationId, chatAccountNumber);
+        setChatConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+        setChatMessages((prev) => prev.filter((message) => message.conversationId !== conversationId));
+        setSelectedChatConversationId((current) => (current === conversationId ? '' : current));
+      } catch (err) {
+        console.error('[CustomerDashboard] failed to delete chat conversation', err);
+      }
+    },
+    [chatAccountNumber]
+  );
+
+  const preference = userData?.dashboardPreference || 'full';
   if (loading)
     return (
       <div className="fixed inset-0 bg-white dark:bg-[#050505] flex flex-col items-center justify-center z-[1000]">
@@ -286,34 +547,27 @@ export default function CustomerDashboard() {
       </div>
     );
 
-  const handleTabChange = (tab: Tab) => {
-    if (tab === activeTab) return;
-    // Instant tab change for better UX
-    setActiveTab(tab);
-    setIsSidebarOpen(false);
-    // Smooth scroll to top after state update
-    setTimeout(() => {
-      const mainEl = document.getElementById('main-scroll-container');
-      if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 50);
-  };
-
-  const preference = userData?.dashboardPreference || 'full';
   const accountVerified = isAccountVerified(userData);
 
   return (
-    <div className="min-h-screen bg-[#050505] flex flex-col md:flex-row selection:bg-orange-500/30 selection:text-white transition-colors duration-300 overflow-hidden text-neutral-100">
+    <div
+      className={cn(
+        'bg-[#050505] flex flex-col md:flex-row selection:bg-orange-500/30 selection:text-white transition-colors duration-300 overflow-hidden text-neutral-100',
+        activeTab === 'chat' ? 'h-screen' : 'min-h-screen'
+      )}
+    >
       <AnimatePresence>{isChangingTab && <SlitLoader />}</AnimatePresence>
 
       {/* Sidebar - Desktop Only (Fixed) */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out hidden md:flex md:translate-x-0 flex-col border-r border-white/5 h-screen',
+          'fixed inset-y-0 left-0 z-50 bg-[#050505] text-white transform transition-all duration-500 ease-in-out hidden md:flex md:translate-x-0 flex-col border-r border-white/5 h-screen overflow-y-auto',
           isSidebarOpen ? 'translate-x-0' : 'md:translate-x-0 -translate-x-full',
           isSidebarCollapsed ? 'w-20' : 'w-64'
         )}
       >
-        <div className="h-full flex flex-col p-4">
+        <div className="h-full min-h-0 flex flex-col p-4">
+          {/* Logo Header */}
           <div className="flex items-center justify-between mb-8 shrink-0 px-2">
             {!isSidebarCollapsed && <Logo dark className="scale-90 origin-left" />}
             <button
@@ -328,12 +582,53 @@ export default function CustomerDashboard() {
             </button>
           </div>
 
-          <nav className={cn('flex-1 space-y-6', isSidebarCollapsed && 'items-center')}>
-            <div>
+          {/* Profile Card */}
+          <div className="flex-shrink-0 mb-4 px-2">
+            {!isSidebarCollapsed && (
+              <button
+                type="button"
+                onClick={() => handleTabChange('profile')}
+                className="group flex w-full items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
+              >
+                <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40 flex-shrink-0">
+                  {userData?.name?.[0] || 'U'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] font-black truncate leading-tight tracking-tight uppercase">
+                      {userData?.name || 'User'}
+                    </p>
+                    {accountVerified && (
+                      <VerifiedBadge
+                        level={getCustomerBadgeLevel(userData?.category)}
+                        size="xs"
+                        showLabel={false}
+                        animated
+                        className="!border-white/10"
+                      />
+                    )}
+                  </div>
+                  <p className="text-[8px] text-white/50 font-black uppercase tracking-[0.2em] mt-0.5">
+                    {userData?.tier || 'Standard'}
+                  </p>
+                  <p className="text-[8px] text-white/40 font-black uppercase tracking-[0.2em] mt-1">
+                    App #{customerAppNumber || '---'}
+                  </p>
+                </div>
+              </button>
+            )}
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 min-h-0 space-y-1 sm:space-y-1.5 overflow-y-auto">
+            {/* Shop Section */}
+            <div className="flex-shrink-0">
               {!isSidebarCollapsed && (
-                <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Shop
-                </p>
+                <div className="mb-3 px-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+                    Shop
+                  </p>
+                </div>
               )}
               <div className="space-y-1">
                 <SidebarItem
@@ -353,6 +648,7 @@ export default function CustomerDashboard() {
                   badge={unreadCount ?? 0}
                   description="Messages & updates"
                 />
+                {/* Messages moved to bottom 'Messenger' card to avoid duplication */}
                 <SidebarItem
                   collapsed={isSidebarCollapsed}
                   active={activeTab === 'marketplace'}
@@ -367,11 +663,14 @@ export default function CustomerDashboard() {
               </div>
             </div>
 
-            <div>
+            {/* Money Section */}
+            <div className="flex-shrink-0">
               {!isSidebarCollapsed && (
-                <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Money
-                </p>
+                <div className="mb-3 px-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+                    Money
+                  </p>
+                </div>
               )}
               <div className="space-y-1">
                 <SidebarItem
@@ -401,11 +700,14 @@ export default function CustomerDashboard() {
               </div>
             </div>
 
-            <div>
+            {/* Account Section */}
+            <div className="flex-shrink-0">
               {!isSidebarCollapsed && (
-                <p className="px-3 mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/20">
-                  Account
-                </p>
+                <div className="mb-3 px-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+                    Account
+                  </p>
+                </div>
               )}
               <div className="space-y-1">
                 <SidebarItem
@@ -436,89 +738,38 @@ export default function CustomerDashboard() {
             </div>
           </nav>
 
-          <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
-            {!isSidebarCollapsed && (
-              <>
-                <div className="flex items-center gap-3 mb-4 p-3 rounded-2xl bg-white/5 border border-white/5 shadow-inner">
-                  <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40">
-                    {userData?.name?.[0] || 'U'}
+          {!isSidebarCollapsed && activeTab !== 'chat' && (
+            <div className="mt-6 px-2">
+              <button
+                type="button"
+                onClick={() => handleTabChange('chat')}
+                className="group w-full rounded-3xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:bg-white/10"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-orange-600 text-black">
+                    <MessageSquare size={20} />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-[11px] font-black truncate leading-tight tracking-tight uppercase">
-                        {userData?.name || 'User'}
-                      </p>
-                      {accountVerified ? (
-                        <VerifiedBadge
-                          level={getCustomerBadgeLevel(userData?.category)}
-                          size="sm"
-                          showLabel={false}
-                          animated
-                          className="!border-white/10"
-                        />
-                      ) : (
-                        <span className="text-[8px] uppercase tracking-[0.2em] text-yellow-400 font-black">
-                          Pending
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[8px] text-white/40 font-black uppercase tracking-[0.2em] mt-0.5">
-                      {userData?.tier || 'Standard'}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-white">Messenger</p>
+                    <p className="truncate text-[11px] text-white/60">
+                      {chatLoading
+                        ? 'Loading chats...'
+                        : chatConversations.length > 0
+                        ? `${chatConversations.length} conversation${chatConversations.length === 1 ? '' : 's'}`
+                        : 'No chat conversations yet'}
                     </p>
                   </div>
                 </div>
+              </button>
+            </div>
+          )}
 
-                {/* Phase 2: Account Status Card */}
-                <div className="mb-3 p-2.5 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border border-blue-600/20 rounded-xl space-y-1.5 text-[7px]">
-                  <div className="flex items-center gap-1.5">
-                    <AlertCircle size={10} className="text-blue-400" />
-                    <span className="font-black text-blue-300 uppercase tracking-widest">
-                      Status
-                    </span>
-                  </div>
-
-                  <div className="space-y-0.5 px-0.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50">Email</span>
-                      <span
-                        className={
-                          userData?.emailVerified
-                            ? 'text-emerald-400 font-black'
-                            : 'text-yellow-400 font-black'
-                        }
-                      >
-                        {userData?.emailVerified ? '✓' : '⏳'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50">Account</span>
-                      <span
-                        className={
-                          accountVerified
-                            ? 'text-emerald-400 font-black'
-                            : 'text-yellow-400 font-black'
-                        }
-                      >
-                        {accountVerified ? '✓' : '⏳'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between border-t border-blue-600/20 pt-0.5 mt-0.5">
-                      <span className="text-white/50">Member Since</span>
-                      <span className="text-white/70 font-black">
-                        {getAccountAge(userData?.createdAt)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Phase 2: Sync Status */}
-                <div className="flex items-center justify-center gap-1.5 text-[7px] text-white/40 px-2 py-1 mb-2">
-                  <div className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
-                  <span>Synced {getTimeAgo(lastSyncTime)}</span>
-                </div>
-              </>
+          {/* Bottom Section */}
+          <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
+            {isSidebarCollapsed && (
+              <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40 mx-auto">
+                {userData?.name?.[0] || 'U'}
+              </div>
             )}
             <button
               onClick={() =>
@@ -527,10 +778,11 @@ export default function CustomerDashboard() {
                 })
               }
               className={cn(
-                'w-full flex items-center transition-all font-bold text-xs rounded-xl',
+                'w-full flex items-center transition-all font-bold text-xs rounded-xl mt-3',
                 isSidebarCollapsed ? 'justify-center p-3' : 'gap-3 py-3 px-4',
-                'text-white/40 hover:text-white hover:bg-white/5 active:scale-95'
+                'text-white/40 hover:text-red-500 hover:bg-red-500/10 active:scale-95'
               )}
+              title={isSidebarCollapsed ? 'Logout' : undefined}
             >
               <History className="rotate-180" size={20} /> {!isSidebarCollapsed && t.common.logout}
             </button>
@@ -647,10 +899,23 @@ export default function CustomerDashboard() {
       {/* Main Content */}
       <main
         id="main-scroll-container"
-        className="flex-1 min-h-screen overflow-y-auto relative bg-[#050505] transition-colors"
+        className={cn(
+          // IMPORTANT: this needs a real (not just minimum) height. min-h-screen only sets a
+          // floor, so nested "fill remaining height" children (Marketplace's scroller, the
+          // sticky bar) have nothing definite to size against and the whole page ends up
+          // scrolling as one blob instead -- which is what was dragging the pinned bar away.
+          // h-dvh/h-screen gives every descendant a real height to constrain to.
+          'flex-1 relative bg-[#050505] transition-colors h-dvh h-screen',
+          // Add left padding to account for the fixed sidebar on desktop.
+          isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64',
+          // Marketplace and Chat own their own inner scroll containers. Let them be flex containers
+          // so inner components (Marketplace/TraderChat) can manage scrolling. Other tabs keep
+          // the page-level scroll.
+          (activeTab === 'marketplace' || activeTab === 'chat') ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+        )}
       >
         {/* Mobile Header */}
-        <header className="md:hidden bg-[#050505] border-b border-white/5 px-4 py-3 sticky top-0 z-40 flex items-center justify-between shadow-sm">
+        <header className="md:hidden bg-[#050505] border-b border-white/5 px-4 py-3 z-40 flex items-center justify-between shadow-sm shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={() => setIsSidebarOpen(true)} className="p-2.5 bg-white/5 rounded-xl">
               <PlusCircle size={20} className="text-neutral-400" />
@@ -668,344 +933,391 @@ export default function CustomerDashboard() {
           </div>
         </header>
 
-        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 pb-32 md:pb-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              {activeTab === 'overview' && (
-                <div className="space-y-8">
-                  {/* Activity Page Header */}
-                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
-                    <div>
-                      <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
-                        Customer Hub
-                      </h2>
-                      <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
-                        Real-time intelligence on your transactions, social growth, and financial
-                        velocity.
-                      </p>
+        {activeTab === 'marketplace' ? (
+          // Full-bleed, full-height container so Marketplace's own sticky bar + snap
+          // scroller can behave like TikTok, without fighting the page scroll above.
+          <div className="flex-1 min-h-0">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key="marketplace"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="h-full"
+              >
+                <Marketplace
+                  initialSearchMode={marketplaceConfig.mode}
+                  initialNearby={marketplaceConfig.nearby}
+                  initialMapView={marketplaceConfig.map}
+                  onAskTrader={handleAskTrader}
+                />
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        ) : (
+          <div
+            className={cn(
+              'w-full min-h-0 flex flex-col',
+              activeTab === 'chat'
+                ? 'flex-1 h-full p-0 md:p-0'
+                : 'p-4 md:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 pb-32 md:pb-8'
+            )}
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className={cn('flex-1 flex flex-col min-h-0', activeTab === 'chat' && 'h-full')}
+              >
+                {activeTab === 'overview' && (
+                  <div className="space-y-8">
+                    {/* Activity Page Header */}
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
+                      <div>
+                        <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
+                          Customer Hub
+                        </h2>
+                        <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
+                          Real-time intelligence on your transactions, social growth, and financial
+                          velocity.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 px-4 py-2 bg-[#0a0a0a] rounded-2xl border border-white/5 shadow-sm shrink-0">
+                        <TrendingUp size={16} className="text-emerald-500" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+                          Velocity: +12.4%
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 px-4 py-2 bg-[#0a0a0a] rounded-2xl border border-white/5 shadow-sm shrink-0">
-                      <TrendingUp size={16} className="text-emerald-500" />
-                      <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
-                        Velocity: +12.4%
-                      </span>
-                    </div>
-                  </div>
 
-                  {/* Wallet & Quick Actions in Overview */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    <div className="lg:col-span-4 space-y-6">
-                      <motion.div
-                        variants={FADE_IN_UP}
-                        initial="initial"
-                        animate="animate"
-                        className="group relative w-full p-8 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
-                      >
-                        <div className="relative z-10">
-                          <div className="flex justify-between items-start mb-12">
-                            <div>
-                              <h2 className="text-4xl font-black tracking-tighter sm:text-5xl">
-                                {showBalance
-                                  ? `${(userData?.walletBalance || 0).toLocaleString()}`
-                                  : 'â€¢â€¢â€¢â€¢â€¢'}
-                                <span className="text-sm font-bold ml-1 opacity-40">RWF</span>
-                              </h2>
-                              <div className="flex items-center gap-2 mt-2">
-                                <p className="text-orange-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                                  {t.common.totalBalance}
+                    {/* Wallet & Quick Actions in Overview */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                      <div className="lg:col-span-4 space-y-6">
+                        <motion.div
+                          variants={FADE_IN_UP}
+                          initial="initial"
+                          animate="animate"
+                          className="group relative w-full p-8 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
+                        >
+                          <div className="relative z-10">
+                            <div className="flex justify-between items-start mb-12">
+                              <div>
+                                <h2 className="text-4xl font-black tracking-tighter sm:text-5xl">
+                                  {showBalance
+                                    ? `${(userData?.walletBalance || 0).toLocaleString()}`
+                                    : 'â€¢â€¢â€¢â€¢â€¢'}
+                                  <span className="text-sm font-bold ml-1 opacity-40">RWF</span>
+                                </h2>
+                                <div className="flex items-center gap-2 mt-2">
+                                  <p className="text-orange-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                                    {t.common.totalBalance}
+                                  </p>
+                                  <button
+                                    onClick={() => setShowBalance(!showBalance)}
+                                    className="p-1 hover:bg-white/10 rounded-full"
+                                  >
+                                    {showBalance ? <EyeOff size={14} /> : <Eye size={14} />}
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="bg-white/10 p-4 rounded-3xl border border-white/10 transition-all">
+                                <CreditCard size={28} />
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-end">
+                              <div>
+                                <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                                  Nexus ID
                                 </p>
+                                <p className="font-mono font-bold tracking-[0.2em] text-sm bg-white/5 p-2 rounded-xl border border-white/5">
+                                  {userData?.appNumber || '--- ---'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                                  Loyalty
+                                </p>
+                                <p className="font-black text-2xl">{userData?.loyaltyPoints || 0}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+
+                        <motion.div
+                          variants={FADE_IN_UP}
+                          initial="initial"
+                          animate="animate"
+                          className="group relative w-full p-6 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
+                        >
+                          <div className="relative z-10">
+                            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                              <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500">
+                                  Profile Summary
+                                </p>
+                                <h3 className="text-2xl font-black tracking-tight">
+                                  {userData?.name || 'My Profile'}
+                                </h3>
+                              </div>
+                              {accountVerified ? (
+                                <VerifiedBadge
+                                  level={getCustomerBadgeLevel(userData?.category)}
+                                  size="sm"
+                                  showLabel={false}
+                                  animated
+                                  className="!border-white/10"
+                                />
+                              ) : (
+                                <span className="text-[10px] uppercase tracking-[0.2em] text-yellow-400 font-black">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                  Email
+                                </p>
+                                <p className="text-sm font-bold text-white truncate">
+                                  {currentUser?.email || 'Not set'}
+                                </p>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                  Phone
+                                </p>
+                                <p className="text-sm font-bold text-white truncate">
+                                  {userData?.phone || 'Not set'}
+                                </p>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                  Account Type
+                                </p>
+                                <p className="text-sm font-bold text-white truncate">
+                                  {userData?.category
+                                    ? `${userData.category.charAt(0).toUpperCase()}${userData.category.slice(1)}`
+                                    : 'Individual'}
+                                </p>
+                              </div>
+                              <div className="space-y-1">
+                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                  Tier
+                                </p>
+                                <p className="text-sm font-bold text-white truncate">
+                                  {userData?.tier || 'Standard'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-6">
+                              <button
+                                onClick={() => handleTabChange('profile')}
+                                className="w-full px-4 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all"
+                              >
+                                Edit Profile
+                              </button>
+                              <button
+                                onClick={() => handleTabChange('profile')}
+                                className="w-full px-4 py-3 bg-white/10 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/20 transition-all"
+                              >
+                                Manage Details
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <QuickAction
+                            icon={<QrCode size={24} />}
+                            label="Nexus Pay"
+                            onClick={() => setShowScanner(true)}
+                            color="text-orange-500 font-black"
+                          />
+                          <QuickAction
+                            icon={<Nfc size={24} />}
+                            label="Near Pay"
+                            onClick={() => setShowNearPay(true)}
+                            color="text-emerald-400"
+                          />
+                          <QuickAction
+                            icon={<Send size={24} />}
+                            label="Send Cash"
+                            onClick={() => handleTabChange('wallet')}
+                            color="text-blue-400"
+                          />
+                        </div>
+
+                        {/* Motivation: Rewards Card */}
+                        <div className="bg-gradient-to-br from-orange-600 to-orange-800 p-6 rounded-[2.5rem] text-white shadow-xl shadow-orange-900/20 relative overflow-hidden group">
+                          <div className="relative z-10">
+                            <div className="flex items-center gap-3 mb-4">
+                              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                                <Sparkles size={20} />
+                              </div>
+                              <h4 className="text-sm font-black uppercase tracking-widest">
+                                Rewards
+                              </h4>
+                            </div>
+                            <p className="text-xl font-bold mb-4 leading-tight">
+                              Refer a friend & get{' '}
+                              <span className="text-white underline">500 Points</span>
+                            </p>
+                            <button
+                              onClick={() => {
+                                const referralLink = `${window.location.origin}/register?ref=${userData?.appNumber}`;
+                                navigator.clipboard.writeText(referralLink);
+                                showToast('Referral link copied to clipboard', 'success');
+                              }}
+                              className="w-full py-3 bg-white text-orange-600 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-orange-50 transition-all active:scale-95"
+                            >
+                              Copy Link <Download size={14} className="rotate-270" />
+                            </button>
+                          </div>
+                          <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-110 transition-transform" />
+                        </div>
+                      </div>
+
+                      <div className="lg:col-span-8 space-y-6">
+                        <div className="flex justify-between items-center px-1">
+                          <h3 className="micro-label font-black text-neutral-400 uppercase tracking-[0.2em]">
+                            {t.common.recentTransactions}
+                          </h3>
+                          <button
+                            onClick={() => handleTabChange('purchases')}
+                            className="text-orange-600 text-[10px] font-black uppercase tracking-widest hover:underline"
+                          >
+                            Explore Log
+                          </button>
+                        </div>
+                        <div className="space-y-3">
+                          {transactions.length > 0 ? (
+                            transactions
+                              .slice(0, 5)
+                              .map((tx) => <TransactionItem key={tx.id} tx={tx} />)
+                          ) : (
+                            // Phase 3: Better empty state
+                            <div className="p-8 border-2 border-dashed border-white/10 rounded-[2rem] text-center bg-white/2.5">
+                              <div className="w-12 h-12 mx-auto mb-4 bg-white/5 rounded-2xl flex items-center justify-center">
+                                <History className="text-neutral-400" size={24} />
+                              </div>
+                              <h3 className="font-black text-sm text-white mb-2">
+                                No transactions yet
+                              </h3>
+                              <p className="text-[12px] text-neutral-400 mb-4 max-w-sm mx-auto leading-relaxed">
+                                Start by adding funds to your wallet and making your first payment.
+                                Your transaction history will appear here.
+                              </p>
+                              <div className="flex items-center justify-center gap-2">
                                 <button
-                                  onClick={() => setShowBalance(!showBalance)}
-                                  className="p-1 hover:bg-white/10 rounded-full"
+                                  onClick={() => handleTabChange('wallet')}
+                                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black rounded-lg transition-all active:scale-95"
                                 >
-                                  {showBalance ? <EyeOff size={14} /> : <Eye size={14} />}
+                                  Add Funds
+                                </button>
+                                <button
+                                  onClick={() => handleTabChange('marketplace')}
+                                  className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-black rounded-lg transition-all"
+                                >
+                                  Browse Shops
                                 </button>
                               </div>
                             </div>
-                            <div className="bg-white/10 p-4 rounded-3xl border border-white/10 transition-all">
-                              <CreditCard size={28} />
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-end">
-                            <div>
-                              <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-                                Nexus ID
-                              </p>
-                              <p className="font-mono font-bold tracking-[0.2em] text-sm bg-white/5 p-2 rounded-xl border border-white/5">
-                                {userData?.appNumber || '--- ---'}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-                                Loyalty
-                              </p>
-                              <p className="font-black text-2xl">{userData?.loyaltyPoints || 0}</p>
-                            </div>
-                          </div>
+                          )}
                         </div>
-                      </motion.div>
-
-                      <motion.div
-                        variants={FADE_IN_UP}
-                        initial="initial"
-                        animate="animate"
-                        className="group relative w-full p-6 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
-                      >
-                        <div className="relative z-10">
-                          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                            <div>
-                              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500">
-                                Profile Summary
-                              </p>
-                              <h3 className="text-2xl font-black tracking-tight">
-                                {userData?.name || 'My Profile'}
-                              </h3>
-                            </div>
-                            {accountVerified ? (
-                              <VerifiedBadge
-                                level={getCustomerBadgeLevel(userData?.category)}
-                                size="sm"
-                                showLabel={false}
-                                animated
-                                className="!border-white/10"
-                              />
-                            ) : (
-                              <span className="text-[10px] uppercase tracking-[0.2em] text-yellow-400 font-black">
-                                Pending
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <div className="space-y-1">
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                Email
-                              </p>
-                              <p className="text-sm font-bold text-white truncate">
-                                {currentUser?.email || 'Not set'}
-                              </p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                Phone
-                              </p>
-                              <p className="text-sm font-bold text-white truncate">
-                                {userData?.phone || 'Not set'}
-                              </p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                Account Type
-                              </p>
-                              <p className="text-sm font-bold text-white truncate">
-                                {userData?.category
-                                  ? `${userData.category.charAt(0).toUpperCase()}${userData.category.slice(1)}`
-                                  : 'Individual'}
-                              </p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                Tier
-                              </p>
-                              <p className="text-sm font-bold text-white truncate">
-                                {userData?.tier || 'Standard'}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-6">
-                            <button
-                              onClick={() => handleTabChange('profile')}
-                              className="w-full px-4 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all"
-                            >
-                              Edit Profile
-                            </button>
-                            <button
-                              onClick={() => handleTabChange('profile')}
-                              className="w-full px-4 py-3 bg-white/10 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/20 transition-all"
-                            >
-                              Manage Details
-                            </button>
-                          </div>
-                        </div>
-                      </motion.div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <QuickAction
-                          icon={<QrCode size={24} />}
-                          label="Nexus Pay"
-                          onClick={() => setShowScanner(true)}
-                          color="text-orange-500 font-black"
-                        />
-                        <QuickAction
-                          icon={<Nfc size={24} />}
-                          label="Near Pay"
-                          onClick={() => setShowNearPay(true)}
-                          color="text-emerald-400"
-                        />
-                        <QuickAction
-                          icon={<Send size={24} />}
-                          label="Send Cash"
-                          onClick={() => handleTabChange('wallet')}
-                          color="text-blue-400"
-                        />
-                      </div>
-
-                      {/* Motivation: Rewards Card */}
-                      <div className="bg-gradient-to-br from-orange-600 to-orange-800 p-6 rounded-[2.5rem] text-white shadow-xl shadow-orange-900/20 relative overflow-hidden group">
-                        <div className="relative z-10">
-                          <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
-                              <Sparkles size={20} />
-                            </div>
-                            <h4 className="text-sm font-black uppercase tracking-widest">
-                              Rewards
-                            </h4>
-                          </div>
-                          <p className="text-xl font-bold mb-4 leading-tight">
-                            Refer a friend & get{' '}
-                            <span className="text-white underline">500 Points</span>
-                          </p>
-                          <button
-                            onClick={() => {
-                              const referralLink = `${window.location.origin}/register?ref=${userData?.appNumber}`;
-                              navigator.clipboard.writeText(referralLink);
-                              showToast('Referral link copied to clipboard', 'success');
-                            }}
-                            className="w-full py-3 bg-white text-orange-600 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-orange-50 transition-all active:scale-95"
-                          >
-                            Copy Link <Download size={14} className="rotate-270" />
-                          </button>
-                        </div>
-                        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-110 transition-transform" />
-                      </div>
-                    </div>
-
-                    <div className="lg:col-span-8 space-y-6">
-                      <div className="flex justify-between items-center px-1">
-                        <h3 className="micro-label font-black text-neutral-400 uppercase tracking-[0.2em]">
-                          {t.common.recentTransactions}
-                        </h3>
-                        <button
-                          onClick={() => handleTabChange('purchases')}
-                          className="text-orange-600 text-[10px] font-black uppercase tracking-widest hover:underline"
-                        >
-                          Explore Log
-                        </button>
-                      </div>
-                      <div className="space-y-3">
-                        {transactions.length > 0 ? (
-                          transactions
-                            .slice(0, 5)
-                            .map((tx) => <TransactionItem key={tx.id} tx={tx} />)
-                        ) : (
-                          // Phase 3: Better empty state
-                          <div className="p-8 border-2 border-dashed border-white/10 rounded-[2rem] text-center bg-white/2.5">
-                            <div className="w-12 h-12 mx-auto mb-4 bg-white/5 rounded-2xl flex items-center justify-center">
-                              <History className="text-neutral-400" size={24} />
-                            </div>
-                            <h3 className="font-black text-sm text-white mb-2">
-                              No transactions yet
-                            </h3>
-                            <p className="text-[12px] text-neutral-400 mb-4 max-w-sm mx-auto leading-relaxed">
-                              Start by adding funds to your wallet and making your first payment.
-                              Your transaction history will appear here.
-                            </p>
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                onClick={() => handleTabChange('wallet')}
-                                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black rounded-lg transition-all active:scale-95"
-                              >
-                                Add Funds
-                              </button>
-                              <button
-                                onClick={() => handleTabChange('marketplace')}
-                                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-black rounded-lg transition-all"
-                              >
-                                Browse Shops
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {activeTab === 'marketplace' && (
-                <motion.div
-                  key="marketplace"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="pb-24"
-                >
-                  <Marketplace
-                    initialSearchMode={marketplaceConfig.mode}
-                    initialNearby={marketplaceConfig.nearby}
-                    initialMapView={marketplaceConfig.map}
-                  />
-                </motion.div>
-              )}
-
-              {activeTab === 'wallet' && (
-                <motion.div
-                  key="wallet"
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  className="space-y-8"
-                >
-                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
-                    <div>
-                      <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
-                        Vault & Assets
-                      </h2>
-                      <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
-                        Manage your liquidity, digital credentials, and peer-to-peer distribution
-                        networks.
-                      </p>
+                {activeTab === 'chat' && (
+                  <motion.div
+                    key="chat"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex-1 flex flex-col min-h-0"
+                  >
+                    {/* Remove the outer duplicated header and let TraderChat render its own header.
+                        TraderChat fills the card so the empty space below disappears. */}
+                    <div className="h-full min-h-0 flex-1 overflow-hidden rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-0">
+                      <React.Suspense fallback={<div className="p-8 text-neutral-500">Loading chat...</div>}>
+                        <TraderChat
+                          className="h-full"
+                          contacts={chatConversations}
+                          messages={chatMessages}
+                          selectedConversationId={selectedChatConversationId}
+                          onSelectConversation={handleChatSelectConversation}
+                          onSendMessage={handleChatSendMessage}
+                          onSendFile={handleChatSendFile}
+                          onAddContact={handleChatAddContact}
+                          onMuteConversation={handleChatMuteConversation}
+                          onClearChat={handleChatClearConversation}
+                          onBlockContact={handleChatBlockContact}
+                          onDeleteConversation={handleChatDeleteConversation}
+                        />
+                      </React.Suspense>
                     </div>
-                  </div>
-                  <WalletComponent
-                    balance={userData?.walletBalance || 0}
-                    userId={currentUser?.uid || currentUser?.id || ''}
-                    transactions={transactions}
-                    tier={userData?.tier || 'free'}
-                    loyaltyPoints={userData?.loyaltyPoints || 0}
-                    onNearPay={() => setShowNearPay(true)}
-                  />
-                </motion.div>
-              )}
+                  </motion.div>
+                )}
 
-              {activeTab === 'purchases' && <PurchaseHistory />}
-              {activeTab === 'notifications' && (
-                <NotificationsTab notifications={notifications} dark title="Alerts" />
-              )}
-              {activeTab === 'profile' && <CustomerProfile userData={userData} />}
-              {activeTab === 'support' && (
-                <SupportTab userId={currentUser?.uid || currentUser?.id || ''} role="customer" />
-              )}
-              {activeTab === 'reports' && (
-                <React.Suspense
-                  fallback={<div className="p-8 text-neutral-500">Loading reports...</div>}
-                >
-                  <VerifiedReports
-                    userId={currentUser?.uid || currentUser?.id || ''}
-                    userName={userData?.name || 'Customer'}
-                    role="customer"
-                    transactions={transactions}
-                  />
-                </React.Suspense>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
+                {activeTab === 'wallet' && (
+                  <motion.div
+                    key="wallet"
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="space-y-8"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
+                      <div>
+                        <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
+                          Vault & Assets
+                        </h2>
+                        <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
+                          Manage your liquidity, digital credentials, and peer-to-peer distribution
+                          networks.
+                        </p>
+                      </div>
+                    </div>
+                    <WalletComponent
+                      balance={userData?.walletBalance || 0}
+                      userId={currentUser?.uid || currentUser?.id || ''}
+                      transactions={transactions}
+                      tier={userData?.tier || 'free'}
+                      loyaltyPoints={userData?.loyaltyPoints || 0}
+                      onNearPay={() => setShowNearPay(true)}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === 'purchases' && <PurchaseHistory />}
+                {activeTab === 'notifications' && (
+                  <NotificationsTab notifications={notifications} dark title="Alerts" />
+                )}
+                {activeTab === 'profile' && <CustomerProfile userData={userData} />}
+                {activeTab === 'support' && (
+                  <SupportTab userId={currentUser?.uid || currentUser?.id || ''} role="customer" />
+                )}
+                {activeTab === 'reports' && (
+                  <React.Suspense
+                    fallback={<div className="p-8 text-neutral-500">Loading reports...</div>}
+                  >
+                    <VerifiedReports
+                      userId={currentUser?.uid || currentUser?.id || ''}
+                      userName={userData?.name || 'Customer'}
+                      role="customer"
+                      transactions={transactions}
+                    />
+                  </React.Suspense>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* Bottom Navigation for Mobile - Phase 4: Improved */}
         {activeTab !== 'marketplace' && (
@@ -1075,22 +1387,24 @@ export default function CustomerDashboard() {
           </nav>
         )}
 
-        {/* Desktop Quick Actions */}
-        <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">
-          <button
-            onClick={() => setShowNearPay(true)}
-            className="w-16 h-16 bg-[#0a0a0a] text-emerald-400 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
-            title="Near Pay"
-          >
-            <Nfc size={32} className="group-hover:scale-110 transition-transform" />
-          </button>
-          <button
-            onClick={() => setShowScanner(true)}
-            className="w-16 h-16 bg-[#0a0a0a] text-orange-600 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
-          >
-            <QrCode size={32} className="group-hover:scale-110 transition-transform" />
-          </button>
-        </div>
+        {/* Desktop Quick Actions (hidden while chat is active) */}
+        {activeTab !== 'chat' && (
+          <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">
+            <button
+              onClick={() => setShowNearPay(true)}
+              className="w-16 h-16 bg-[#0a0a0a] text-emerald-400 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+              title="Near Pay"
+            >
+              <Nfc size={32} className="group-hover:scale-110 transition-transform" />
+            </button>
+            <button
+              onClick={() => setShowScanner(true)}
+              className="w-16 h-16 bg-[#0a0a0a] text-orange-600 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+            >
+              <QrCode size={32} className="group-hover:scale-110 transition-transform" />
+            </button>
+          </div>
+        )}
       </main>
 
       <AnimatePresence>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
@@ -57,6 +57,7 @@ import { getTransactions } from '../services/transactionService';
 import { getCurrentUser } from '../services/sessionService';
 import { getBusinessSummary } from '../services/reportService';
 import { getBusinessAlerts } from '../services/alertService';
+import { apiGet, apiPost } from '../services/apiClient';
 import {
   createConversation,
   fetchConversationMessages,
@@ -65,7 +66,29 @@ import {
   normalizeChatMessage,
   sendChatAttachment,
   sendChatMessage,
+  toggleReaction,
+  muteConversation,
+  clearChat,
+  blockContact,
+  deleteConversation,
 } from '../services/chatService';
+import { useWebRTCCall } from '../hooks/useWebRTCCall';
+
+function colorForAccount(accountNumber: string): string {
+  const colors = ['#e8622c', '#3d6b4a', '#7a5c3d', '#3d5a80', '#6a4c93', '#9a3b3b'];
+  let hash = 0;
+  for (let i = 0; i < accountNumber.length; i++) {
+    hash = (hash * 31 + accountNumber.charCodeAt(i)) >>> 0;
+  }
+  return colors[hash % colors.length];
+}
+
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
 
 const TraderOverview = React.lazy(() => import('../components/trader/TraderOverview'));
 const TraderProducts = React.lazy(() => import('../components/trader/TraderProducts'));
@@ -95,6 +118,8 @@ const TraderChat = React.lazy<React.ComponentType<{
     lastMessageTime: string;
     lastMessageRead?: 'sent' | 'delivered' | 'read';
     unreadCount: number;
+    muted?: boolean;
+    blocked?: boolean;
   }>;
   messages?: Array<{
     id: string;
@@ -107,10 +132,25 @@ const TraderChat = React.lazy<React.ComponentType<{
   }>;
   selectedConversationId?: string;
   onSelectConversation?: (conversationId: string) => void | Promise<void>;
-  onSendMessage?: (conversationId: string, text: string) => void | Promise<void>;
-  onSendFile?: (conversationId: string, file: File) => void | Promise<void>;
+  onSendMessage?: (conversationId: string, text: string, replyToMessageId?: string | null) => void | Promise<void>;
+  onSendFile?: (conversationId: string, file: File, replyToMessageId?: string | null) => void | Promise<void>;
   onAddContact?: (accountNumber: string, displayName?: string) => Promise<any>;
   onStartCall?: (conversationId: string, type: 'voice' | 'video') => void;
+  onEndCall?: (conversationId: string) => void;
+  onToggleCallMute?: () => boolean;
+  call?: {
+    conversationId: string;
+    type: 'voice' | 'video';
+    state: 'idle' | 'calling' | 'connected' | 'failed' | 'ended';
+    localStream: MediaStream | null;
+    remoteStream: MediaStream | null;
+    failReason: string | null;
+  };
+  onMuteConversation?: (conversationId: string, muted: boolean) => void;
+  onClearChat?: (conversationId: string) => void;
+  onBlockContact?: (conversationId: string, blocked: boolean) => void;
+  onDeleteConversation?: (conversationId: string) => void;
+  onToggleReaction?: (messageId: string, emoji: string) => void | Promise<void>;
 }>>(
   () => import('../components/trader/TraderChat')
 );
@@ -205,7 +245,9 @@ export default function TraderDashboard() {
   const [chatConversations, setChatConversations] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
+  const selectedChatConversationIdRef = useRef<string>('');
   const wsRef = useRef<WebSocket | null>(null);
+  const webrtcRef = useRef<any>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -243,7 +285,21 @@ export default function TraderDashboard() {
   const dashboardTraderId =
     activeTeamContext?.traderId || userData?.uid || userData?.id || auth.currentUser?.uid || '';
   const actingUserId = auth.currentUser?.uid || userData?.uid || userData?.id || '';
-  const chatAccountNumber = userData?.appNumber || dashboardTraderId || '';
+  
+  // Memoize chatAccountNumber to prevent unnecessary effect reruns
+  const chatAccountNumber = useMemo(() => userData?.appNumber || dashboardTraderId || '', [userData?.appNumber, dashboardTraderId]);
+
+  // WebRTC call hook
+  const webrtc = useWebRTCCall({ socket: wsRef.current, accountNumber: chatAccountNumber });
+  
+  // Keep a stable ref to the current webrtc instance
+  useEffect(() => {
+    webrtcRef.current = webrtc;
+  }, [webrtc]);
+
+  const handleChatEndCall = useCallback((_conversationId: string) => {
+    webrtcRef.current?.endCall();
+  }, []);
 
   console.debug('[TraderDashboard] dashboardTraderId computed', {
     dashboardTraderId,
@@ -253,10 +309,10 @@ export default function TraderDashboard() {
     userDataUid: userData?.uid,
   });
 
-  const handleChatSendMessage = useCallback(async (conversationId: string, text: string) => {
+  const handleChatSendMessage = useCallback(async (conversationId: string, text: string, replyToMessageId?: string | null) => {
     if (!chatAccountNumber) return;
     try {
-      const message = await sendChatMessage(conversationId, text, chatAccountNumber);
+      const message = await sendChatMessage(conversationId, text, chatAccountNumber, replyToMessageId);
       setChatConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === conversationId
@@ -274,10 +330,10 @@ export default function TraderDashboard() {
     }
   }, [chatAccountNumber]);
 
-  const handleChatSendFile = useCallback(async (conversationId: string, file: File) => {
+  const handleChatSendFile = useCallback(async (conversationId: string, file: File, replyToMessageId?: string | null) => {
     if (!chatAccountNumber) return;
     try {
-      const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber);
+      const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber, replyToMessageId);
       setChatConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === conversationId
@@ -292,6 +348,16 @@ export default function TraderDashboard() {
       );
     } catch (error) {
       console.error('[TraderDashboard] failed to upload chat attachment', error);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatReactionToggle = useCallback(async (messageId: string, emoji: string) => {
+    if (!chatAccountNumber) return;
+    try {
+      const updatedMessage = await toggleReaction(messageId, emoji, chatAccountNumber);
+      setChatMessages((prev) => prev.map((message) => (message.id === messageId ? updatedMessage : message)));
+    } catch (error) {
+      console.error('[TraderDashboard] failed to toggle chat reaction', messageId, error);
     }
   }, [chatAccountNumber]);
 
@@ -318,12 +384,77 @@ export default function TraderDashboard() {
     };
   }, [chatAccountNumber]);
 
-  const handleChatStartCall = useCallback((_conversationId: string, _type: 'voice' | 'video') => {
-    console.info('[TraderDashboard] chat call requested');
-  }, []);
+  const handleChatStartCall = useCallback((conversationId: string, type: 'voice' | 'video') => {
+    const conversation = chatConversations.find((c) => c.id === conversationId);
+    if (!conversation?.accountNumber) return;
+    webrtc.startCall(conversationId, conversation.accountNumber, type);
+  }, [chatConversations, webrtc]);
+
+  const handleChatMuteConversation = useCallback(async (conversationId: string, muted: boolean) => {
+    if (!chatAccountNumber) return;
+    try {
+      await muteConversation(conversationId, muted, chatAccountNumber);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, muted }
+            : conversation
+        )
+      );
+    } catch (error) {
+      console.error('[TraderDashboard] failed to mute chat conversation', conversationId, error);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatClearChat = useCallback(async (conversationId: string) => {
+    if (!chatAccountNumber) return;
+    try {
+      await clearChat(conversationId, chatAccountNumber);
+      setChatMessages((prev) => prev.filter((message) => message.conversationId !== conversationId));
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, lastMessagePreview: '', lastMessageTime: '' }
+            : conversation
+        )
+      );
+    } catch (error) {
+      console.error('[TraderDashboard] failed to clear chat conversation', conversationId, error);
+    }
+  }, [chatAccountNumber]);
+
+  const handleChatBlockContact = useCallback(async (conversationId: string, blocked: boolean) => {
+    if (!chatAccountNumber) return;
+    try {
+      await blockContact(conversationId, blocked, chatAccountNumber);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, blocked }
+            : conversation
+        )
+      );
+    } catch (error) {
+      console.error('[TraderDashboard] failed to block chat contact', conversationId, error);
+    }
+  }, [chatAccountNumber]);
+  const handleChatDeleteConversation = useCallback(async (conversationId: string) => {
+    if (!chatAccountNumber) return;
+    try {
+      await deleteConversation(conversationId, chatAccountNumber);
+      setChatConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      setChatMessages((prev) => prev.filter((message) => message.conversationId !== conversationId));
+      if (selectedChatConversationId === conversationId) {
+        setSelectedChatConversationId('');
+      }
+    } catch (error) {
+      console.error('[TraderDashboard] failed to delete chat conversation', conversationId, error);
+    }
+  }, [chatAccountNumber, selectedChatConversationId]);
 
   const handleChatConversationSelect = useCallback(async (conversationId: string) => {
-    if (!chatAccountNumber || selectedChatConversationId === conversationId) return;
+    if (!chatAccountNumber || selectedChatConversationIdRef.current === conversationId) return;
+    selectedChatConversationIdRef.current = conversationId;
     setSelectedChatConversationId(conversationId);
     try {
       const messages = await fetchConversationMessages(conversationId, chatAccountNumber);
@@ -332,7 +463,10 @@ export default function TraderDashboard() {
       console.error('[TraderDashboard] failed to load chat messages for conversation', conversationId, error);
       setChatMessages([]);
     }
-  }, [chatAccountNumber, selectedChatConversationId]);
+  }, [chatAccountNumber]);
+
+  // WebRTC call hook
+  // (webrtc declared earlier)
 
   useEffect(() => {
     if (!chatAccountNumber) return;
@@ -343,8 +477,12 @@ export default function TraderDashboard() {
       if (isCancelled) return;
       setChatConversations(conversations);
       if (conversations[0]) {
-        setSelectedChatConversationId(conversations[0].id);
-        const messages = await fetchConversationMessages(conversations[0].id, chatAccountNumber);
+        const firstId = conversations[0].id;
+        if (selectedChatConversationIdRef.current !== firstId) {
+          selectedChatConversationIdRef.current = firstId;
+          setSelectedChatConversationId(firstId);
+        }
+        const messages = await fetchConversationMessages(firstId, chatAccountNumber);
         if (!isCancelled) {
           setChatMessages(messages);
         }
@@ -356,29 +494,84 @@ export default function TraderDashboard() {
     });
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}/`);
+    const cookieMatch = document.cookie.match(/(?:^|; )nexus_auth_token=([^;]+)/);
+    const cookieToken = cookieMatch ? decodeURIComponent(cookieMatch[1]) : '';
+    const wsUrl = cookieToken
+      ? `${protocol}//${window.location.host}/?token=${encodeURIComponent(cookieToken)}`
+      : `${protocol}//${window.location.host}/`;
+    const socket = new WebSocket(wsUrl);
     wsRef.current = socket;
 
     socket.addEventListener('message', (event) => {
       try {
         const payload = JSON.parse(event.data);
+
+        // WebRTC signaling messages - use ref to access current instance
+        if (payload.type === 'call_offer') {
+          webrtcRef.current?.handleIncomingOffer({
+            conversationId: payload.conversationId,
+            fromAccountNumber: payload.fromAccountNumber,
+            sdp: payload.sdp,
+            callType: payload.callType,
+          });
+          return;
+        }
+        if (payload.type === 'call_answer') {
+          webrtcRef.current?.handleAnswer(payload.sdp);
+          return;
+        }
+        if (payload.type === 'call_ice_candidate') {
+          webrtcRef.current?.handleIceCandidate(payload.candidate);
+          return;
+        }
+        if (payload.type === 'call_end') {
+          webrtcRef.current?.handleRemoteEnd();
+          return;
+        }
+        if (payload.type === 'call_failed') {
+          webrtcRef.current?.handleRemoteFailed(payload.reason === 'offline' ? 'This contact is offline.' : 'Call failed.');
+          return;
+        }
+
         if (payload.type !== 'message') return;
         const normalized = normalizeChatMessage(payload, chatAccountNumber);
         setChatMessages((prev) => (prev.some((message) => message.id === normalized.id) ? prev : [...prev, normalized]));
+
+        const peerAccountNumber = normalized.senderId !== 'me' ? normalized.senderId : payload.recipientAccountNumber || '';
+        const newPreview = normalized.text || '📎 Attachment';
+        const newTime = normalized.timestamp || '';
+
         setChatConversations((prev) => {
-          if (prev.some((conversation) => conversation.id === normalized.conversationId)) {
-            return prev.map((conversation) =>
-              conversation.id === normalized.conversationId
-                ? {
-                    ...conversation,
-                    lastMessagePreview: normalized.text || '📎 Attachment',
-                    lastMessageTime: normalized.timestamp || '',
-                  }
-                : conversation
-            );
+          const idx = prev.findIndex((c) => c.id === normalized.conversationId);
+          if (idx !== -1) {
+            const existing = prev[idx];
+            if (existing.lastMessagePreview === newPreview && existing.lastMessageTime === newTime) return prev;
+            const next = prev.slice();
+            next[idx] = { ...existing, lastMessagePreview: newPreview, lastMessageTime: newTime };
+            return next;
           }
-          return prev;
+          if (!peerAccountNumber) return prev;
+
+          return [
+            {
+              id: normalized.conversationId,
+              accountNumber: peerAccountNumber,
+              name: peerAccountNumber,
+              initials: initialsFor(peerAccountNumber),
+              avatarColor: colorForAccount(peerAccountNumber),
+              online: false,
+              lastMessagePreview: newPreview,
+              lastMessageTime: newTime,
+              unreadCount: 1,
+            },
+            ...prev,
+          ];
         });
+
+        if (normalized.conversationId && peerAccountNumber) {
+          setSelectedChatConversationId(normalized.conversationId);
+          setActiveTab('chat');
+        }
       } catch (error) {
         console.error('[TraderDashboard] failed to parse chat socket payload', error);
       }
@@ -498,8 +691,7 @@ export default function TraderDashboard() {
     try {
       const traderId = userData?.id || userData?.uid || '';
       if (!traderId) return;
-      const res = await fetch(`/api/traders/${traderId}/branches`, { credentials: 'include' });
-      const payload = await res.json();
+      const payload = await apiGet<{ success: boolean; branches: any[] }>(`/api/traders/${traderId}/branches`);
       if (payload.success) setBranches(payload.branches || []);
     } catch (err) {
       console.error('Failed to load branches', err);
@@ -513,8 +705,7 @@ export default function TraderDashboard() {
 
   const switchBranch = async (branchId: string) => {
     try {
-      const res = await fetch(`/api/branches/${branchId}/switch`, { method: 'POST', credentials: 'include' });
-      const payload = await res.json();
+      const payload = await apiPost<{ success: boolean; error?: string }>(`/api/branches/${branchId}/switch`);
       if (payload.success) {
         setActiveBranchId(branchId);
         // reload data scoped to branch
@@ -576,7 +767,7 @@ export default function TraderDashboard() {
       setUpgradeStatus('cancel');
       navigate('/trader', { replace: true });
     }
-  }, [location, navigate]);
+  }, [location.search, navigate]);
 
   // Real-time data subscriptions
   useEffect(() => {
@@ -1715,6 +1906,25 @@ export default function TraderDashboard() {
                     onSendFile={handleChatSendFile}
                     onAddContact={handleChatAddContact}
                     onStartCall={handleChatStartCall}
+                    onEndCall={handleChatEndCall}
+                    onToggleCallMute={webrtc.toggleMute}
+                    call={
+                      webrtc.activeConversationId
+                        ? {
+                            conversationId: webrtc.activeConversationId,
+                            type: webrtc.callType,
+                            state: webrtc.callState,
+                            localStream: webrtc.localStream,
+                            remoteStream: webrtc.remoteStream,
+                            failReason: webrtc.failReason,
+                          }
+                        : undefined
+                    }
+                    onMuteConversation={handleChatMuteConversation}
+                    onClearChat={handleChatClearChat}
+                    onBlockContact={handleChatBlockContact}
+                    onDeleteConversation={handleChatDeleteConversation}
+                    onToggleReaction={handleChatReactionToggle}
                   />
                 )}
                 {activeTab === 'support' && (

@@ -13,7 +13,7 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   }
 }
 
-export default function initializeDatabase() {
+function initializeDatabase() {
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
@@ -955,10 +955,24 @@ export default function initializeDatabase() {
       traderId TEXT NOT NULL,
       name TEXT NOT NULL,
       location TEXT,
+      appNumber TEXT,
       status TEXT DEFAULT 'active',
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS branch_accounts (
+      id TEXT PRIMARY KEY,
+      branchId TEXT NOT NULL,
+      userId TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'staff',
+      permissions TEXT,
+      active INTEGER DEFAULT 1,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (branchId) REFERENCES branches(id) ON DELETE CASCADE,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS team_invitations (
@@ -1101,6 +1115,8 @@ export default function initializeDatabase() {
       id TEXT PRIMARY KEY,
       accountNumberA TEXT NOT NULL,
       accountNumberB TEXT NOT NULL,
+      mutedBy TEXT,
+      blockedBy TEXT,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -1126,6 +1142,8 @@ export default function initializeDatabase() {
       attachmentUrl TEXT,
       attachmentSize INTEGER,
       clientMessageId TEXT,
+      replyToMessageId TEXT,
+      reactions TEXT,
       status TEXT DEFAULT 'sent',
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1202,6 +1220,11 @@ export default function initializeDatabase() {
     ['trader_subscriptions', 'trial_ends_at', 'DATETIME'],
     ['trader_subscriptions', 'trial_converted_at', 'DATETIME'],
     ['trader_subscriptions', 'grace_ends_at', 'DATETIME'],
+    ['branches', 'appNumber', 'TEXT'],
+    ['chat_conversations', 'mutedBy', 'TEXT'],
+    ['chat_conversations', 'blockedBy', 'TEXT'],
+    ['chat_messages', 'replyToMessageId', 'TEXT'],
+    ['chat_messages', 'reactions', 'TEXT'],
   ].forEach(([table, column, definition]) => ensureColumn(db, table, column, definition));
 
   db.exec(`
@@ -1312,6 +1335,8 @@ export default function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_platform_wallet_transactions_type ON platform_wallet_transactions(type);
     CREATE INDEX IF NOT EXISTS idx_platform_wallet_transactions_direction ON platform_wallet_transactions(direction);
     CREATE INDEX IF NOT EXISTS idx_branches_traderId ON branches(traderId);
+    CREATE INDEX IF NOT EXISTS idx_branch_accounts_branchId ON branch_accounts(branchId);
+    CREATE INDEX IF NOT EXISTS idx_branch_accounts_userId ON branch_accounts(userId);
     CREATE INDEX IF NOT EXISTS idx_team_invitations_traderId ON team_invitations(traderId);
     CREATE INDEX IF NOT EXISTS idx_team_invitations_email ON team_invitations(email);
     CREATE INDEX IF NOT EXISTS idx_team_invitations_status ON team_invitations(status);
@@ -1897,3 +1922,6 @@ export default function initializeDatabase() {
 
   return db;
 }
+
+const dbInstance = initializeDatabase();
+export default dbInstance;

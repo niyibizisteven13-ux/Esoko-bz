@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, setAuthToken } from './apiClient';
 
 const AUTH_USER_KEY = 'auth_user';
 const AUTH_CHANNEL_NAME = 'esoko-auth-sync';
@@ -130,6 +130,7 @@ async function fetchUserFromServer() {
     const message = String(err);
     if (message.includes('401')) {
       writeStoredUser(null);
+      setAuthToken(null);
       return null;
     }
     if (
@@ -139,6 +140,7 @@ async function fetchUserFromServer() {
     ) {
       console.debug('Auth refresh rejected:', message);
       writeStoredUser(null);
+      setAuthToken(null);
       return null;
     }
     console.debug('Auth refresh error:', message);
@@ -177,6 +179,8 @@ export async function loginWithEmail(email: string, password: string): Promise<A
     notifyAuthListeners();
   }
 
+  if (data.token) setAuthToken(data.token);
+
   return data;
 }
 
@@ -198,6 +202,8 @@ export async function registerWithEmail(
   } else {
     notifyAuthListeners();
   }
+
+  if (data.token) setAuthToken(data.token);
 
   return data;
 }
@@ -225,6 +231,7 @@ export async function logoutUser() {
     console.debug('Logout error:', e);
   }
   writeStoredUser(null);
+  setAuthToken(null);
 }
 
 export function observeAuthState(callback: (user: any) => void) {

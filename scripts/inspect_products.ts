@@ -1,6 +1,4 @@
-import initializeDatabase from '../db';
-
-const db = initializeDatabase();
+import db from '../db';
 
 const rows = db.prepare(`SELECT id, traderId, name, code, status, image, images, metadata, createdAt FROM products ORDER BY datetime(createdAt) DESC LIMIT 30`).all();
 

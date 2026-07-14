@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, setAuthToken } from './apiClient';
 
 export interface LoginPayload {
   email: string;
@@ -20,11 +20,13 @@ export interface AuthResponse {
 
 export async function login(payload: LoginPayload) {
   const response = await apiPost<AuthResponse>('/api/auth/login', payload);
+  if (response?.token) setAuthToken(response.token);
   return response;
 }
 
 export async function register(payload: RegisterPayload) {
   const response = await apiPost<AuthResponse>('/api/auth/register', payload);
+  if (response?.token) setAuthToken(response.token);
   return response;
 }
 
@@ -40,7 +42,14 @@ export async function logout() {
     }
   });
 
-  return apiPost('/api/auth/logout');
+  try {
+    const resp = await apiPost('/api/auth/logout');
+    setAuthToken(null);
+    return resp;
+  } catch (e) {
+    setAuthToken(null);
+    throw e;
+  }
 }
 
 export async function getCurrentUser() {

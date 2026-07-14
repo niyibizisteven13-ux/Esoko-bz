@@ -3,11 +3,8 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { validateRequest } from '../lib/middleware.ts';
 import { LoginSchema, RegisterSchema } from '../src/lib/validation.ts';
-import { authenticate } from '../lib/authMiddleware.ts';
+import { hashPassword, verifyPassword, hashToken } from '../lib/security.ts';
 import {
-  hashPassword,
-  verifyPassword,
-  hashToken,
   issueAuthCookies,
   clearAuthCookies,
   consumeRefreshToken,
@@ -22,9 +19,15 @@ import {
   validateVerificationTokenRow,
   completeVerification,
   logSystem,
-} from '../server.ts'; // Temporarily import from server.ts
+} from '../server.ts';
 import db from '../db.ts';
 import type { Request, Response } from 'express';
+
+// Note: 'authenticate' middleware is applied externally by server.ts
+let authenticate: any = null;
+export function setAuthenticateMiddleware(middleware: any) {
+  authenticate = middleware;
+}
 
 const router = express.Router();
 
@@ -172,7 +175,7 @@ router.post('/login', validateRequest(LoginSchema), (req: any, res): any => {
     logSystem(`Successful login for ${email}`, 'info', 'auth', user.id);
 
     const { token: loginAlertToken } = createLoginAlertRecord(freshUser, req);
-    void sendLoginAlertEmail(req, freshUser, loginAlertToken).catch((emailError) => {
+    void sendLoginAlertEmail(req, freshUser, loginAlertToken).catch((emailError: any) => {
       console.error('Login alert email failed:', emailError);
       logSystem(
         `Login alert email failed for ${freshUser.email}: ${String(emailError?.message || emailError)}`,
@@ -227,7 +230,13 @@ router.post('/logout', (req: any, res) => {
   res.json({ success: true });
 });
 
-router.get('/me', authenticate, (req: any, res): any => {
+router.get('/me', (req: any, res, next) => {
+  if (authenticate) {
+    authenticate(req, res, next);
+  } else {
+    next();
+  }
+}, (req: any, res): any => {
   res.json({ success: true, user: publicUser(req.user) });
 });
 

@@ -1,10 +1,8 @@
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import initializeDatabase from './db.ts';
+import db from './db.ts';
 import { runPendingMigrations } from './lib/migrations.ts';
 import path from 'path';
-
-const db = initializeDatabase();
 
 function hashPassword(password: string) {
   const salt = crypto.randomBytes(16).toString('hex');
