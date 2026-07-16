@@ -18,6 +18,7 @@ import cors from 'cors';
 import https from 'https';
 import { createServer as createHttpServer, type Server as HttpServer } from 'http';
 import { WebSocketServer } from 'ws';
+import { Server as IOServer } from 'socket.io';
 import { loadAppConfig } from './lib/env.ts';
 import { createIdempotencyStore } from './lib/idempotency.ts';
 import { errorHandler, validateRequest } from './lib/middleware.ts';
@@ -391,6 +392,8 @@ const accountModeCookieOptions: CookieOptions = {
 };
 
 const liveSyncClients = new Map<string, Response>();
+// Socket.IO server instance (initialized once when the HTTP server is created)
+let io: IOServer | null = null;
 
 function inferCollectionFromPath(pathname: string) {
   const match = pathname.match(/^\/api\/([^/?]+)/);
@@ -689,47 +692,37 @@ function persistChatMessage(input: {
 }) {
   const messageId = uuidv4();
   const createdAt = new Date().toISOString();
-  db.prepare(
-    `
-      INSERT INTO chat_messages (
-        id,
-        conversationId,
-        senderAccountNumber,
-        recipientAccountNumber,
-        text,
-        attachmentType,
-        attachmentName,
-        attachmentMimeType,
-        attachmentUrl,
-        attachmentSize,
-        clientMessageId,
-        replyToMessageId,
-        reactions,
-        status,
-        createdAt,
-        updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-  ).run(
-    messageId,
-    input.conversationId,
-    input.senderAccountNumber,
-    input.recipientAccountNumber,
-    input.text || null,
-    input.attachmentType || null,
-    input.attachmentName || null,
-    input.attachmentMimeType || null,
-    input.attachmentUrl || null,
-    input.attachmentSize || null,
-    input.clientMessageId,
-    input.replyToMessageId || null,
-    input.reactions || null,
-    input.status || 'sent',
-    createdAt,
-    createdAt
+  
+  const query = `
+    INSERT INTO chat_messages (
+      id, conversationId, senderAccountNumber, recipientAccountNumber,
+      text, attachmentType, attachmentName, attachmentMimeType,
+      attachmentUrl, attachmentSize, clientMessageId, replyToMessageId,
+      reactions, status, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+
+  db.prepare(query).run(
+    messageId,                          // 1
+    input.conversationId,               // 2
+    input.senderAccountNumber,           // 3
+    input.recipientAccountNumber,         // 4
+    input.text || null,                 // 5
+    input.attachmentType || null,       // 6
+    input.attachmentName || null,       // 7
+    input.attachmentMimeType || null,   // 8
+    input.attachmentUrl || null,         // 9
+    input.attachmentSize || null,       // 10
+    input.clientMessageId,              // 11
+    input.replyToMessageId || null,     // 12
+    input.reactions || null,            // 13
+    input.status || 'sent',             // 14
+    createdAt,                          // 15
+    createdAt                           // 16
   );
+
   updateConversationTimestamp(input.conversationId);
-  return extractMessageEnvelope({
+  const saved = extractMessageEnvelope({
     id: messageId,
     conversationId: input.conversationId,
     senderAccountNumber: input.senderAccountNumber,
@@ -746,6 +739,26 @@ function persistChatMessage(input: {
     status: input.status || 'sent',
     createdAt,
   });
+
+  // Broadcast via Socket.IO if available so connected frontends receive the message instantly.
+  try {
+    if (io) {
+      // Emit to a specific room named after the recipient account number (if clients join rooms by account)
+      try {
+        io.to(String(input.recipientAccountNumber)).emit('new_message', saved);
+      } catch (e) {
+        // ignore per-socket errors
+      }
+      // Also emit a global event for clients that subscribe globally
+      try {
+        io.emit('new_message_global', saved);
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('Socket.IO broadcast failed:', e);
+  }
+
+  return saved;
 }
 
 function broadcastChatMessage(message: any, sockets: Map<string, Set<any>>) {
@@ -1150,11 +1163,16 @@ function attachMessengerRoutes() {
     }
     const peerAccountNumber = getPeerAccountNumber(req.params.id, accountNumber);
     const fileUrl = `/uploads/${req.file.filename}`;
+    
+    // Detect attachment type: 'image' for images, 'file' for others
+    const isImage = req.file.mimetype.startsWith('image/');
+    const attachmentType = isImage ? 'image' : 'file';
+    
     const message = persistChatMessage({
       conversationId: req.params.id,
       senderAccountNumber: accountNumber,
       recipientAccountNumber: peerAccountNumber,
-      attachmentType: 'file',
+      attachmentType,
       attachmentName: req.file.originalname,
       attachmentMimeType: req.file.mimetype,
       attachmentUrl: fileUrl,
@@ -1176,7 +1194,7 @@ function attachMessengerRoutes() {
         from: accountNumber,
         text: undefined,
         attachment: {
-          type: 'file',
+          type: attachmentType,
           name: req.file.originalname,
           mimeType: req.file.mimetype,
           size: req.file.size,
@@ -1194,6 +1212,7 @@ function attachMessengerRoutes() {
         name: req.file.originalname,
         size: req.file.size,
         mimeType: req.file.mimetype,
+        type: attachmentType,
       },
     });
   });
@@ -1209,6 +1228,250 @@ function attachMessengerRoutes() {
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     });
   });
+
+  // ===== VOICE NOTES ENDPOINT =====
+  app.post('/api/conversations/:id/voice-notes', authenticate, chatUpload.single('audio'), 
+    (req: any, res: Response): any => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No audio file provided' });
+      }
+      
+      const conversationId = String(req.params.id);
+      const accountNumber = resolveChatAccountNumber(req.user);
+      const duration = parseInt(req.body.duration) || 0;
+      
+      // Validate conversation
+      const conversation = db.prepare(`
+        SELECT * FROM chat_conversations WHERE id = ?
+      `).get(conversationId) as any;
+      
+      if (!conversation) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({ success: false, error: 'Conversation not found' });
+      }
+
+      if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({ success: false, error: 'Conversation access denied' });
+      }
+      
+      const voiceNoteId = uuidv4();
+      const peerAccountNumber = getPeerAccountNumber(conversationId, accountNumber);
+      const audioUrl = `/uploads/${req.file.filename}`;
+      
+      // Insert voice note record
+      db.prepare(`
+        INSERT INTO voice_notes 
+        (id, conversationId, senderAccountNumber, recipientAccountNumber, audioUrl, duration, mimeType, fileSize, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        voiceNoteId,
+        conversationId,
+        accountNumber,
+        peerAccountNumber,
+        audioUrl,
+        duration,
+        req.file.mimetype,
+        req.file.size,
+        'sent'
+      );
+      
+      // Also create a chat message with voice note attachment
+      const messageId = uuidv4();
+      db.prepare(`
+        INSERT INTO chat_messages 
+        (id, conversationId, senderAccountNumber, recipientAccountNumber, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        messageId,
+        conversationId,
+        accountNumber,
+        peerAccountNumber,
+        'voice-note',
+        `Voice Note (${duration}s)`,
+        req.file.mimetype,
+        audioUrl,
+        req.file.size,
+        'sent'
+      );
+      
+      // Broadcast via Socket.io
+      const message = db.prepare(`
+        SELECT * FROM chat_messages WHERE id = ?
+      `).get(messageId) as any;
+      
+      io?.to(peerAccountNumber).emit('new_message', {
+        ...message,
+        attachment: {
+          type: 'voice-note',
+          name: `Voice Note (${duration}s)`,
+          meta: req.file.mimetype,
+          url: audioUrl,
+          size: req.file.size,
+          duration
+        }
+      });
+      
+      logSystem(`Voice note sent: ${voiceNoteId}`, 'info', 'call', accountNumber);
+      
+      res.json({
+        success: true,
+        id: voiceNoteId,
+        messageId,
+        message: {
+          ...message,
+          attachment: {
+            type: 'voice-note',
+            name: `Voice Note (${duration}s)`,
+            meta: req.file.mimetype,
+            url: audioUrl,
+            size: req.file.size,
+            duration
+          }
+        }
+      });
+    } catch (error: any) {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // ===== VIDEO NOTES ENDPOINT =====
+  app.post('/api/conversations/:id/video-notes', authenticate, chatUpload.single('video'), 
+    (req: any, res: Response): any => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No video file provided' });
+      }
+      
+      const conversationId = String(req.params.id);
+      const accountNumber = resolveChatAccountNumber(req.user);
+      const duration = parseInt(req.body.duration) || 0;
+      const thumbnailUrl = req.body.thumbnailUrl;
+      
+      // Validate conversation
+      const conversation = db.prepare(`
+        SELECT * FROM chat_conversations WHERE id = ?
+      `).get(conversationId) as any;
+      
+      if (!conversation) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({ success: false, error: 'Conversation not found' });
+      }
+
+      if (![conversation.accountNumberA, conversation.accountNumberB].includes(accountNumber)) {
+        fs.unlinkSync(req.file.path);
+        return res.status(403).json({ success: false, error: 'Conversation access denied' });
+      }
+      
+      const videoNoteId = uuidv4();
+      const peerAccountNumber = getPeerAccountNumber(conversationId, accountNumber);
+      const videoUrl = `/uploads/${req.file.filename}`;
+      
+      // Insert video note record
+      db.prepare(`
+        INSERT INTO video_notes 
+        (id, conversationId, senderAccountNumber, recipientAccountNumber, videoUrl, duration, mimeType, fileSize, thumbnailUrl, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        videoNoteId,
+        conversationId,
+        accountNumber,
+        peerAccountNumber,
+        videoUrl,
+        duration,
+        req.file.mimetype,
+        req.file.size,
+        thumbnailUrl || null,
+        'sent'
+      );
+      
+      // Also create a chat message
+      const messageId = uuidv4();
+      db.prepare(`
+        INSERT INTO chat_messages 
+        (id, conversationId, senderAccountNumber, recipientAccountNumber, attachmentType, attachmentName, attachmentMimeType, attachmentUrl, attachmentSize, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        messageId,
+        conversationId,
+        accountNumber,
+        peerAccountNumber,
+        'video-note',
+        `Video Note (${duration}s)`,
+        req.file.mimetype,
+        videoUrl,
+        req.file.size,
+        'sent'
+      );
+      
+      // Broadcast via Socket.io
+      const message = db.prepare(`
+        SELECT * FROM chat_messages WHERE id = ?
+      `).get(messageId) as any;
+      
+      io?.to(peerAccountNumber).emit('new_message', {
+        ...message,
+        attachment: {
+          type: 'video-note',
+          name: `Video Note (${duration}s)`,
+          meta: req.file.mimetype,
+          url: videoUrl,
+          thumbnailUrl,
+          size: req.file.size,
+          duration
+        }
+      });
+      
+      logSystem(`Video note sent: ${videoNoteId}`, 'info', 'call', accountNumber);
+      
+      res.json({
+        success: true,
+        id: videoNoteId,
+        messageId,
+        message: {
+          ...message,
+          attachment: {
+            type: 'video-note',
+            name: `Video Note (${duration}s)`,
+            meta: req.file.mimetype,
+            url: videoUrl,
+            thumbnailUrl,
+            size: req.file.size,
+            duration
+          }
+        }
+      });
+    } catch (error: any) {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // ===== GET CALL HISTORY =====
+  app.get('/api/conversations/:id/calls', authenticate, (req: any, res: Response): any => {
+    try {
+      const conversationId = String(req.params.id);
+      const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+      const offset = parseInt(req.query.offset) || 0;
+      
+      const calls = db.prepare(`
+        SELECT * FROM call_sessions 
+        WHERE conversationId = ?
+        ORDER BY createdAt DESC
+        LIMIT ? OFFSET ?
+      `).all(conversationId, limit, offset) as any[];
+      
+      res.json({ success: true, calls });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
 }
 
 const chatSocketsByAccount = new Map<string, Set<any>>();
@@ -1217,6 +1480,11 @@ function initializeMessengerSocketServer(httpServer: HttpServer) {
   const wsServer = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (req: any, socket: any, head: Buffer) => {
+    // Ignore Socket.io upgrade paths - Socket.io handles its own upgrades
+    if (req.url?.startsWith('/socket.io')) {
+      return;
+    }
+
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const token = String(url.searchParams.get('token') || req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const cookieHeader = String(req.headers.cookie || '');
@@ -3195,6 +3463,89 @@ function startLoanPaymentReminderScheduler() {
   setTimeout(runSafely, 30000).unref();
   loanReminderInterval = setInterval(runSafely, 6 * 60 * 60 * 1000);
   loanReminderInterval.unref();
+}
+
+// Runway alert job: checks trader runway and notifies when below threshold
+function runRunwayAlertJob(opts: { windowMonths?: number; thresholdMonths?: number } = { windowMonths: 3, thresholdMonths: 2 }) {
+  const windowMonths = Math.max(1, Math.min(12, Number(opts.windowMonths || 3)));
+  const threshold = Number(opts.thresholdMonths || 2);
+  const now = new Date();
+
+  const traders = db
+    .prepare("SELECT id, COALESCE(walletBalance,0) as walletBalance FROM users WHERE role = 'trader'")
+    .all() as any[];
+
+  const insertNotification = createNotificationForUser;
+
+  let alertsCreated = 0;
+
+  traders.forEach((trader) => {
+    try {
+      const balance = Number(trader.walletBalance || 0);
+      const outflowRows = db
+        .prepare(
+          `
+        SELECT COALESCE(SUM(CASE WHEN netAmount < 0 THEN ABS(netAmount) ELSE 0 END),0) as outflow
+        FROM transactions
+        WHERE traderId = ? AND DATE(createdAt) >= DATE('now', ?)
+      `
+        )
+        .get(trader.id, `-${windowMonths} months`) as any;
+
+      const totalOutflow = Number(outflowRows?.outflow || 0);
+      const avgMonthlyOutflow = totalOutflow / windowMonths;
+      const runwayMonths = avgMonthlyOutflow > 0 ? balance / avgMonthlyOutflow : null;
+
+      if (runwayMonths !== null && runwayMonths < threshold) {
+        // Avoid spamming: check if a recent runway_alert exists in last 24 hours
+        const recent = db
+          .prepare(
+            `SELECT id FROM notifications WHERE userId = ? AND subType = 'runway_alert' AND DATETIME(createdAt) >= DATETIME('now','-1 day') LIMIT 1`
+          )
+          .get(trader.id) as any;
+        if (recent) return;
+
+        const message = `Estimated runway ${runwayMonths.toFixed(1)} months. Consider conserving cash or increasing sales.`;
+        const notifId = insertNotification({ userId: trader.id, message, type: 'warning', subType: 'runway_alert', title: 'Low runway' });
+
+        // Emit Socket.IO event if available
+        try {
+          io?.to(String(trader.id)).emit('alert:runway', {
+            id: notifId,
+            userId: trader.id,
+            message,
+            balance,
+            avgMonthlyOutflow: +(avgMonthlyOutflow || 0).toFixed(2),
+            runwayMonths: runwayMonths !== null ? +runwayMonths.toFixed(2) : null,
+            timestamp: now.toISOString(),
+          });
+        } catch (e) {}
+
+        alertsCreated += 1;
+      }
+    } catch (err) {
+      console.error('Runway alert check failed for trader', trader.id, err);
+    }
+  });
+
+  return { success: true, checkedAt: now.toISOString(), alertsCreated };
+}
+
+let runwayAlertInterval: NodeJS.Timeout | null = null;
+function startRunwayAlertScheduler() {
+  if (runwayAlertInterval) return;
+  const runSafely = () => {
+    try {
+      const result = runRunwayAlertJob();
+      if (result.alertsCreated) console.log('Runway alert job:', result);
+    } catch (error) {
+      console.error('Runway alert job failed:', error);
+    }
+  };
+
+  setTimeout(runSafely, 60 * 1000).unref();
+  runwayAlertInterval = setInterval(runSafely, 60 * 60 * 1000);
+  runwayAlertInterval.unref();
 }
 
 function buildLoanWhatsAppHandoff(input: {
@@ -7522,6 +7873,10 @@ app.post(
     void mirrorProductToPostgres(savedProduct).catch((error) => {
       console.error('Postgres product mirror failed:', error);
     });
+    // Emit product created event
+    try {
+      if (io) io.emit('product_created', transformProduct(savedProduct));
+    } catch (e) {}
     res.json({ success: true, id, product: transformProduct(savedProduct) });
   }
 );
@@ -7594,6 +7949,10 @@ app.put(
     void mirrorProductToPostgres(savedProduct).catch((error) => {
       console.error('Postgres product mirror failed:', error);
     });
+    // Emit product updated event
+    try {
+      if (io) io.emit('product_updated', transformProduct(savedProduct));
+    } catch (e) {}
     res.json({ success: true, product: transformProduct(savedProduct) });
   }
 );
@@ -7609,6 +7968,9 @@ app.delete('/api/products/:id', requireRole(['trader', 'admin']), (req: any, res
   void deleteProductFromPostgres(req.params.id).catch((error) => {
     console.error('Postgres product delete mirror failed:', error);
   });
+  try {
+    if (io) io.emit('product_deleted', { id: req.params.id });
+  } catch (e) {}
   res.json({ success: true });
 });
 
@@ -11555,6 +11917,48 @@ app.post('/api/admin/platform-wallet/send', requireRole(['admin']), (req: any, r
   });
 });
 
+// Trader financials - runway estimate
+app.get('/api/traders/:id/financials/runway', authenticate, (req: any, res): any => {
+  try {
+    let traderId = String(req.params.id || '');
+    if (!traderId || traderId === 'me') traderId = req.effectiveTraderId || req.user?.id;
+    if (!traderId) return res.status(400).json({ success: false, error: 'Trader id required' });
+
+    // permission check: only admin or owner
+    if (req.user?.role !== 'admin' && traderId !== req.effectiveTraderId && traderId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+
+    const months = Number(req.query.windowMonths || 3);
+    const safeMonths = Math.max(1, Math.min(12, months));
+
+    // Trader balance (use users.walletBalance)
+    const traderRow = db.prepare('SELECT COALESCE(walletBalance,0) as walletBalance FROM users WHERE id = ?').get(traderId) as any;
+    const balance = Number(traderRow?.walletBalance || 0);
+
+    // Sum of outflows (negative net amounts) over the window grouped by day
+    const outflowRows = db
+      .prepare(
+        `
+      SELECT DATE(createdAt) as day, COALESCE(SUM(CASE WHEN netAmount < 0 THEN ABS(netAmount) ELSE 0 END),0) as outflow
+      FROM transactions
+      WHERE traderId = ? AND DATE(createdAt) >= DATE('now', ?)
+      GROUP BY DATE(createdAt)
+    `
+      )
+      .all(traderId, `-${safeMonths} months`) as any[];
+
+    const totalOutflow = outflowRows.reduce((s, r) => s + (Number(r.outflow) || 0), 0);
+    const avgMonthlyOutflow = +(totalOutflow / safeMonths).toFixed(2);
+
+    const runwayMonths = avgMonthlyOutflow > 0 ? +(balance / avgMonthlyOutflow).toFixed(2) : null;
+
+    res.json({ success: true, balance, avgMonthlyOutflow, runwayMonths });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/system_config', authenticate, (_req: any, res) => {
   const config = getConfig();
   res.json({ success: true, system_config: [config], data: [config] });
@@ -14255,7 +14659,7 @@ async function startServer() {
   }
 
   if (!isProduction) {
-    const desiredHmrPort = Number(process.env.HMR_PORT || (port === 5173 ? 24678 : port + 20000));
+    const desiredHmrPort = Number(process.env.HMR_PORT || 5173);
     const hmrPort = await findAvailablePort(desiredHmrPort);
     if (hmrPort !== desiredHmrPort) {
       console.warn(`HMR port ${desiredHmrPort} is already in use; falling back to ${hmrPort}.`);
@@ -14267,7 +14671,10 @@ async function startServer() {
     // to 'true' and ensure HMR_PORT is available.
     const enableHmr = String(process.env.ENABLE_HMR || 'false').toLowerCase() === 'true';
     vite = await createViteServer({
-      server: { middlewareMode: true, hmr: enableHmr ? { port: hmrPort } : false },
+      server: {
+        middlewareMode: true,
+        hmr: enableHmr ? { host: 'localhost', port: hmrPort, protocol: 'ws' } : false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -14322,15 +14729,203 @@ async function startServer() {
     return createHttpServer(app);
   };
 
-  activeServer = createServerWithMessenger().listen(listenPort, () => {
+  activeServer = createServerWithMessenger().listen(listenPort, '127.0.0.1', () => {
     const protocol = sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath) ? 'https' : 'http';
-    console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://localhost:${listenPort}`);
+    console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://127.0.0.1:${listenPort}`);
     console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
     console.log('Self-contained mode: Firebase and Firestore are not used.');
   });
-  initializeMessengerSocketServer(activeServer);
+  // Initialize Socket.IO for global real-time events
+  // Use separate initialization to avoid conflict with ws server upgrade handler
+  try {
+    io = new IOServer({
+      cors: {
+        origin: isProduction ? FRONTEND_URLS : '*',
+        methods: ['GET', 'POST'],
+        credentials: true,
+      },
+      destroyUpgrade: false,
+      destroyUpgradeTimeout: 0,
+    });
+    // Attach Socket.io to the server after ws server is initialized
+    (io as any).attach(activeServer);
 
+    io.on('connection', (socket: any) => {
+      console.log('Socket.IO client connected', socket.id);
+      // Allow clients to join rooms (e.g., account rooms) by sending a `join` event
+      socket.on('join', (room: string) => {
+        try {
+          if (room) socket.join(String(room));
+        } catch (e) {}
+      });
+      socket.on('leave', (room: string) => {
+        try {
+          if (room) socket.leave(String(room));
+        } catch (e) {}
+      });
+      socket.on('disconnect', () => {
+        // connection closed
+      });
+
+      // ===== CALL SIGNALING EVENTS =====
+
+      // User initiates a call (voice or video)
+      socket.on('call:initiate', (data: { 
+        conversationId: string; 
+        recipientAccountNumber: string; 
+        callType: 'voice' | 'video';
+        offer: any;
+      }) => {
+        try {
+          const callSessionId = data.conversationId + '-' + Date.now();
+          
+          const stmt = db.prepare(`
+            INSERT INTO call_sessions 
+            (id, conversationId, initiatorAccountNumber, recipientAccountNumber, callType, status, metadata, startedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          
+          const initiatorAccount = socket.handshake.auth.accountNumber;
+          stmt.run(
+            callSessionId,
+            data.conversationId,
+            initiatorAccount,
+            data.recipientAccountNumber,
+            data.callType,
+            'ringing',
+            JSON.stringify({ webrtcOffer: data.offer }),
+            new Date().toISOString()
+          );
+          
+          io?.to(data.recipientAccountNumber).emit('call:incoming', {
+            sessionId: callSessionId,
+            callType: data.callType,
+            fromAccountNumber: initiatorAccount,
+            offer: data.offer,
+            conversationId: data.conversationId
+          });
+          
+          logSystem(`Call initiated: ${callSessionId}`, 'info', 'call', initiatorAccount);
+        } catch (error: any) {
+          console.error('Call initiate error:', error);
+          socket.emit('call:error', { message: 'Failed to initiate call' });
+        }
+      });
+
+      // User answers a call
+      socket.on('call:answer', (data: {
+        sessionId: string;
+        answer: any;
+      }) => {
+        try {
+          const accountNumber = socket.handshake.auth.accountNumber;
+          
+          db.prepare(`
+            UPDATE call_sessions 
+            SET status = 'active', metadata = ?
+            WHERE id = ?
+          `).run(
+            JSON.stringify({ webrtcAnswer: data.answer }),
+            data.sessionId
+          );
+          
+          const callSession = db.prepare(`
+            SELECT * FROM call_sessions WHERE id = ?
+          `).get(data.sessionId) as any;
+          
+          if (callSession) {
+            io?.to(callSession.initiatorAccountNumber).emit('call:answered', {
+              sessionId: data.sessionId,
+              answer: data.answer
+            });
+          }
+          
+          logSystem(`Call answered: ${data.sessionId}`, 'info', 'call', accountNumber);
+        } catch (error: any) {
+          console.error('Call answer error:', error);
+        }
+      });
+
+      // Exchange ICE candidates
+      socket.on('call:ice-candidate', (data: {
+        sessionId: string;
+        candidate: any;
+        to: string;
+      }) => {
+        io?.to(data.to).emit('call:ice-candidate', {
+          sessionId: data.sessionId,
+          candidate: data.candidate,
+          from: socket.handshake.auth.accountNumber
+        });
+      });
+
+      // Decline call
+      socket.on('call:decline', (data: { sessionId: string }) => {
+        try {
+          db.prepare(`
+            UPDATE call_sessions 
+            SET status = 'declined'
+            WHERE id = ?
+          `).run(data.sessionId);
+          
+          const callSession = db.prepare(`
+            SELECT * FROM call_sessions WHERE id = ?
+          `).get(data.sessionId) as any;
+          
+          if (callSession) {
+            io?.to(callSession.initiatorAccountNumber).emit('call:declined', {
+              sessionId: data.sessionId
+            });
+          }
+          
+          logSystem(`Call declined: ${data.sessionId}`, 'info', 'call');
+        } catch (error: any) {
+          console.error('Call decline error:', error);
+        }
+      });
+
+      // End call
+      socket.on('call:end', (data: { 
+        sessionId: string;
+        duration: number;
+      }) => {
+        try {
+          db.prepare(`
+            UPDATE call_sessions 
+            SET status = 'completed', duration = ?, endedAt = ?
+            WHERE id = ?
+          `).run(data.duration, new Date().toISOString(), data.sessionId);
+          
+          const callSession = db.prepare(`
+            SELECT * FROM call_sessions WHERE id = ?
+          `).get(data.sessionId) as any;
+          
+          if (callSession) {
+            const otherParty = callSession.initiatorAccountNumber === socket.handshake.auth.accountNumber
+              ? callSession.recipientAccountNumber
+              : callSession.initiatorAccountNumber;
+            
+            io?.to(otherParty).emit('call:ended', {
+              sessionId: data.sessionId,
+              duration: data.duration
+            });
+          }
+          
+          logSystem(`Call ended: ${data.sessionId}, duration: ${data.duration}s`, 'info', 'call');
+        } catch (error: any) {
+          console.error('Call end error:', error);
+        }
+      });
+    });
+  } catch (error) {
+    console.warn('Failed to initialize Socket.IO:', error);
+    io = null;
+  }
+
+  // Keep existing WebSocket messenger server for backward compatibility
+  initializeMessengerSocketServer(activeServer);
   startLoanPaymentReminderScheduler();
+  startRunwayAlertScheduler();
 }
 
 function shutdown(signal: string) {

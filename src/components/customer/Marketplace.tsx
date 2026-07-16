@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowRight,
@@ -214,6 +214,65 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState('');
 
+  // Search/filter drawer — closed by default on every breakpoint now. Opened via the
+  // top-right search toggle (see the button near the top of the returned JSX, positioned
+  // next to where the app header's notification bell sits) instead of always being docked
+  // inline on desktop.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const touchStartRef = useRef(0);
+  const touchCurrentRef = useRef(0);
+
+  // Autoplay / tap-to-pause video state for the TikTok-style feed
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const slideRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [pausedVideos, setPausedVideos] = useState<Set<string>>(new Set());
+  const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
+
+  const toggleVideoPlay = (productId: string) => {
+    const el = videoRefs.current[productId];
+    if (!el) return;
+    if (el.paused) {
+      el.muted = false;
+      el.volume = 1;
+      void el.play();
+      setPausedVideos((prev) => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+    } else {
+      el.pause();
+      setPausedVideos((prev) => new Set(prev).add(productId));
+    }
+  };
+
+  useEffect(() => {
+    const intersectionCallback: IntersectionObserverCallback = (entries) => {
+      entries.forEach((entry) => {
+        const productId = entry.target.getAttribute('data-product-id');
+        if (!productId) return;
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.65) {
+          setActiveVideoId(productId);
+        }
+      });
+    };
+
+    const observer = new IntersectionObserver(intersectionCallback, {
+      threshold: [0.65],
+    });
+    observerRef.current = observer;
+
+    Object.values(slideRefs.current).forEach((slide) => {
+      if (slide) observer.observe(slide);
+    });
+
+    return () => {
+      observer.disconnect();
+      observerRef.current = null;
+    };
+  }, [activeVideoId, pausedVideos]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -346,6 +405,22 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     [t]
   );
 
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    touchStartRef.current = event.touches[0]?.clientX ?? 0;
+    touchCurrentRef.current = touchStartRef.current;
+  };
+
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    touchCurrentRef.current = event.touches[0]?.clientX ?? touchCurrentRef.current;
+  };
+
+  const handleTouchEnd = () => {
+    const swipeDistance = touchCurrentRef.current - touchStartRef.current;
+    if (!sidebarOpen && touchStartRef.current < 40 && swipeDistance > 70) {
+      setSidebarOpen(true);
+    }
+  };
+
   const filteredProducts = useMemo(() => {
     const term = query.trim().toLowerCase();
     const sellerFilter = shopTraderId;
@@ -380,17 +455,58 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   const displayProducts = useMemo(() => {
     const baseProducts = nearbyProducts;
-    if (searchMode === 'products' || shopTraderId) return baseProducts;
+    const sortByLive = (a: Product, b: Product) => {
+      const aLive = Boolean(liveSessions.find((session) => session.traderId === a.traderId));
+      const bLive = Boolean(liveSessions.find((session) => session.traderId === b.traderId));
+      return Number(bLive) - Number(aLive);
+    };
+
+    if (searchMode === 'products' || shopTraderId) {
+      return [...baseProducts].sort(sortByLive);
+    }
+
     const seen = new Set<string>();
-    return baseProducts.filter((product) => {
-      const key = product.traderId || product.seller;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [nearbyProducts, searchMode, shopTraderId]);
+    return baseProducts
+      .filter((product) => {
+        const key = product.traderId || product.seller;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort(sortByLive);
+  }, [nearbyProducts, searchMode, shopTraderId, liveSessions]);
 
   const traderRecords = useMemo(() => buildTraderRecords(displayProducts), [displayProducts]);
+
+  useEffect(() => {
+    Object.entries(videoRefs.current).forEach(([productId, video]) => {
+      if (!video) return;
+      if (productId === activeVideoId) {
+        if (!pausedVideos.has(productId)) {
+          video.muted = false;
+          video.volume = 1;
+          void video.play();
+        }
+      } else {
+        if (!video.paused) {
+          video.pause();
+        }
+      }
+    });
+  }, [activeVideoId, pausedVideos]);
+
+  useEffect(() => {
+    if (!observerRef.current) return;
+    const observer = observerRef.current;
+    Object.values(slideRefs.current).forEach((slide) => {
+      if (slide) observer.observe(slide);
+    });
+    return () => {
+      Object.values(slideRefs.current).forEach((slide) => {
+        if (slide) observer.unobserve(slide);
+      });
+    };
+  }, [displayProducts]);
 
   const activeShopName = useMemo(
     () => products.find((product) => product.traderId === shopTraderId)?.seller,
@@ -463,122 +579,181 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     );
   }
 
-  return (
-    // Root fills whatever height the parent gives it (see CustomerDashboard: h-[calc(100dvh-56px)] / md:h-[100dvh]).
-    // A single scroll container lives inside this box so the sticky bar has one scroller to pin against
-    // and each card can snap to exactly one viewport height, TikTok-style.
-    <div className="flex flex-col h-full">
-      {/* Sticky/Pinned Header Section */}
-      <div className="sticky top-0 z-30 bg-[#050505] pb-4 shrink-0">
-        <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0 pt-4">
-          <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" size={18} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchMode === 'shops' ? 'Search shops or categories' : 'Search products, shops, prices'}
-                className="h-12 w-full rounded-2xl border border-white/10 bg-black pl-12 pr-4 text-sm font-bold text-white outline-none placeholder:text-white/25 focus:border-orange-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 md:flex md:items-center">
-              <button
-                type="button"
-                onClick={() => setSearchMode('products')}
-                className={cn(
-                  'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
-                  searchMode === 'products' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
-                )}
-              >
-                Products
-              </button>
-              <button
-                type="button"
-                onClick={() => setSearchMode('shops')}
-                className={cn(
-                  'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
-                  searchMode === 'shops' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
-                )}
-              >
-                Shops
-              </button>
-              <button
-                type="button"
-                onClick={() => setNearbyOnly((value) => !value)}
-                className={cn(
-                  'flex h-12 items-center justify-center rounded-2xl px-3',
-                  nearbyOnly ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/45'
-                )}
-                title="Nearby"
-                aria-label="Toggle nearby marketplace"
-              >
-                <MapPin size={18} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapView((value) => !value)}
-                className={cn(
-                  'flex h-12 items-center justify-center rounded-2xl px-3',
-                  mapView ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/45'
-                )}
-                title="Map mode"
-                aria-label="Toggle map mode"
-              >
-                <Store size={18} />
-              </button>
-            </div>
-
-            {!error && resultCount > 0 ? (
-              <div className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left md:min-w-[180px] md:items-end">
-                <span className="font-black text-white">
-                  {resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}
-                </span>
-                <div className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
-                  {nearbyOnly && <span>Within 30 km</span>}
-                  {mapView && <span>Map view enabled</span>}
-                  {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          {(nearbyOnly || mapView || shopTraderId) && (
-            <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/45 px-2">
-              {shopTraderId && (
-                <button
-                  type="button"
-                  onClick={() => setShopTraderId(null)}
-                  className="inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-orange-300"
-                >
-                  {activeShopName || 'Shop'} <X size={12} />
-                </button>
-              )}
-              {nearbyOnly && (
-                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-300">
-                  Nearby only
-                </span>
-              )}
-              {mapView && (
-                <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-blue-300">
-                  Map view enabled
-                </span>
-              )}
-            </div>
-          )}
-
-          {locationError ? (
-            <div className="mx-auto mt-4 max-w-[720px] rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-100 px-2">
-              {locationError}
-            </div>
-          ) : null}
+  // Shared search/filter controls markup — now rendered ONLY inside the slide-in drawer,
+  // on every breakpoint, opened via the search toggle button. It's no longer permanently
+  // docked at the top of the desktop layout.
+  const headerContent = (
+    <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 px-3 md:px-0 pt-4">
+      <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-[#0a0a0a] p-3 md:flex-row md:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/25" size={18} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={searchMode === 'shops' ? 'Search shops or categories' : 'Search products, shops, prices'}
+            className="h-12 w-full rounded-2xl border border-white/10 bg-black pl-12 pr-4 text-sm font-bold text-white outline-none placeholder:text-white/25 focus:border-orange-500"
+          />
         </div>
+
+        <div className="grid grid-cols-4 gap-2 md:flex md:items-center">
+          <button
+            type="button"
+            onClick={() => setSearchMode('products')}
+            className={cn(
+              'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
+              searchMode === 'products' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
+            )}
+          >
+            Products
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchMode('shops')}
+            className={cn(
+              'h-12 rounded-2xl px-2 md:px-3 text-[9px] md:text-[10px] font-black tracking-tight leading-none whitespace-nowrap',
+              searchMode === 'shops' ? 'bg-orange-600 text-white' : 'bg-white/5 text-white/45'
+            )}
+          >
+            Shops
+          </button>
+          <button
+            type="button"
+            onClick={() => setNearbyOnly((value) => !value)}
+            className={cn(
+              'flex h-12 items-center justify-center rounded-2xl px-3',
+              nearbyOnly ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/45'
+            )}
+            title="Nearby"
+            aria-label="Toggle nearby marketplace"
+          >
+            <MapPin size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapView((value) => !value)}
+            className={cn(
+              'flex h-12 items-center justify-center rounded-2xl px-3',
+              mapView ? 'bg-blue-600 text-white' : 'bg-white/5 text-white/45'
+            )}
+            title="Map mode"
+            aria-label="Toggle map mode"
+          >
+            <Store size={18} />
+          </button>
+        </div>
+
+        {!error && resultCount > 0 ? (
+          <div className="flex flex-col gap-1 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left md:min-w-[180px] md:items-end">
+            <span className="font-black text-white">
+              {resultCount} matching {searchMode === 'shops' && !shopTraderId ? 'shops' : 'listings'}
+            </span>
+            <div className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+              {nearbyOnly && <span>Within 30 km</span>}
+              {mapView && <span>Map view enabled</span>}
+              {!nearbyOnly && !mapView && <span>Showing all available listings</span>}
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      {/* TikTok-style full-height snap scroller: one scroll container, one card per viewport */}
+      {(nearbyOnly || mapView || shopTraderId) && (
+        <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/45 px-2">
+          {shopTraderId && (
+            <button
+              type="button"
+              onClick={() => setShopTraderId(null)}
+              className="inline-flex items-center gap-2 rounded-full border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-orange-300"
+            >
+              {activeShopName || 'Shop'} <X size={12} />
+            </button>
+          )}
+          {nearbyOnly && (
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-300">
+              Nearby only
+            </span>
+          )}
+          {mapView && (
+            <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-blue-300">
+              Map view enabled
+            </span>
+          )}
+        </div>
+      )}
+
+      {locationError ? (
+        <div className="mx-auto mt-4 max-w-[720px] rounded-3xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-100 px-2">
+          {locationError}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    // Root fills whatever height the parent gives it (see CustomerDashboard: h-[calc(100dvh-56px)] / md:h-[100dvh]).
+    // A single scroll container lives inside this box so each card can snap to exactly one
+    // viewport height, TikTok-style — on every breakpoint now, since the header no longer
+    // permanently docks at the top on desktop.
+    <div
+      className="flex flex-col min-h-[100dvh] h-full"
+      style={{ height: '100dvh' }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Search toggle — fixed top-right, on every breakpoint. Sits at the same corner the
+          app header's notification bell occupies, so it reads as "the search icon next to
+          notifications" rather than a separate mobile-only control. Opens the drawer below,
+          which replaces the old always-visible desktop search bar. */}
+      <button
+        type="button"
+        onClick={() => setSidebarOpen(true)}
+        className="fixed top-3 right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/60 text-white backdrop-blur-sm active:scale-90"
+        aria-label="Open search and filters"
+      >
+        <Search size={20} />
+      </button>
+
+      {/* Search/filter drawer — used on every breakpoint (mobile and desktop alike). */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSidebarOpen(false)}
+              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'tween', duration: 0.25 }}
+              className="fixed inset-y-0 left-0 z-50 w-[86%] max-w-sm md:max-w-md overflow-y-auto bg-[#050505] pb-6"
+            >
+              <div className="flex items-center justify-between p-4">
+                <span className="text-[10px] font-black uppercase tracking-[0.24em] text-white/50">
+                  Search &amp; Filters
+                </span>
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="rounded-2xl bg-white/5 p-2 text-white/60"
+                  aria-label="Close filters"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              {headerContent}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* TikTok-style full-height snap scroller: one scroll container, one card per viewport,
+          filling the entire 100dvh since there's no in-flow header taking up space anymore. */}
       <div
         className="flex-1 min-h-0 overflow-y-scroll snap-y snap-mandatory overscroll-y-contain"
-        style={{ scrollSnapType: 'y mandatory' }}
+        style={{ scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
       >
         {mapView ? (
           <div className="snap-start h-full w-full flex items-center justify-center px-3 md:px-0">
@@ -629,7 +804,12 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           return (
             <div
               key={`${product.id}-slide`}
-              className="snap-start snap-always h-full w-full flex items-center justify-center px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-0"
+              data-product-id={product.id}
+              ref={(el) => {
+                if (el) slideRefs.current[product.id] = el;
+              }}
+              className="snap-start snap-always h-full w-full flex items-start md:items-center justify-center md:px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1rem+env(safe-area-inset-bottom))] px-0 md:px-0"
+              style={{ scrollSnapStop: 'always' }}
             >
               <motion.article
                 key={`${product.id}-${searchMode}-${shopTraderId || 'all'}`}
@@ -637,49 +817,63 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.35 }}
                 className={cn(
-                  'mx-auto w-full max-w-[420px]',
-                  'overflow-hidden',
-                  'rounded-[2rem]',
+                  'mx-auto w-full',
+                  'overflow-visible md:overflow-hidden',
                   'border border-white/10',
                   'bg-[#0f0f0f]',
                   'shadow-2xl shadow-black/40',
                   'relative',
-                  'h-full md:h-[85vh]',
-                  'flex flex-col md:block'
+                  // Card is a flex column on every breakpoint now: the media block below is
+                  // flex-1 (it always grows to fill whatever the info panel doesn't use), and
+                  // the info panel is sized to its own content (shrink-0). On mobile the card
+                  // should stretch to fill the viewport and avoid empty bottom gaps.
+                  'h-full flex-1 min-h-0 rounded-none',
+                  'md:h-[85vh] md:max-w-[420px] md:rounded-[2rem]',
+                  'flex flex-col'
                 )}
               >
-                <div className="relative h-[42vh] min-h-[220px] md:h-[58vh] md:min-h-[420px] overflow-hidden bg-black text-white shrink-0">
+                <div className="relative h-full flex-1 min-h-[160px] flex flex-col overflow-hidden bg-black text-white">
                   {background?.type === 'image' && background.url ? (
-                    <img
-                      src={background.url}
-                      alt={product.title}
-                      loading="lazy"
-                      className="h-full w-full object-cover"
-                      onClick={() => setSelectedProduct(product)}
-                    />
+                    <div className="absolute inset-0 w-full h-full overflow-hidden">
+                      <img
+                        src={background.url}
+                        alt={product.title}
+                        loading="lazy"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    </div>
                   ) : background?.type === 'video' && background.url ? (
-                    <div className="relative h-full w-full">
+                    <div className="absolute inset-0 w-full h-full overflow-hidden">
                       <video
+                        ref={(el) => {
+                          videoRefs.current[product.id] = el;
+                        }}
                         src={background.url}
                         controls={false}
-                        muted
                         playsInline
                         autoPlay
                         loop
-                        className="h-full w-full bg-black object-cover"
-                        onClick={() => setSelectedProduct(product)}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        onLoadedData={(event) => {
+                          const target = event.currentTarget;
+                          target.muted = false;
+                          target.volume = 1;
+                        }}
+                        onClick={() => toggleVideoPlay(product.id)}
                       />
-                      <button
-                        aria-label="Play video"
-                        title="Play video"
-                        onClick={() => setSelectedProduct(product)}
-                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/40 p-3 text-white"
-                      >
-                        <Play size={28} />
-                      </button>
+                      {pausedVideos.has(product.id) && (
+                        <button
+                          aria-label="Play video"
+                          title="Play video"
+                          onClick={() => toggleVideoPlay(product.id)}
+                          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/40 p-4 text-white"
+                        >
+                          <Play size={28} />
+                        </button>
+                      )}
                     </div>
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-950 via-slate-950 to-black">
+                    <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-neutral-950 via-slate-950 to-black">
                       <Package className="text-white/10" size={88} />
                     </div>
                   )}
@@ -702,9 +896,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       LIVE NOW
                     </div>
                   )}
-                </div>
 
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-[42vh] min-h-[220px] md:h-[58vh] md:min-h-[420px] bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
+                  {/* Gradient + title/price overlay now lives inside the media container,
+                      so it always exactly matches the media's real rendered height instead
+                      of a separately-tracked vh value. */}
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/80 z-20">
                     <div className="pointer-events-none absolute left-0 right-0 top-0 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -753,48 +949,57 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       </div>
                     )}
                   </div>
+                </div>
 
-                  <div className="relative md:absolute inset-x-0 md:top-[58vh] top-auto bottom-0 bg-[#0f0f0f] p-4 z-10 flex flex-col justify-between flex-1 min-h-0 overflow-y-auto md:overflow-visible">
-                    <div>
-                      <p className="line-clamp-2 text-[12px] leading-5 text-white/75">{product.description}</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {product.category && (
-                          <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
-                            {product.category}
-                          </span>
-                        )}
-                        {!isShopCard && (
-                          <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
-                            Stock {product.stock}
-                          </span>
-                        )}
-                      </div>
-
-                      {navigationProductId === product.id && (
-                        <div className="mt-4 rounded-[2rem] overflow-hidden border border-white/10 bg-[#0f0f0f] shadow-2xl shadow-black/40">
-                          <MapView
-                            traders={[
-                              {
-                                id: product.traderId,
-                                businessName: product.seller,
-                                businessAddress: product.raw?.businessAddress || product.raw?.location,
-                                coordinates: (() => {
-                                  const c = getProductTraderCoordinates(product);
-                                  return c ? { lat: c.lat, lng: c.lng } : undefined;
-                                })(),
-                              },
-                            ].filter(Boolean)}
-                            userLocation={userLocation}
-                            onTraderClick={(t) => setShopTraderId(t?.id || null)}
-                            searchQuery={query}
-                            allProducts={products.map((p) => p.raw)}
-                            heightClass="h-48"
-                          />
-                        </div>
+                {/* Info panel — sized to its own content (shrink-0), not a fixed height, so it
+                    never leaves leftover space. Caps at 45% of the card height with its own
+                    scroll for unusually long descriptions. */}
+                <div
+                  className="relative shrink-0 h-auto max-h-full md:max-h-[45%] bg-[#0f0f0f] p-4 pr-16 md:pr-4 z-10 flex flex-col gap-4 overflow-visible md:overflow-y-auto overscroll-contain"
+                  style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+                >
+                  <div>
+                    <p className="line-clamp-2 text-[12px] leading-5 text-white/75">{product.description}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {product.category && (
+                        <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
+                          {product.category}
+                        </span>
+                      )}
+                      {!isShopCard && (
+                        <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
+                          Stock {product.stock}
+                        </span>
                       )}
                     </div>
 
-                    <div className="mt-4 -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] md:mx-0 md:flex-wrap md:gap-3 md:overflow-visible md:px-0 md:pb-0 [&::-webkit-scrollbar]:hidden">
+                    {navigationProductId === product.id && (
+                      <div className="mt-4 rounded-[2rem] overflow-hidden border border-white/10 bg-[#0f0f0f] shadow-2xl shadow-black/40">
+                        <MapView
+                          traders={[
+                            {
+                              id: product.traderId,
+                              businessName: product.seller,
+                              businessAddress: product.raw?.businessAddress || product.raw?.location,
+                              coordinates: (() => {
+                                const c = getProductTraderCoordinates(product);
+                                return c ? { lat: c.lat, lng: c.lng } : undefined;
+                              })(),
+                            },
+                          ].filter(Boolean)}
+                          userLocation={userLocation}
+                          onTraderClick={(t) => setShopTraderId(t?.id || null)}
+                          searchQuery={query}
+                          allProducts={products.map((p) => p.raw)}
+                          heightClass="h-48"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Desktop-only horizontal action row. On phones this is replaced entirely
+                      by the right-side vertical rail below. */}
+                  <div className="hidden md:flex md:items-center md:gap-3 md:flex-wrap">
                     <button
                       onClick={() => (isShopCard ? setShopTraderId(product.traderId || null) : setSelectedProduct(product))}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
@@ -804,7 +1009,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       {isShopCard ? <Store size={20} /> : <Eye size={20} />}
                     </button>
 
-                                  <button
+                    <button
                       onClick={() => {
                         if (typeof onAskTrader === 'function') {
                           void onAskTrader(product);
@@ -866,18 +1071,96 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       <ArrowRight size={18} />
                     </button>
 
-                      <button
-                        onClick={() => setPurchaseProduct(product)}
-                        disabled={isShopCard || !product.traderId || product.priceAmount <= 0 || product.stock <= 0}
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-600 text-black shadow-xl shadow-orange-900/40 transition-all hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 md:h-12 md:w-12"
-                        aria-label="Buy"
-                        title={ui.buyText}
-                      >
-                        <ShoppingCart size={22} />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setPurchaseProduct(product)}
+                      disabled={isShopCard || !product.traderId || product.priceAmount <= 0 || product.stock <= 0}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-600 text-black shadow-xl shadow-orange-900/40 transition-all hover:bg-orange-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 md:h-12 md:w-12"
+                      aria-label="Buy"
+                      title={ui.buyText}
+                    >
+                      <ShoppingCart size={22} />
+                    </button>
                   </div>
+                </div>
 
+                {/* TikTok-style right-side action rail — phones only. Positioned absolutely
+                    against the whole card, so it floats over both the media and the info
+                    panel at a fixed spot on the right edge and never scrolls away. */}
+                <div className="pointer-events-auto absolute right-3 bottom-4 z-40 flex flex-col items-center gap-3 md:hidden">
+                  <button
+                    onClick={() => (isShopCard ? setShopTraderId(product.traderId || null) : setSelectedProduct(product))}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                    aria-label={isShopCard ? 'Open shop' : 'View product'}
+                  >
+                    {isShopCard ? <Store size={19} /> : <Eye size={19} />}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (typeof onAskTrader === 'function') {
+                        void onAskTrader(product);
+                      } else {
+                        setCommentProduct(product);
+                      }
+                    }}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                    aria-label="Ask seller"
+                  >
+                    <MessageSquare size={19} />
+                  </button>
+
+                  <button
+                    onClick={() => void copyProductLink(product)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                    aria-label="Share"
+                  >
+                    <Share2 size={19} />
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const toggle = navigationProductId === product.id ? null : product.id;
+                      setNavigationProductId(toggle);
+                      if (!userLocation) {
+                        void getCurrentCoordinates()
+                          .then((coords) => setUserLocation(coords))
+                          .catch(() => {});
+                      }
+                    }}
+                    className={cn(
+                      'flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90',
+                      navigationProductId === product.id ? 'bg-blue-600 border-blue-500' : ''
+                    )}
+                    aria-label="Navigate"
+                  >
+                    <Navigation size={17} />
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedProduct(product)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                    aria-label="Product details"
+                  >
+                    <Package size={17} />
+                  </button>
+
+                  <button
+                    onClick={() => setShopTraderId(product.traderId || null)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                    aria-label="Go to shop"
+                  >
+                    <ArrowRight size={17} />
+                  </button>
+
+                  <button
+                    onClick={() => setPurchaseProduct(product)}
+                    disabled={isShopCard || !product.traderId || product.priceAmount <= 0 || product.stock <= 0}
+                    className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-600 text-black shadow-xl shadow-orange-900/50 transition active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    aria-label="Buy"
+                  >
+                    <ShoppingCart size={22} />
+                  </button>
+                </div>
               </motion.article>
             </div>
           );

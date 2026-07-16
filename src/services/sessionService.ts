@@ -5,6 +5,9 @@ const AUTH_CHANNEL_NAME = 'esoko-auth-sync';
 const authListeners = new Set<(user: any) => void>();
 let authChannel: BroadcastChannel | null = null;
 let crossTabSyncStarted = false;
+let authRefreshPromise: Promise<any> | null = null;
+let lastAuthRefreshFingerprint: string | null = null;
+let lastAuthRefreshOutcome: 'idle' | 'ok' | 'unauthorized' = 'idle';
 
 function normalizeStoredUser(user: any) {
   if (!user || typeof user !== 'object') return null;
@@ -71,6 +74,9 @@ function startAuthCrossTabSync() {
 }
 
 function writeStoredUser(user: any) {
+  lastAuthRefreshFingerprint = null;
+  lastAuthRefreshOutcome = 'idle';
+
   if (user) {
     const normalized = normalizeStoredUser(user);
     if (!normalized) {
@@ -120,34 +126,59 @@ function notifyAuthListeners() {
 }
 
 async function fetchUserFromServer() {
-  try {
-    const response = await apiGet<{ success: boolean; user: any }>('/api/me');
-    if (response?.success && response.user) {
-      writeStoredUser(response.user);
-      return response.user;
-    }
-  } catch (err: any) {
-    const message = String(err);
-    if (message.includes('401')) {
-      writeStoredUser(null);
-      setAuthToken(null);
-      return null;
-    }
-    if (
-      message.includes('403') ||
-      message.includes('Unauthorized') ||
-      message.includes('suspended')
-    ) {
-      console.debug('Auth refresh rejected:', message);
-      writeStoredUser(null);
-      setAuthToken(null);
-      return null;
-    }
-    console.debug('Auth refresh error:', message);
+  if (typeof window === 'undefined') return null;
+
+  const storedUser = readStoredUser();
+  const fingerprint = storedUser?.id || storedUser?.uid || 'anonymous';
+
+  if (authRefreshPromise) {
+    return authRefreshPromise;
+  }
+
+  if (lastAuthRefreshOutcome === 'unauthorized' && lastAuthRefreshFingerprint === fingerprint) {
     return null;
   }
 
-  return null;
+  authRefreshPromise = (async () => {
+    try {
+      const response = await apiGet<{ success: boolean; user: any }>('/api/me');
+      if (response?.success && response.user) {
+        lastAuthRefreshFingerprint = fingerprint;
+        lastAuthRefreshOutcome = 'ok';
+        writeStoredUser(response.user);
+        return response.user;
+      }
+    } catch (err: any) {
+      const message = String(err);
+      if (message.includes('401')) {
+        lastAuthRefreshFingerprint = fingerprint;
+        lastAuthRefreshOutcome = 'unauthorized';
+        writeStoredUser(null);
+        setAuthToken(null);
+        return null;
+      }
+      if (
+        message.includes('403') ||
+        message.includes('Unauthorized') ||
+        message.includes('suspended')
+      ) {
+        lastAuthRefreshFingerprint = fingerprint;
+        lastAuthRefreshOutcome = 'unauthorized';
+        console.debug('Auth refresh rejected:', message);
+        writeStoredUser(null);
+        setAuthToken(null);
+        return null;
+      }
+      console.debug('Auth refresh error:', message);
+      return null;
+    }
+
+    return null;
+  })().finally(() => {
+    authRefreshPromise = null;
+  });
+
+  return authRefreshPromise;
 }
 
 export interface AuthResponse {

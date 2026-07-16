@@ -30,6 +30,23 @@ export function parseCurrencyInput(value: string) {
   return value.replace(/,/g, '');
 }
 
+export function isAppEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const nav = window.navigator as any;
+  const userAgent = typeof nav?.userAgent === 'string' ? nav.userAgent : '';
+
+  const isNativeWrapper = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|EsokoNexus|esoko-nexus)/i.test(
+    userAgent
+  );
+  const hasNativeWebView = 'ReactNativeWebView' in window;
+  const hasCapacitorNative = (window as any).Capacitor?.isNative;
+  const isAppEnvFlag = typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_ENV === 'app';
+
+  // Exclude web PWAs/standalone web views so app-only UI stays hidden on web browsers.
+  return isNativeWrapper || hasNativeWebView || hasCapacitorNative || isAppEnvFlag;
+}
+
 export function toDate(timestamp: any): Date {
   if (!timestamp) return new Date();
   if (typeof timestamp.toDate === 'function') return timestamp.toDate();

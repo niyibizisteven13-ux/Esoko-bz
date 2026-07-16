@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Wallet, TrendingUp, Send, Loader2, AlertCircle } from 'lucide-react';
 import { getBalance, getTransactionHistory, withdrawBalance, Balance, Transaction } from '../../services/financeService';
+import RunwayCard from './RunwayCard';
 
 const TraderFinance: React.FC = () => {
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -10,6 +11,7 @@ const TraderFinance: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [runway, setRunway] = useState<any | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -19,6 +21,14 @@ const TraderFinance: React.FC = () => {
         const [balanceData, historyData] = await Promise.all([getBalance(), getTransactionHistory()]);
         setBalance(balanceData);
         setTransactions(historyData.transactions);
+        // fetch runway estimate (uses authenticated trader context)
+        try {
+          const r = await fetch('/api/traders/me/financials/runway');
+          const jd = await r.json();
+          if (jd?.success) setRunway(jd);
+        } catch (e) {
+          // ignore runway fetch errors silently
+        }
       } catch (err: any) {
         setError(err.message || 'Failed to load balance');
       } finally {
@@ -57,8 +67,17 @@ const TraderFinance: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex h-40 items-center justify-center">
-        <Loader2 className="animate-spin text-orange-500" size={24} />
+      <div className="space-y-4">
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="animate-spin text-orange-500" size={24} />
+        </div>
+        {runway && (
+          <RunwayCard
+            balance={runway.balance || 0}
+            avgMonthlyOutflow={runway.avgMonthlyOutflow || 0}
+            runwayMonths={runway.runwayMonths}
+          />
+        )}
       </div>
     );
   }

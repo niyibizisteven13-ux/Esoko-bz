@@ -33,9 +33,14 @@ export default defineConfig(() => {
       exclude: ['firebase'], // ← key fix: stop forcing Firebase pre-bundle
     },
     server: {
-      port: 3000,
-      host: '0.0.0.0',
-      hmr: false,
+      port: 5173,
+      strictPort: false,
+      host: 'localhost',
+      hmr: {
+        host: 'localhost',
+        port: 5173,
+        protocol: 'ws',
+      },
       allowedHosts: true as const,
     },
     resolve: {

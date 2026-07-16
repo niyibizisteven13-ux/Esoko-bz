@@ -23,6 +23,30 @@ export interface ApiRequestOptions extends RequestInit {
 
 const inFlightGetRequests = new Map<string, Promise<any>>();
 
+function redirectToLogin(path: string) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    localStorage.removeItem('auth_token');
+    sessionStorage.removeItem('auth_token');
+  } catch {
+    // ignore storage access errors
+  }
+
+  setAuthToken(null);
+
+  const currentPath = window.location.pathname || '';
+  if (!currentPath.includes('/login')) {
+    if (typeof window.location.replace === 'function') {
+      window.location.replace('/login');
+    } else {
+      window.location.href = '/login';
+    }
+  }
+
+  window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { path } }));
+}
+
 function buildQueryString(params: Record<string, string | number | boolean | undefined> = {}) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -90,13 +114,8 @@ async function request<T>(
 
   // Handle 401 Unauthorized - clear token and redirect to login
   if (response.status === 401) {
-    setAuthToken(null);
-    // Dispatch custom event to notify app of auth failure
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { path } }));
-    }
-    const errorBody = await response.text();
-    throw new Error(`Unauthorized (401) - Session expired. Please log in again.`);
+    redirectToLogin(path);
+    throw new Error('Unauthorized (401) - Session expired. Please log in again.');
   }
 
   if (!response.ok) {

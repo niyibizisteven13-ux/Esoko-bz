@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { auth } from '../firebase';
+import { useSocket } from '../lib/SocketContext';
 import ToastContainer, { Toast, ToastType } from '../components/ui/Toast';
 import {
   getNotifications,
@@ -40,6 +41,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const lastProcessedId = useRef<string | null>(null);
   const isFirstLoad = useRef(true);
+  const activeAuthKey = useRef<string | null>(null);
 
   const loadNotifications = async ({ toastNew = false } = {}) => {
     try {
@@ -78,6 +80,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     let unsubscribeLiveUpdates: (() => void) | null = null;
 
     const unsubAuth = auth.onAuthStateChanged((user) => {
+      const nextAuthKey = user?.id || user?.uid || 'guest';
+      if (activeAuthKey.current === nextAuthKey) {
+        return;
+      }
+      activeAuthKey.current = nextAuthKey;
+
       if (!user) {
         unsubscribeLiveUpdates?.();
         unsubscribeLiveUpdates = null;
@@ -106,6 +114,25 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       unsubAuth();
     };
   }, []);
+
+  // Listen for socket alerts for immediate toasts (fallback/extra to SSE)
+  const socket = useSocket();
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: any) => {
+      try {
+        if (data?.message) showToast(data.message, toToastType(data.type || 'warning'));
+        // Refresh notifications list so it appears in center
+        void loadNotifications({ toastNew: false });
+      } catch (e) {}
+    };
+    socket.on('alert:runway', handler);
+    return () => {
+      try {
+        socket.off('alert:runway', handler);
+      } catch (e) {}
+    };
+  }, [socket]);
 
   const showToast = (message: string, type: ToastType) => {
     const id = Math.random().toString(36).substring(7);

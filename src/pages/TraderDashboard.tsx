@@ -39,7 +39,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '../context/LanguageContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRealTimeSync } from '../context/RealTimeSyncContext';
-import { cn, formatCurrency, toDate, getTimeAgo, getAccountAge } from '../lib/utils';
+import { useSocket } from '../lib/SocketContext';
+import { cn, formatCurrency, toDate, getTimeAgo, getAccountAge, isAppEnvironment } from '../lib/utils';
 import { isAccountVerified } from '../lib/verification';
 import { isToday } from 'date-fns';
 import ThemeToggle from '../components/ThemeToggle';
@@ -288,6 +289,7 @@ export default function TraderDashboard() {
   
   // Memoize chatAccountNumber to prevent unnecessary effect reruns
   const chatAccountNumber = useMemo(() => userData?.appNumber || dashboardTraderId || '', [userData?.appNumber, dashboardTraderId]);
+  const socket = useSocket();
 
   // WebRTC call hook
   const webrtc = useWebRTCCall({ socket: wsRef.current, accountNumber: chatAccountNumber });
@@ -329,6 +331,76 @@ export default function TraderDashboard() {
       console.error('[TraderDashboard] failed to send chat message', error);
     }
   }, [chatAccountNumber]);
+
+  // Socket.IO: join trader room and listen for incoming messages and product/transaction events
+  useEffect(() => {
+    if (!socket || !dashboardTraderId) return;
+
+    try {
+      socket.emit('join', dashboardTraderId);
+    } catch (e) {}
+
+    const handleNewMessage = (msg: any) => {
+      try {
+        if (!msg) return;
+        // Ignore messages sent by this trader to avoid echoing
+        if (String(msg.senderAccountNumber || msg.from || '') === String(chatAccountNumber)) return;
+
+        // Append to inbox if conversation matches or insert into conversations list (dedupe by id)
+        if (msg.conversationId) {
+          setChatMessages((prev) => (msg.conversationId === selectedChatConversationIdRef.current ? (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]) : prev));
+          setChatConversations((prev) => {
+            const exists = prev.some((c) => c.id === msg.conversationId);
+            if (exists) {
+              return prev.map((c) => (c.id === msg.conversationId ? { ...c, lastMessagePreview: msg.text || c.lastMessagePreview, lastMessageTime: msg.createdAt || c.lastMessageTime } : c));
+            }
+            // prepend new conversation summary
+            return [
+              {
+                id: msg.conversationId,
+                accountNumber: msg.senderAccountNumber || msg.from || '',
+                name: msg.senderAccountNumber || msg.from || 'Unknown',
+                initials: initialsFor(msg.senderAccountNumber || 'U'),
+                avatarColor: colorForAccount(msg.senderAccountNumber || ''),
+                online: false,
+                lastMessagePreview: msg.text || '',
+                lastMessageTime: msg.createdAt || new Date().toISOString(),
+                lastMessageRead: msg.status || 'sent',
+                unreadCount: 1,
+              },
+              ...prev,
+            ];
+          });
+        }
+      } catch (e) {
+        console.error('Trader socket message handler error', e);
+      }
+    };
+
+    const handleProductUpdated = (payload: any) => {
+      try {
+        // refresh products list or update single product
+        if (payload?.id) {
+          setProducts((prev) => prev.map((p) => (p.id === payload.id ? payload : p)));
+        }
+      } catch (e) {}
+    };
+
+    socket.on('new_message', handleNewMessage);
+    socket.on('new_message_global', handleNewMessage);
+    socket.on('product_updated', handleProductUpdated);
+    socket.on('product_created', handleProductUpdated);
+
+    return () => {
+      try {
+        socket.off('new_message', handleNewMessage);
+        socket.off('new_message_global', handleNewMessage);
+        socket.off('product_updated', handleProductUpdated);
+        socket.off('product_created', handleProductUpdated);
+        socket.emit('leave', dashboardTraderId);
+      } catch (e) {}
+    };
+  }, [socket, dashboardTraderId]);
 
   const handleChatSendFile = useCallback(async (conversationId: string, file: File, replyToMessageId?: string | null) => {
     if (!chatAccountNumber) return;
@@ -496,9 +568,28 @@ export default function TraderDashboard() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const cookieMatch = document.cookie.match(/(?:^|; )nexus_auth_token=([^;]+)/);
     const cookieToken = cookieMatch ? decodeURIComponent(cookieMatch[1]) : '';
-    const wsUrl = cookieToken
-      ? `${protocol}//${window.location.host}/?token=${encodeURIComponent(cookieToken)}`
-      : `${protocol}//${window.location.host}/`;
+
+    const handleUnauthorizedSocket = () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorizedSocket);
+
+    if (!cookieToken) {
+      return () => {
+        isCancelled = true;
+        window.removeEventListener('auth:unauthorized', handleUnauthorizedSocket);
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
+      };
+    }
+
+    const wsUrl = `${protocol}//${window.location.host}/?token=${encodeURIComponent(cookieToken)}`;
     const socket = new WebSocket(wsUrl);
     wsRef.current = socket;
 
@@ -579,6 +670,7 @@ export default function TraderDashboard() {
 
     return () => {
       isCancelled = true;
+      window.removeEventListener('auth:unauthorized', handleUnauthorizedSocket);
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -1136,81 +1228,7 @@ export default function TraderDashboard() {
                   </div>
                 </button>
 
-                {!isSidebarCollapsed && (
-                  <div className="mt-3 px-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Branch</p>
-                    <div className="mt-2 space-y-2">
-                      {branches.length === 0 && (
-                        <div className="text-[11px] text-white/40">No branches</div>
-                      )}
-                      {branches.map((b) => (
-                        <button
-                          key={b.id}
-                          onClick={() => switchBranch(b.id)}
-                          className={cn('w-full text-left px-3 py-2 rounded-lg hover:bg-white/5', activeBranchId === b.id ? 'bg-white/5' : '')}
-                        >
-                          <div className="text-sm font-semibold truncate">{b.name}</div>
-                          <div className="text-[11px] text-white/50 truncate">{b.appNumber}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Live Sync Indicator */}
-
-                {/* Phase 2: Account Status Card */}
-                <div className="mt-2 p-2 bg-gradient-to-r from-blue-600/10 to-cyan-600/10 border border-blue-600/20 rounded-2xl space-y-1 text-[8px]">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-blue-500 rounded flex items-center justify-center">
-                      <AlertCircle size={10} className="text-white" />
-                    </div>
-                    <span className="font-black text-blue-300 uppercase tracking-widest">
-                      Status
-                    </span>
-                  </div>
-
-                  <div className="space-y-1 px-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50">Email</span>
-                      <span
-                        className={
-                          userData?.emailVerified
-                            ? 'text-emerald-400 font-black'
-                            : 'text-yellow-400 font-black'
-                        }
-                      >
-                        {userData?.emailVerified ? 'OK' : 'Pending'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-white/50">Business</span>
-                      <span
-                        className={
-                          accountVerified
-                            ? 'text-emerald-400 font-black'
-                            : 'text-yellow-400 font-black'
-                        }
-                      >
-                        {accountVerified ? 'OK' : 'Pending'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between border-t border-blue-600/20 pt-1 mt-1">
-                      <span className="text-white/50">Account Age</span>
-                      <span className="text-white/80 font-black">
-                        {getAccountAge(userData?.createdAt)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Phase 2: Sync Status */}
-                <div className="mt-2 flex items-center justify-center gap-1.5 text-[7px] text-white/40 px-2 py-1">
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                  <span>Synced {getTimeAgo(lastSyncTime)}</span>
-                </div>
+                {/* Branch and status removed to avoid empty sidebar space */}
               </div>
             )}
             {isSidebarCollapsed && (
@@ -1947,107 +1965,109 @@ export default function TraderDashboard() {
           </AnimatePresence>
         </div>
 
-        {/* Bottom Navigation - Mobile Only with Horizontal Scroll */}
-        <nav className="fixed bottom-6 left-4 right-4 z-50 md:hidden">
-          <div className="bg-[#050505]/95 backdrop-blur-xl border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden relative group">
-            {/* Scroll Indicators */}
-            <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#050505] to-transparent pointer-events-none z-20 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-[#050505] to-transparent pointer-events-none z-20 opacity-0 group-hover:opacity-100 transition-opacity" />
+        {/* Bottom Navigation - App Only */}
+        {isAppEnvironment() && (
+          <nav className="fixed bottom-6 left-4 right-4 z-50 md:hidden">
+            <div className="bg-[#050505]/95 backdrop-blur-xl border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden relative group">
+              {/* Scroll Indicators */}
+              <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#050505] to-transparent pointer-events-none z-20 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-[#050505] to-transparent pointer-events-none z-20 opacity-0 group-hover:opacity-100 transition-opacity" />
 
-            <div className="overflow-x-auto no-scrollbar flex items-center gap-0.5 px-3 py-2.5 scroll-smooth snap-x snap-mandatory">
-              <BottomNavItem
-                active={activeTab === 'overview'}
-                onClick={() => handleTabChange('overview')}
-                icon={<LayoutDashboard size={20} />}
-                label="Home"
-              />
-              <BottomNavItem
-                active={activeTab === 'products'}
-                onClick={() => handleTabChange('products')}
-                icon={<Package size={20} />}
-                label="Stock"
-              />
-              <BottomNavItem
-                active={activeTab === 'purchases'}
-                onClick={() => handleTabChange('purchases')}
-                icon={<ShoppingCart size={20} />}
-                label="Sales"
-              />
-              <BottomNavItem
-                active={activeTab === 'wallet'}
-                onClick={() => handleTabChange('wallet')}
-                icon={<Wallet size={20} />}
-                label="Wallet"
-              />
-              <BottomNavItem
-                active={activeTab === 'premium'}
-                onClick={() => handleTabChange('premium')}
-                icon={<Crown size={20} />}
-                label="Premium"
-              />
-              <BottomNavItem
-                active={activeTab === 'notifications'}
-                onClick={() => handleTabChange('notifications')}
-                icon={<Bell size={20} />}
-                label="Alerts"
-                badge={unreadCount ?? 0}
-              />
+              <div className="overflow-x-auto no-scrollbar flex items-center gap-0.5 px-3 py-2.5 scroll-smooth snap-x snap-mandatory">
+                <BottomNavItem
+                  active={activeTab === 'overview'}
+                  onClick={() => handleTabChange('overview')}
+                  icon={<LayoutDashboard size={20} />}
+                  label="Home"
+                />
+                <BottomNavItem
+                  active={activeTab === 'products'}
+                  onClick={() => handleTabChange('products')}
+                  icon={<Package size={20} />}
+                  label="Stock"
+                />
+                <BottomNavItem
+                  active={activeTab === 'purchases'}
+                  onClick={() => handleTabChange('purchases')}
+                  icon={<ShoppingCart size={20} />}
+                  label="Sales"
+                />
+                <BottomNavItem
+                  active={activeTab === 'wallet'}
+                  onClick={() => handleTabChange('wallet')}
+                  icon={<Wallet size={20} />}
+                  label="Wallet"
+                />
+                <BottomNavItem
+                  active={activeTab === 'premium'}
+                  onClick={() => handleTabChange('premium')}
+                  icon={<Crown size={20} />}
+                  label="Premium"
+                />
+                <BottomNavItem
+                  active={activeTab === 'notifications'}
+                  onClick={() => handleTabChange('notifications')}
+                  icon={<Bell size={20} />}
+                  label="Alerts"
+                  badge={unreadCount ?? 0}
+                />
 
-              {/* Center Action (Fixed in the scroll flow but distinct) */}
-              <div className="px-1 snap-center">
-                <button
-                  onClick={() => setShowScanner(true)}
-                  className="w-14 h-14 bg-orange-600 text-white rounded-[1.5rem] flex items-center justify-center shadow-lg shadow-orange-600/40 relative z-10 active:scale-95 transition-all hover:scale-110"
-                >
-                  <QrCode size={22} />
-                </button>
+                {/* Center Action (Fixed in the scroll flow but distinct) */}
+                <div className="px-1 snap-center">
+                  <button
+                    onClick={() => setShowScanner(true)}
+                    className="w-14 h-14 bg-orange-600 text-white rounded-[1.5rem] flex items-center justify-center shadow-lg shadow-orange-600/40 relative z-10 active:scale-95 transition-all hover:scale-110"
+                  >
+                    <QrCode size={22} />
+                  </button>
+                </div>
+
+                <BottomNavItem
+                  active={activeTab === 'bulkRequests'}
+                  onClick={() => handleTabChange('bulkRequests')}
+                  icon={<Truck size={20} />}
+                  label="Bulk"
+                />
+                <BottomNavItem
+                  active={activeTab === 'analytics'}
+                  onClick={() => handleTabChange('analytics')}
+                  icon={<TrendingUp size={20} />}
+                  label="Data"
+                />
+                <BottomNavItem
+                  active={activeTab === 'customers'}
+                  onClick={() => handleTabChange('customers')}
+                  icon={<Users size={20} />}
+                  label="Customers"
+                />
+                <BottomNavItem
+                  active={activeTab === 'deliveries'}
+                  onClick={() => handleTabChange('deliveries')}
+                  icon={<Truck size={20} />}
+                  label="Delivery"
+                />
+                <BottomNavItem
+                  active={activeTab === 'qrcodes'}
+                  onClick={() => handleTabChange('qrcodes')}
+                  icon={<QrCode size={20} />}
+                  label="QR"
+                />
+                <BottomNavItem
+                  active={activeTab === 'reports'}
+                  onClick={() => handleTabChange('reports')}
+                  icon={<FileText size={20} />}
+                  label="Reports"
+                />
+                <BottomNavItem
+                  active={activeTab === 'tax'}
+                  onClick={() => handleTabChange('tax')}
+                  icon={<VerifiedIcon size={20} />}
+                  label="Status"
+                />
               </div>
-
-              <BottomNavItem
-                active={activeTab === 'bulkRequests'}
-                onClick={() => handleTabChange('bulkRequests')}
-                icon={<Truck size={20} />}
-                label="Bulk"
-              />
-              <BottomNavItem
-                active={activeTab === 'analytics'}
-                onClick={() => handleTabChange('analytics')}
-                icon={<TrendingUp size={20} />}
-                label="Data"
-              />
-              <BottomNavItem
-                active={activeTab === 'customers'}
-                onClick={() => handleTabChange('customers')}
-                icon={<Users size={20} />}
-                label="Customers"
-              />
-              <BottomNavItem
-                active={activeTab === 'deliveries'}
-                onClick={() => handleTabChange('deliveries')}
-                icon={<Truck size={20} />}
-                label="Delivery"
-              />
-              <BottomNavItem
-                active={activeTab === 'qrcodes'}
-                onClick={() => handleTabChange('qrcodes')}
-                icon={<QrCode size={20} />}
-                label="QR"
-              />
-              <BottomNavItem
-                active={activeTab === 'reports'}
-                onClick={() => handleTabChange('reports')}
-                icon={<FileText size={20} />}
-                label="Reports"
-              />
-              <BottomNavItem
-                active={activeTab === 'tax'}
-                onClick={() => handleTabChange('tax')}
-                icon={<VerifiedIcon size={20} />}
-                label="Status"
-              />
             </div>
-          </div>
-        </nav>
+          </nav>
+        )}
 
         {!['payroll', 'alerts', 'chat', 'support', 'reports', 'customers', 'programs', 'team', 'business_status', 'qr_engine', 'preferences'].includes(activeTab) && (
           <>

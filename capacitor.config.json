@@ -1,0 +1,8 @@
+{
+  "appId": "com.esoko.nexus",
+  "appName": "Esoko Nexus Mobile",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

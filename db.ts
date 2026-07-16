@@ -1158,6 +1158,57 @@ function initializeDatabase() {
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS call_sessions (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      initiatorAccountNumber TEXT NOT NULL,
+      recipientAccountNumber TEXT NOT NULL,
+      callType TEXT NOT NULL CHECK(callType IN ('voice', 'video')),
+      status TEXT DEFAULT 'ringing' CHECK(status IN ('ringing', 'active', 'completed', 'declined', 'missed')),
+      duration INTEGER DEFAULT 0,
+      startedAt DATETIME,
+      endedAt DATETIME,
+      recordingUrl TEXT,
+      recordingDuration INTEGER,
+      metadata TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS voice_notes (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      senderAccountNumber TEXT NOT NULL,
+      recipientAccountNumber TEXT NOT NULL,
+      audioUrl TEXT NOT NULL,
+      duration INTEGER NOT NULL,
+      mimeType TEXT DEFAULT 'audio/mp3',
+      fileSize INTEGER,
+      transcription TEXT,
+      status TEXT DEFAULT 'sent',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS video_notes (
+      id TEXT PRIMARY KEY,
+      conversationId TEXT NOT NULL,
+      senderAccountNumber TEXT NOT NULL,
+      recipientAccountNumber TEXT NOT NULL,
+      videoUrl TEXT NOT NULL,
+      duration INTEGER NOT NULL,
+      mimeType TEXT DEFAULT 'video/mp4',
+      fileSize INTEGER,
+      thumbnailUrl TEXT,
+      transcription TEXT,
+      status TEXT DEFAULT 'sent',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
   `);
 
   [
@@ -1285,6 +1336,13 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_createdAt ON chat_messages(conversationId, createdAt DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_clientMessageId ON chat_messages(clientMessageId);
     CREATE INDEX IF NOT EXISTS idx_chat_presence_online ON chat_presence(online);
+    CREATE INDEX IF NOT EXISTS idx_call_sessions_conversation_createdAt ON call_sessions(conversationId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_call_sessions_initiator ON call_sessions(initiatorAccountNumber);
+    CREATE INDEX IF NOT EXISTS idx_call_sessions_status ON call_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_voice_notes_conversation_createdAt ON voice_notes(conversationId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_voice_notes_sender ON voice_notes(senderAccountNumber);
+    CREATE INDEX IF NOT EXISTS idx_video_notes_conversation_createdAt ON video_notes(conversationId, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_video_notes_sender ON video_notes(senderAccountNumber);
     CREATE INDEX IF NOT EXISTS idx_tickets_createdBy ON tickets(createdBy);
     CREATE INDEX IF NOT EXISTS idx_tickets_assignedTo ON tickets(assignedTo);
     CREATE INDEX IF NOT EXISTS idx_system_logs_createdAt ON system_logs(createdAt);

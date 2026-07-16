@@ -1,7 +1,7 @@
 ﻿import { motion } from 'framer-motion';
 import { LayoutDashboard, ShoppingBag, Wallet, History, MapPin } from 'lucide-react';
 import { useLanguage } from '../../context/LanguageContext';
-import { cn } from '../../lib/utils';
+import { cn, isAppEnvironment } from '../../lib/utils';
 
 interface BottomNavProps {
   activeTab: string;
@@ -11,6 +11,10 @@ interface BottomNavProps {
 
 export default function BottomNav({ activeTab, onTabChange, onNearbyClick }: BottomNavProps) {
   const { t } = useLanguage();
+
+  if (!isAppEnvironment()) {
+    return null;
+  }
 
   const items = [
     { id: 'overview', icon: <LayoutDashboard size={20} />, label: t.common.activity },

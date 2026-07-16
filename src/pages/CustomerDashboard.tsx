@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
   History,
@@ -37,7 +37,8 @@ import Marketplace from '../components/customer/Marketplace';
 import { useLanguage } from '../context/LanguageContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useRealTimeSync } from '../context/RealTimeSyncContext';
-import { cn, getTimeAgo, getAccountAge } from '../lib/utils';
+import { useSocket } from '../lib/SocketContext';
+import { cn, getTimeAgo, getAccountAge, isAppEnvironment } from '../lib/utils';
 import { isAccountVerified } from '../lib/verification';
 import { generateReceipt } from '../lib/pdfGenerator';
 import { Download } from 'lucide-react';
@@ -174,8 +175,12 @@ export default function CustomerDashboard() {
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string>('');
-  const chatAccountNumber = currentUser?.uid || currentUser?.id || '';
-  const customerAppNumber = userData?.appNumber || currentUser?.uid || currentUser?.id || '';
+  const chatAccountNumber = useMemo(
+    () => userData?.appNumber || currentUser?.appNumber || currentUser?.uid || currentUser?.id || '',
+    [userData?.appNumber, currentUser?.appNumber, currentUser?.uid, currentUser?.id]
+  );
+  const socket = useSocket();
+  const customerAppNumber = userData?.appNumber || currentUser?.appNumber || currentUser?.uid || currentUser?.id || '';
   const { notifications, unreadCount, showToast } = useNotifications();
   const { syncState, subscribeToTransactions, subscribeToUserData } = useRealTimeSync();
 
@@ -318,6 +323,68 @@ export default function CustomerDashboard() {
       cancelled = true;
     };
   }, [selectedChatConversationId, chatAccountNumber]);
+
+  // Join account room and listen for incoming socket messages
+  useEffect(() => {
+    if (!socket || !chatAccountNumber) return;
+
+    try {
+      socket.emit('join', chatAccountNumber);
+    } catch (e) {}
+
+    const handleIncoming = (msg: any) => {
+      try {
+        if (!msg) return;
+        // Ignore messages sent by ourselves to avoid echoing duplicates
+        if (String(msg.senderAccountNumber || msg.from || '') === String(chatAccountNumber)) return;
+
+        // Normalize the message to ensure attachments are in the correct format
+        const normalizedMsg = {
+          ...msg,
+          // If attachment is already nested (from HTTP polling), use it directly
+          // Otherwise, convert flat fields (from Socket.io) to nested structure
+          attachment: msg.attachment 
+            ? msg.attachment 
+            : msg.attachmentType 
+              ? {
+                  type: msg.attachmentType,
+                  name: msg.attachmentName,
+                  meta: msg.attachmentMimeType,
+                  url: msg.attachmentUrl,
+                }
+              : undefined,
+        };
+
+        // If the message is for the currently open conversation, append it (dedupe by id)
+        if (normalizedMsg.conversationId && normalizedMsg.conversationId === selectedChatConversationId) {
+          setChatMessages((prev) => (prev.some((m) => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]));
+        }
+        // Update conversation preview/lastMessage
+        if (normalizedMsg.conversationId) {
+          setChatConversations((prev) =>
+            prev.map((c) =>
+              c.id === normalizedMsg.conversationId
+                ? { ...c, lastMessagePreview: normalizedMsg.text || c.lastMessagePreview, lastMessageTime: normalizedMsg.createdAt || c.lastMessageTime }
+                : c
+            )
+          );
+        }
+      } catch (e) {
+        console.error('Socket message handler error', e);
+      }
+    };
+
+    socket.on('new_message', handleIncoming);
+    socket.on('new_message_global', handleIncoming);
+
+    return () => {
+      try {
+        socket.off('new_message', handleIncoming);
+        socket.off('new_message_global', handleIncoming);
+        socket.emit('leave', chatAccountNumber);
+      } catch (e) {}
+    };
+  }, [socket, chatAccountNumber, selectedChatConversationId]);
 
   const handleAskTrader = useCallback(
     async (product: any, initialMessage?: string) => {
@@ -850,6 +917,15 @@ export default function CustomerDashboard() {
                     icon={<ShoppingBag size={20} />}
                     label="Market"
                   />
+                  <MobileTabItem
+                    active={activeTab === 'chat'}
+                    onClick={() => {
+                      handleTabChange('chat');
+                      setIsSidebarOpen(false);
+                    }}
+                    icon={<MessageSquare size={20} />}
+                    label="Messenger"
+                  />
                 </div>
               </div>
 
@@ -1320,7 +1396,7 @@ export default function CustomerDashboard() {
         )}
 
         {/* Bottom Navigation for Mobile - Phase 4: Improved */}
-        {activeTab !== 'marketplace' && (
+        {isAppEnvironment() && activeTab !== 'marketplace' && (
           <nav className="fixed bottom-6 left-6 right-6 z-50 md:hidden">
             <div className="bg-[#050505]/90 backdrop-blur-xl border border-white/10 rounded-[2.5rem] shadow-2xl relative group">
               <div

@@ -158,3 +158,45 @@ export async function blockContact(conversationId: string, blocked: boolean, cur
 export async function deleteConversation(conversationId: string, currentAccountNumber: string) {
   return apiDelete<{ success: boolean }>(`/api/conversations/${conversationId}`);
 }
+
+export async function uploadVoiceNote(
+  conversationId: string,
+  audioBlob: Blob,
+  duration: number,
+  recipientAccountNumber: string
+) {
+  const formData = new FormData();
+  formData.append('audio', audioBlob, `voice-${Date.now()}.mp3`);
+  formData.append('duration', duration.toString());
+  formData.append('recipientAccountNumber', recipientAccountNumber);
+  
+  return apiPost<{ messageId: string; message: any }>(
+    `/api/conversations/${conversationId}/voice-notes`,
+    formData
+  );
+}
+
+export async function uploadVideoNote(
+  conversationId: string,
+  videoBlob: Blob,
+  duration: number,
+  recipientAccountNumber: string,
+  thumbnail?: string
+) {
+  const formData = new FormData();
+  formData.append('video', videoBlob, `video-${Date.now()}.mp4`);
+  formData.append('duration', duration.toString());
+  formData.append('recipientAccountNumber', recipientAccountNumber);
+  if (thumbnail) {
+    formData.append('thumbnailUrl', thumbnail);
+  }
+  
+  return apiPost<{ messageId: string; message: any }>(
+    `/api/conversations/${conversationId}/video-notes`,
+    formData
+  );
+}
+
+export async function getCallHistory(conversationId: string) {
+  return apiGet<{ calls: any[] }>(`/api/conversations/${conversationId}/calls`);
+}

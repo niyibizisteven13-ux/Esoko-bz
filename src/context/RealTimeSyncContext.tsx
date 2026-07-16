@@ -60,6 +60,10 @@ function shouldRefresh(event: LiveEvent, watchedCollections: string[]) {
   return !collection || watchedCollections.includes(collection);
 }
 
+function isAuthFailureError(error: unknown) {
+  return error instanceof Error && /401|Unauthorized|Session expired/i.test(error.message);
+}
+
 export const useRealTimeSync = () => {
   const context = useContext(RealTimeSyncContext);
   if (!context) {
@@ -142,6 +146,16 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
       let disposed = false;
       let refreshTimer: ReturnType<typeof setTimeout> | undefined;
       let pollTimer: ReturnType<typeof setTimeout> | undefined;
+      let unsubscribeLive: (() => void) | undefined;
+
+      const stop = () => {
+        if (disposed) return;
+        disposed = true;
+        if (refreshTimer) clearTimeout(refreshTimer);
+        if (pollTimer) clearTimeout(pollTimer);
+        if (unsubscribeLive) unsubscribeLive();
+        unsubscribeLive = undefined;
+      };
 
       const refresh = async () => {
         if (disposed) return;
@@ -151,12 +165,19 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
           callback(value);
           markFresh();
         } catch (error) {
+          if (isAuthFailureError(error)) {
+            stop();
+            markError();
+            return;
+          }
+
           console.error('Background sync refresh failed:', error);
           if (!disposed) markError();
         }
       };
 
       const scheduleRefresh = (delay = REFRESH_DEBOUNCE_MS) => {
+        if (disposed) return;
         if (refreshTimer) clearTimeout(refreshTimer);
         refreshTimer = setTimeout(refresh, delay);
       };
@@ -169,7 +190,15 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
         }, FALLBACK_POLL_MS);
       };
 
-      const unsubscribeLive = subscribeToLiveUpdates((event) => {
+      const handleUnauthorized = () => {
+        stop();
+      };
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('auth:unauthorized', handleUnauthorized);
+      }
+
+      unsubscribeLive = subscribeToLiveUpdates((event) => {
         if (shouldRefresh(event, watchedCollections)) scheduleRefresh();
       });
 
@@ -177,10 +206,10 @@ export const RealTimeSyncProvider: React.FC<{ children: ReactNode }> = ({ childr
       schedulePoll();
 
       return () => {
-        disposed = true;
-        if (refreshTimer) clearTimeout(refreshTimer);
-        if (pollTimer) clearTimeout(pollTimer);
-        unsubscribeLive();
+        stop();
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('auth:unauthorized', handleUnauthorized);
+        }
       };
     },
     [markError, markFresh]

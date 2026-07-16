@@ -760,7 +760,7 @@ export default function TraderChat({
 
 	return (
 		<div
-			className={`relative grid h-full min-h-0 w-full grid-cols-1 overflow-hidden rounded-none md:rounded-lg md:grid-cols-[280px_1fr] ${className ?? ''}`}
+			className={`relative grid h-[100dvh] max-h-[100dvh] min-h-0 w-full grid-cols-1 overflow-hidden rounded-none md:rounded-lg md:grid-cols-[280px_1fr] ${className ?? ''}`}
 			style={{ gridTemplateRows: '100%', backgroundColor: wa.sidebarBg, ...style }}
 		>
 			{/* Sidebar */}
@@ -849,7 +849,7 @@ export default function TraderChat({
 
 			{/* Active conversation */}
 			<div
-				className={`relative h-full min-h-0 min-w-0 flex-col ${mobilePane === 'list' ? 'hidden' : 'flex'}`}
+				className={`relative h-full min-h-0 min-w-0 flex flex-col ${mobilePane === 'list' ? 'hidden' : ''}`}
 				style={{ backgroundColor: wa.chatBg, backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.02) 1px, transparent 1px), radial-gradient(circle at 60% 70%, rgba(255,255,255,0.02) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
 			>
 				{!activeConversation ? (
@@ -928,7 +928,7 @@ export default function TraderChat({
 							</div>
 						)}
 
-						<div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 sm:px-6 md:px-10 py-4 messenger-scrollbar">
+						<div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-3 sm:px-6 md:px-10 py-4">
 							{visibleMessages.length === 0 && (
 								<p className="mt-8 text-center text-[13px]" style={{ color: wa.textSecondary }}>
 									{showInChatSearch && inChatQuery ? 'No messages match your search.' : 'No messages yet. Say hello 👋'}
@@ -1098,6 +1098,7 @@ export default function TraderChat({
 							})}
 						</div>
 
+						<div className="sticky bottom-0 z-10 bg-[#0d161d] pb-[calc(env(safe-area-inset-bottom)+72px)]">
 						<input ref={fileInputRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={handleFileChosen} />
 
 						{isBlocked ? (
@@ -1173,8 +1174,9 @@ export default function TraderChat({
 								</div>
 							</div>
 						)}
+					</div>
 
-						{call && call.conversationId === activeConversationId && call.state !== 'idle' && call.state !== 'ended' && (
+					{call && call.conversationId === activeConversationId && call.state !== 'idle' && call.state !== 'ended' && (
 							<CallModal
 								conversation={activeConversation!}
 								type={call.type}
