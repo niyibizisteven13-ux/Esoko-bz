@@ -1,4 +1,5 @@
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+let inMemoryToken: string | null = null;
 
 const API_BASE = (() => {
   if (typeof window === 'undefined') return DEFAULT_API_BASE;
@@ -28,7 +29,7 @@ function redirectToLogin(path: string) {
 
   try {
     localStorage.removeItem('auth_token');
-    sessionStorage.removeItem('auth_token');
+    sessionStorage.removeItem('nexus_auth_token');
   } catch {
     // ignore storage access errors
   }
@@ -59,21 +60,27 @@ function buildQueryString(params: Record<string, string | number | boolean | und
 }
 
 export function getAuthToken(): string | null {
+  if (inMemoryToken) return inMemoryToken;
   if (typeof window === 'undefined') return null;
+
   try {
-    return localStorage.getItem('auth_token');
+    const tokenFromStorage = window.sessionStorage?.getItem('nexus_auth_token');
+    inMemoryToken = tokenFromStorage;
+    return inMemoryToken;
   } catch {
     return null;
   }
 }
 
-export function setAuthToken(_token: string | null) {
+export function setAuthToken(token: string | null) {
+  inMemoryToken = token;
   if (typeof window === 'undefined') return;
+
   try {
-    if (_token === null) {
-      localStorage.removeItem('auth_token');
+    if (token) {
+      window.sessionStorage?.setItem('nexus_auth_token', token);
     } else {
-      localStorage.setItem('auth_token', _token);
+      window.sessionStorage?.removeItem('nexus_auth_token');
     }
   } catch {
     // ignore
@@ -99,8 +106,7 @@ async function request<T>(
     delete headers['Content-Type'];
   }
 
-  // Add Authorization header from options or stored token
-  const token = options.token ?? getAuthToken();
+  const token = options.token !== undefined ? options.token : getAuthToken();
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }

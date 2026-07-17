@@ -61,6 +61,7 @@ const env = process.env as unknown as Record<string, string | undefined>;
 const config = loadAppConfig(__dirname);
 const isProduction = config.isProduction;
 const FRONTEND_URLS = config.frontendUrls;
+const MOBILE_ALLOWED_ORIGINS = ['https://localhost', 'http://localhost', 'https://localhost:5173', 'http://localhost:5173'];
 const SMTP_USER = config.smtp.user;
 const SMTP_PASS = config.smtp.pass;
 const SMTP_HOST = config.smtp.host;
@@ -463,12 +464,12 @@ const corsOptions = {
   origin: isProduction
     ? (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
         const appOrigin = config.appUrl ? new URL(config.appUrl).origin : '';
-        if (
-          !origin ||
-          FRONTEND_URLS.includes(origin) ||
-          origin === appOrigin ||
-          isTrustedDynamicPublicOrigin(origin)
-        ) {
+        const allowedOrigins = new Set([
+          ...FRONTEND_URLS,
+          ...MOBILE_ALLOWED_ORIGINS,
+          appOrigin,
+        ]);
+        if (!origin || allowedOrigins.has(origin) || isTrustedDynamicPublicOrigin(origin)) {
           callback(null, true);
         } else {
           callback(new Error('Not allowed by CORS'));
@@ -14740,7 +14741,7 @@ async function startServer() {
   try {
     io = new IOServer({
       cors: {
-        origin: isProduction ? FRONTEND_URLS : '*',
+        origin: isProduction ? [...FRONTEND_URLS, ...MOBILE_ALLOWED_ORIGINS] : '*',
         methods: ['GET', 'POST'],
         credentials: true,
       },

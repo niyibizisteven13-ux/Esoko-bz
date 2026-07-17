@@ -16,6 +16,16 @@ describe('apiClient 401 handling', () => {
       }),
       clear: vi.fn(() => storage.clear()),
     };
+    const sessionStorageMock = {
+      getItem: vi.fn((key: string) => storage.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        storage.set(key, value);
+      }),
+      removeItem: vi.fn((key: string) => {
+        storage.delete(key);
+      }),
+      clear: vi.fn(() => storage.clear()),
+    };
 
     const location = { href: '/', replace: vi.fn() };
     const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
@@ -45,11 +55,13 @@ describe('apiClient 401 handling', () => {
     });
 
     globalThis.localStorage = localStorageMock as Storage;
+    globalThis.sessionStorage = sessionStorageMock as Storage;
     globalThis.window = {
       location,
       dispatchEvent,
       addEventListener,
       removeEventListener,
+      sessionStorage: sessionStorageMock,
     } as unknown as Window & typeof globalThis;
 
     globalThis.CustomEvent = class CustomEvent<T> extends Event {
@@ -61,6 +73,17 @@ describe('apiClient 401 handling', () => {
     } as typeof CustomEvent;
 
     setAuthToken(null);
+  });
+
+  it('reads and writes bearer tokens from sessionStorage', async () => {
+    setAuthToken('mobile-token');
+
+    expect(getAuthToken()).toBe('mobile-token');
+    expect(globalThis.sessionStorage.getItem('nexus_auth_token')).toBe('mobile-token');
+
+    setAuthToken(null);
+    expect(getAuthToken()).toBeNull();
+    expect(globalThis.sessionStorage.getItem('nexus_auth_token')).toBeNull();
   });
 
   it('clears the stored token and redirects to login on 401 responses', async () => {

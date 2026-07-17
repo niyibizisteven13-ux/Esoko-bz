@@ -1,4 +1,4 @@
-import { apiGet, apiPost, setAuthToken } from './apiClient';
+import { apiGet, apiPost, getAuthToken, setAuthToken } from './apiClient';
 
 const AUTH_USER_KEY = 'auth_user';
 const AUTH_CHANNEL_NAME = 'esoko-auth-sync';
@@ -128,8 +128,13 @@ function notifyAuthListeners() {
 async function fetchUserFromServer() {
   if (typeof window === 'undefined') return null;
 
+  const token = getAuthToken();
   const storedUser = readStoredUser();
   const fingerprint = storedUser?.id || storedUser?.uid || 'anonymous';
+
+  if (!token && !storedUser) {
+    return null;
+  }
 
   if (authRefreshPromise) {
     return authRefreshPromise;
@@ -204,13 +209,13 @@ export async function loginWithEmail(email: string, password: string): Promise<A
     password,
   });
 
+  if (data.token) setAuthToken(data.token);
+
   if (data.user) {
     writeStoredUser(data.user);
   } else {
     notifyAuthListeners();
   }
-
-  if (data.token) setAuthToken(data.token);
 
   return data;
 }
@@ -228,13 +233,13 @@ export async function registerWithEmail(
     role,
   });
 
+  if (data.token) setAuthToken(data.token);
+
   if (data.user) {
     writeStoredUser(data.user);
   } else {
     notifyAuthListeners();
   }
-
-  if (data.token) setAuthToken(data.token);
 
   return data;
 }

@@ -1,0 +1,6 @@
+- Frontend bearer-token auth is wired through the shared API client and session service.
+- Login/register now persist the JWT in sessionStorage and send it as Authorization: Bearer <token>.
+- Logout clears the stored token.
+- Production CORS now allows Capacitor-style origins such as https://localhost and the deployed app origin.
+- The app builds successfully with Vite and syncs into Android via Capacitor.
+- The Android APK build requires a Java 21 environment; the current local shell lacks JAVA_HOME/java.
