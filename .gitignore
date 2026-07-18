@@ -9,3 +9,8 @@ server_logs.txt
 server_errors.txt
 .env*
 !.env.example
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
