@@ -1198,7 +1198,7 @@ export default function TraderDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowProfileEditor(true)}
-                  className="group flex w-full items-center gap-2 mb-1 p-2 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
+                  className="group flex w-full items-center gap-2 mb-1 p-2 rounded-2xl bg-[#111]/80 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
                 >
                   <ProfileImage
                     src={userData?.photoURL}
@@ -1535,7 +1535,7 @@ export default function TraderDashboard() {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setIsSidebarOpen(true)}
-                className="p-2.5 bg-white/5 rounded-xl hover:bg-white/10 transition-colors"
+                className="p-2.5 bg-[#111]/80 rounded-xl hover:bg-[#222] transition-colors"
                 aria-label="Open navigation menu"
                 title="Open menu"
               >
@@ -1546,7 +1546,7 @@ export default function TraderDashboard() {
             <div className="flex items-center gap-2">
               <Link
                 to="/notifications"
-                className="p-2.5 relative hover:bg-white/5 rounded-lg transition-colors"
+                className="p-2.5 relative hover:bg-[#222] rounded-lg transition-colors"
               >
                 <Bell size={18} className="text-neutral-400" />
                 {(unreadCount ?? 0) > 0 && (
@@ -1623,7 +1623,7 @@ export default function TraderDashboard() {
             animate={{ opacity: 1, y: 0 }}
             className="hidden sm:grid md:hidden grid-cols-2 gap-3 mb-2"
           >
-            <div className="bg-white/5 border border-white/10 rounded-xl p-3 backdrop-blur-sm">
+            <div className="bg-[#111]/80 border border-white/10 rounded-xl p-3 backdrop-blur-sm">
               <p className="text-[7px] text-white/40 font-black uppercase tracking-[0.15em]">
                 User Type
               </p>
@@ -1632,7 +1632,7 @@ export default function TraderDashboard() {
                 Commerce & Inventory Command
               </p>
             </div>
-            <div className="bg-white/5 border border-white/10 rounded-xl p-3 backdrop-blur-sm">
+            <div className="bg-[#111]/80 border border-white/10 rounded-xl p-3 backdrop-blur-sm">
               <p className="text-[7px] text-white/40 font-black uppercase tracking-[0.15em]">
                 Module
               </p>

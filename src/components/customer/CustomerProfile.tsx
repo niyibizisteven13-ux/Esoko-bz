@@ -186,7 +186,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
         animate={{ opacity: 1, y: 0 }}
         className="card overflow-hidden bg-[#0a0a0a] border-white/5"
       >
-        <div className="p-8 border-b border-white/5 bg-white/5">
+        <div className="p-8 border-b border-white/5 bg-[#111]/90">
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-start gap-3">
               <div>
@@ -236,7 +236,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
         </div>
 
         <div className="px-8 pt-8">
-          <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6">
+          <div className="rounded-[2rem] border border-white/10 bg-[#111]/90 p-6">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
@@ -280,7 +280,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                     type="button"
                     onClick={requestEmailOtp}
                     disabled={otpSending}
-                    className="w-full rounded-2xl border border-white/10 bg-white text-black px-5 py-3 text-xs font-black uppercase tracking-widest hover:bg-orange-500 hover:text-white disabled:opacity-40 flex items-center justify-center gap-2"
+                    className="w-full rounded-2xl border border-white/10 bg-orange-600 text-white px-5 py-3 text-xs font-black uppercase tracking-widest hover:bg-orange-500 disabled:opacity-40 flex items-center justify-center gap-2"
                   >
                     {otpSending ? <Loader2 className="animate-spin" size={16} /> : <Mail size={16} />}
                     Send OTP
@@ -386,7 +386,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                   type="button"
                   onClick={handleSendWelcomeGuide}
                   disabled={emailSending || !userData?.email}
-                  className="px-8 py-4 bg-white text-black rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all disabled:opacity-20 flex items-center gap-2"
+                  className="px-8 py-4 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-500 transition-all disabled:opacity-20 flex items-center gap-2"
                 >
                   {emailSending ? (
                     <Loader2 className="animate-spin" size={14} />
@@ -411,7 +411,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
+                      className="w-full px-5 py-4 bg-[#111]/90 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
                       required
                     />
                   </div>
@@ -428,7 +428,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                         type="tel"
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        className="w-full pl-12 pr-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
+                        className="w-full pl-12 pr-5 py-4 bg-[#111]/90 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
                         required
                       />
                     </div>
@@ -440,7 +440,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
                     <select
                       value={formData.category}
                       onChange={(e: any) => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full px-5 py-4 bg-white/5 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
+                      className="w-full px-5 py-4 bg-[#111]/90 border border-white/10 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-bold text-sm text-white"
                     >
                       <option value="individual" className="bg-[#0a0a0a]">
                         {t.common.individual}
