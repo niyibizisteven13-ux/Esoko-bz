@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
   History,
@@ -44,7 +44,7 @@ import { isAccountVerified } from '../lib/verification';
 import { generateReceipt } from '../lib/pdfGenerator';
 import { Download } from 'lucide-react';
 import { auth } from '../firebase';
-import { getCurrentUser, loginWithEmail, registerWithEmail } from '../services/sessionService';
+import { getCurrentUser, loginWithEmail, registerWithEmail, updateStoredAuthUser } from '../services/sessionService';
 import AuthModal, { AuthRole } from '../components/auth/AuthModal';
 
 // Services
@@ -206,6 +206,12 @@ export default function CustomerDashboard() {
     }
   }, [locationSearch]);
 
+  const navigate = useNavigate();
+
+  // Trader choice: when a trader signs in, prompt whether to continue to trader dashboard
+  const [showTraderChoice, setShowTraderChoice] = useState(false);
+  const [pendingTraderResponse, setPendingTraderResponse] = useState<any | null>(null);
+
   const chatAccountNumber = useMemo(
     () => userData?.appNumber || currentUser?.appNumber || currentUser?.uid || currentUser?.id || '',
     [userData?.appNumber, currentUser?.appNumber, currentUser?.uid, currentUser?.id]
@@ -244,6 +250,14 @@ export default function CustomerDashboard() {
 
   const handleAuthSignIn = useCallback(async (email: string, password: string, role: AuthRole) => {
     const response = await loginWithEmail(email, password);
+    // If backend reports trader role, prompt user for where to continue
+    if (response?.user?.role === 'trader') {
+      setPendingTraderResponse(response);
+      setShowTraderChoice(true);
+      return;
+    }
+
+    if (response?.user) updateStoredAuthUser(response.user);
     setCurrentUser(response.user);
     setShowAuthModal(false);
   }, []);
@@ -256,6 +270,26 @@ export default function CustomerDashboard() {
     },
     []
   );
+
+    const handleChooseTrader = useCallback(() => {
+      if (pendingTraderResponse?.user) {
+        updateStoredAuthUser({ ...pendingTraderResponse.user, activeRole: 'trader' });
+        setCurrentUser(pendingTraderResponse.user);
+      }
+      setShowTraderChoice(false);
+      setShowAuthModal(false);
+      navigate('/trader');
+    }, [pendingTraderResponse, navigate]);
+
+    const handleChooseStay = useCallback(() => {
+      if (pendingTraderResponse?.user) {
+        updateStoredAuthUser({ ...pendingTraderResponse.user, activeRole: 'customer' });
+        setCurrentUser(pendingTraderResponse.user);
+      }
+      setShowTraderChoice(false);
+      setShowAuthModal(false);
+      setActiveTab('marketplace');
+    }, [pendingTraderResponse]);
 
   useEffect(() => {
     let unsubscribeTransactions: (() => void) | undefined;
@@ -1659,6 +1693,27 @@ export default function CustomerDashboard() {
           />
         )}
         {showNearPay && <NearPayDirectoryModal onClose={() => setShowNearPay(false)} />}
+      </AnimatePresence>
+
+      {/* Trader choice modal: shown immediately after trader login to let user choose where to continue. */}
+      <AnimatePresence>
+        {showTraderChoice && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[170] flex items-center justify-center bg-black/70 p-4"
+          >
+            <div className="w-full max-w-md rounded-2xl bg-[#0b0b0b] p-6 border border-white/10 text-white">
+              <h3 className="text-xl font-black">Welcome back — trader detected</h3>
+              <p className="mt-2 text-sm text-white/60">Would you like to continue to your Trader dashboard, or stay on the Marketplace?</p>
+              <div className="mt-6 flex gap-3">
+                <button onClick={handleChooseStay} className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-white/80">Stay on Marketplace</button>
+                <button onClick={handleChooseTrader} className="flex-1 rounded-xl bg-orange-600 px-4 py-3 text-sm font-black text-black">Go to Trader Dashboard</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Unified auth surface — the only place sign-in/sign-up ever happens. Opened
