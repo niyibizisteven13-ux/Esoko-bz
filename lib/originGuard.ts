@@ -7,6 +7,7 @@ interface OriginGuardOptions {
   frontendUrls: string[];
   appUrl?: string;
   port: number;
+  allowDynamicPublicOrigins?: boolean;
 }
 
 function devAllowedOrigins(port: number) {
@@ -46,11 +47,12 @@ function isTrustedBrowserOrigin(req: Request, options: OriginGuardOptions) {
   const referer = req.get('referer');
   const allowedOrigins = configuredAllowedOrigins(req, options);
 
-  if (origin) return allowedOrigins.has(origin) || isTrustedDynamicPublicOrigin(origin);
+  const allowDynamicOrigins = !options.isProduction || options.allowDynamicPublicOrigins === true;
+  if (origin) return allowedOrigins.has(origin) || (allowDynamicOrigins && isTrustedDynamicPublicOrigin(origin));
   if (referer) {
     try {
       const refererOrigin = new URL(referer).origin;
-      return allowedOrigins.has(refererOrigin) || isTrustedDynamicPublicOrigin(refererOrigin);
+      return allowedOrigins.has(refererOrigin) || (allowDynamicOrigins && isTrustedDynamicPublicOrigin(refererOrigin));
     } catch {
       return false;
     }

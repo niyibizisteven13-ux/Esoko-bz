@@ -61,6 +61,7 @@ const env = process.env as unknown as Record<string, string | undefined>;
 const config = loadAppConfig(__dirname);
 const isProduction = config.isProduction;
 const FRONTEND_URLS = config.frontendUrls;
+const allowDynamicPublicOrigins = !isProduction || env.ALLOW_DYNAMIC_PUBLIC_ORIGINS === 'true';
 const MOBILE_ALLOWED_ORIGINS = ['https://localhost', 'http://localhost', 'https://localhost:5173', 'http://localhost:5173'];
 const SMTP_USER = config.smtp.user;
 const SMTP_PASS = config.smtp.pass;
@@ -469,7 +470,7 @@ const corsOptions = {
           ...MOBILE_ALLOWED_ORIGINS,
           appOrigin,
         ]);
-        if (!origin || allowedOrigins.has(origin) || isTrustedDynamicPublicOrigin(origin)) {
+        if (!origin || allowedOrigins.has(origin) || (allowDynamicPublicOrigins && isTrustedDynamicPublicOrigin(origin))) {
           callback(null, true);
         } else {
           callback(new Error('Not allowed by CORS'));
@@ -498,6 +499,7 @@ app.use(
     frontendUrls: FRONTEND_URLS,
     appUrl: config.appUrl,
     port,
+    allowDynamicPublicOrigins,
   })
 );
 
@@ -3871,7 +3873,7 @@ function normalizeSubscriptionRow(row: any) {
   };
 }
 
-const { authenticate, requireRole } = createAuthMiddleware({
+const { authenticate, optionalAuthenticate, requireRole } = createAuthMiddleware({
   db,
   jwtSecret: JWT_SECRET_KEY,
   consumeRefreshToken,
@@ -7692,7 +7694,7 @@ function transformProduct(product: any) {
   };
 }
 
-app.get('/api/products', authenticate, (req: any, res): any => {
+app.get('/api/products', optionalAuthenticate, (req: any, res): any => {
   const { limit, offset } = parseLimitOffset(req.query);
   // Only cache shallow listing pages to avoid storing deep pagination results.
   const cacheKey = `products:${req.originalUrl}`;
@@ -7710,7 +7712,7 @@ app.get('/api/products', authenticate, (req: any, res): any => {
     activeTeam?.traderId &&
     requestedTraderId &&
     requestedTraderId !== activeTeam.traderId &&
-    req.user.role !== 'admin'
+    req.user?.role !== 'admin'
   ) {
     return res.status(403).json({ error: 'You can only view products for the invited shop' });
   }
@@ -7776,6 +7778,229 @@ app.get('/api/products', authenticate, (req: any, res): any => {
   }
 
   res.json(responsePayload);
+});
+
+app.get('/api/marketplace/posts', optionalAuthenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || '';
+  const rows = db
+    .prepare(
+      `
+      SELECT p.*, u.name as traderName, u.businessName as traderBusinessName,
+        COALESCE(ts.qualityScore, 0) as qualityScore,
+        (SELECT COUNT(*) FROM transactions tx WHERE tx.traderId = p.traderId AND tx.status = 'completed') as totalSales,
+        EXISTS(SELECT 1 FROM post_likes l WHERE l.postId = p.id AND l.userId = ?) as liked,
+        EXISTS(SELECT 1 FROM post_favorites f WHERE f.postId = p.id AND f.userId = ?) as favorited,
+        EXISTS(SELECT 1 FROM trader_follows tf WHERE tf.traderId = p.traderId AND tf.followerId = ?) as following
+      FROM marketplace_posts p
+      JOIN users u ON u.id = p.traderId
+      LEFT JOIN trader_stats ts ON ts.traderId = p.traderId
+      WHERE p.status = 'active'
+      ORDER BY
+        (
+          (julianday('now') - julianday(p.createdAt)) * -1
+          + (p.likeCount * 1.0 / MAX(p.viewCount, 1)) * 50
+          + COALESCE(ts.qualityScore, 0) * 20
+        ) DESC,
+        p.createdAt DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(userId, userId, userId, limit, offset) as any[];
+  res.json({ success: true, posts: rows });
+});
+
+app.post('/api/marketplace/posts', requireRole(['trader', 'admin']), (req: any, res): any => {
+  const { productId, mediaType, mediaUrl, thumbnailUrl, caption, price, stock, category } = req.body || {};
+  if (!mediaUrl || !['image', 'video'].includes(String(mediaType || 'image'))) {
+    return res.status(400).json({ error: 'A valid image or video is required' });
+  }
+  const product = productId
+    ? (db.prepare('SELECT * FROM products WHERE id = ?').get(String(productId)) as any)
+    : null;
+  const effectiveTraderId = (req as any).effectiveTraderId || req.user.id;
+  if (product && product.traderId !== effectiveTraderId && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'You can only post your own products' });
+  }
+  const id = uuidv4();
+  db.prepare(
+    `INSERT INTO marketplace_posts
+      (id, traderId, productId, mediaType, mediaUrl, thumbnailUrl, caption, price, stock, category)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    effectiveTraderId,
+    product?.id || null,
+    String(mediaType || 'image'),
+    String(mediaUrl),
+    thumbnailUrl || null,
+    String(caption || product?.description || product?.name || '').slice(0, 1000),
+    Number(price ?? product?.price ?? 0) || 0,
+    Number(stock ?? product?.stock ?? 0) || 0,
+    category || product?.category || null
+  );
+  const post = db.prepare('SELECT * FROM marketplace_posts WHERE id = ?').get(id);
+  res.status(201).json({ success: true, post });
+});
+
+app.post('/api/marketplace/posts/:id/view', optionalAuthenticate, (req: any, res): any => {
+  const post = db.prepare("SELECT id FROM marketplace_posts WHERE id = ? AND status = 'active'").get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  db.prepare('UPDATE marketplace_posts SET viewCount = viewCount + 1 WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+app.post('/api/marketplace/posts/:id/like', authenticate, (req: any, res): any => {
+  const post = db.prepare('SELECT id FROM marketplace_posts WHERE id = ?').get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  const existing = db.prepare('SELECT 1 FROM post_likes WHERE postId = ? AND userId = ?').get(req.params.id, req.user.id);
+  if (existing) {
+    db.prepare('DELETE FROM post_likes WHERE postId = ? AND userId = ?').run(req.params.id, req.user.id);
+  } else {
+    db.prepare('INSERT INTO post_likes (postId, userId) VALUES (?, ?)').run(req.params.id, req.user.id);
+  }
+  const likeCount = (db.prepare('SELECT COUNT(*) as count FROM post_likes WHERE postId = ?').get(req.params.id) as any).count;
+  db.prepare('UPDATE marketplace_posts SET likeCount = ? WHERE id = ?').run(likeCount, req.params.id);
+  res.json({ success: true, liked: !existing, likeCount });
+});
+
+app.post('/api/marketplace/traders/:traderId/follow', authenticate, (req: any, res): any => {
+  const trader = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'trader'").get(req.params.traderId);
+  if (!trader) return res.status(404).json({ error: 'Trader not found' });
+  if (req.user.id === req.params.traderId) return res.status(400).json({ error: 'You cannot follow yourself' });
+  const existing = db.prepare('SELECT 1 FROM trader_follows WHERE followerId = ? AND traderId = ?').get(req.user.id, req.params.traderId);
+  if (existing) {
+    db.prepare('DELETE FROM trader_follows WHERE followerId = ? AND traderId = ?').run(req.user.id, req.params.traderId);
+  } else {
+    db.prepare('INSERT INTO trader_follows (followerId, traderId, sourcePostId) VALUES (?, ?, ?)').run(req.user.id, req.params.traderId, req.body?.sourcePostId || null);
+  }
+  res.json({ success: true, following: !existing });
+});
+
+app.post('/api/marketplace/posts/:id/favorite', authenticate, (req: any, res): any => {
+  const post = db.prepare('SELECT id FROM marketplace_posts WHERE id = ?').get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  const existing = db.prepare('SELECT 1 FROM post_favorites WHERE postId = ? AND userId = ?').get(req.params.id, req.user.id);
+  if (existing) db.prepare('DELETE FROM post_favorites WHERE postId = ? AND userId = ?').run(req.params.id, req.user.id);
+  else db.prepare('INSERT INTO post_favorites (postId, userId) VALUES (?, ?)').run(req.params.id, req.user.id);
+  res.json({ success: true, favorited: !existing });
+});
+
+app.post('/api/marketplace/posts/:id/report', authenticate, (req: any, res): any => {
+  const post = db.prepare('SELECT traderId FROM marketplace_posts WHERE id = ?').get(req.params.id) as any;
+  const reason = String(req.body?.reason || '').trim();
+  if (!post || !reason) return res.status(400).json({ error: 'Post and report reason are required' });
+  db.prepare('INSERT INTO post_reports (id, postId, traderId, reporterId, reason) VALUES (?, ?, ?, ?, ?)').run(
+    uuidv4(), req.params.id, post.traderId, req.user.id, reason.slice(0, 500)
+  );
+  res.status(201).json({ success: true });
+});
+
+app.post('/api/ratings', authenticate, (req: any, res): any => {
+  const transactionId = String(req.body?.transactionId || '').trim();
+  const stars = Number(req.body?.stars);
+  if (!transactionId || !Number.isInteger(stars) || stars < 1 || stars > 5) {
+    return res.status(400).json({ error: 'Transaction and a rating from 1 to 5 are required' });
+  }
+
+  const transaction = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId) as any;
+  if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
+  const buyerId = transaction.customerId || transaction.userId || transaction.senderId;
+  if (transaction.status !== 'completed' || buyerId !== req.user.id) {
+    return res.status(403).json({ error: 'Only completed purchases can be rated by the buyer' });
+  }
+  if (!transaction.traderId) return res.status(400).json({ error: 'This transaction has no trader to rate' });
+
+  const existing = db.prepare('SELECT id FROM ratings WHERE transactionId = ?').get(transactionId);
+  if (existing) return res.status(409).json({ error: 'This purchase has already been rated' });
+
+  const id = uuidv4();
+  try {
+    db.prepare(
+      `INSERT INTO ratings (id, transactionId, traderId, buyerId, stars, tags, comment)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      transactionId,
+      transaction.traderId,
+      buyerId,
+      stars,
+      JSON.stringify(Array.isArray(req.body?.tags) ? req.body.tags.slice(0, 8) : []),
+      String(req.body?.comment || '').trim().slice(0, 1000) || null
+    );
+  } catch (error: any) {
+    if (String(error?.message || '').includes('UNIQUE')) {
+      return res.status(409).json({ error: 'This purchase has already been rated' });
+    }
+    throw error;
+  }
+  res.status(201).json({ success: true, rating: db.prepare('SELECT * FROM ratings WHERE id = ?').get(id) });
+});
+
+app.get('/api/ratings', authenticate, (req: any, res): any => {
+  const transactionId = String(req.query.transactionId || '').trim();
+  if (!transactionId) return res.status(400).json({ error: 'transactionId is required' });
+  const rating = db
+    .prepare('SELECT * FROM ratings WHERE transactionId = ? AND buyerId = ?')
+    .get(transactionId, req.user.id);
+  res.json({ success: true, rating: rating || null });
+});
+
+app.get('/api/traders/:traderId/stats', optionalAuthenticate, (req: any, res): any => {
+  const trader = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'trader'").get(req.params.traderId);
+  if (!trader) return res.status(404).json({ error: 'Trader not found' });
+  const stats = db.prepare('SELECT * FROM trader_stats WHERE traderId = ?').get(req.params.traderId) as any;
+  const fallback = db.prepare(
+    `SELECT COALESCE(AVG(stars), 0) as qualityScore, COUNT(*) as ratingCount
+     FROM ratings WHERE traderId = ?`
+  ).get(req.params.traderId) as any;
+  const completedSales = db
+    .prepare("SELECT COUNT(*) as totalSales FROM transactions WHERE traderId = ? AND status = 'completed'")
+    .get(req.params.traderId) as any;
+  res.json({
+    success: true,
+    stats: {
+      traderId: req.params.traderId,
+      followerCount: Number(stats?.followerCount || 0),
+      qualityScore: Number(stats?.qualityScore || fallback?.qualityScore || 0),
+      totalSales: Number(completedSales?.totalSales || 0),
+      ratingCount: Number(fallback?.ratingCount || 0),
+      rewardBalance: Number(stats?.rewardBalance || 0),
+    },
+  });
+});
+
+app.get('/api/traders/:traderId/rewards', authenticate, (req: any, res): any => {
+  if (req.user.id !== req.params.traderId && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'You can only view your own marketplace rewards' });
+  }
+  const trader = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'trader'").get(req.params.traderId);
+  if (!trader) return res.status(404).json({ error: 'Trader not found' });
+
+  const { limit, offset } = parseLimitOffset(req.query);
+  const summary = db.prepare(
+    `SELECT COUNT(*) as conversionCount, COALESCE(SUM(amount), 0) as earned
+     FROM reward_ledger
+     WHERE traderId = ? AND createdAt >= date('now', 'start of month')`
+  ).get(req.params.traderId) as any;
+  const rewards = db.prepare(
+    `SELECT ledger.*, buyer.name as followerName
+     FROM reward_ledger ledger
+     LEFT JOIN users buyer ON buyer.id = ledger.followerId
+     WHERE ledger.traderId = ?
+     ORDER BY ledger.createdAt DESC
+     LIMIT ? OFFSET ?`
+  ).all(req.params.traderId, limit, offset);
+  const stats = db.prepare('SELECT rewardBalance FROM trader_stats WHERE traderId = ?').get(req.params.traderId) as any;
+  res.json({
+    success: true,
+    summary: {
+      conversionCount: Number(summary?.conversionCount || 0),
+      earned: Number(summary?.earned || 0),
+      rewardBalance: Number(stats?.rewardBalance || 0),
+    },
+    rewards,
+  });
 });
 
 app.get('/api/products/:id', authenticate, (req: any, res): any => {
@@ -14730,7 +14955,8 @@ async function startServer() {
     return createHttpServer(app);
   };
 
-  activeServer = createServerWithMessenger().listen(listenPort, '127.0.0.1', () => {
+  const bindHost = isProduction ? '0.0.0.0' : '127.0.0.1';
+  activeServer = createServerWithMessenger().listen(listenPort, bindHost, () => {
     const protocol = sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath) ? 'https' : 'http';
     console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://127.0.0.1:${listenPort}`);
     console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);

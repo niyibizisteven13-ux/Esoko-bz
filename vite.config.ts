@@ -42,6 +42,18 @@ export default defineConfig(() => {
         protocol: 'ws',
       },
       allowedHosts: true as const,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:5173',
+          changeOrigin: true,
+          rewrite: (path) => path,
+        },
+        '/socket.io': {
+          target: 'http://localhost:5173',
+          changeOrigin: true,
+          ws: true,
+        },
+      },
     },
     resolve: {
       alias: {

@@ -96,6 +96,29 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     }
   }
 
+  function optionalAuthenticate(req: Request, _res: Response, next: NextFunction): void {
+    const rawAuthHeader = String(
+      req.headers.authorization || req.header('x-access-token') || req.header('x-auth-token') || ''
+    );
+    const headerToken = rawAuthHeader.startsWith('Bearer ')
+      ? rawAuthHeader.slice(7)
+      : rawAuthHeader;
+    const token = headerToken || req.cookies.nexus_auth_token;
+    if (!token) {
+      next();
+      return;
+    }
+
+    try {
+      const decoded = jwt.verify(token, jwtSecret) as any;
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.userId) as any;
+      if (user && user.status !== 'suspended') (req as any).user = user;
+    } catch {
+      // Public endpoints should remain usable when a stale client token is present.
+    }
+    next();
+  }
+
   function requireRole(roles: Role[]) {
     return (req: Request, res: Response, next: NextFunction): void => {
       authenticate(req, res, (): void => {
@@ -142,5 +165,5 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     };
   }
 
-  return { authenticate, requireRole };
+  return { authenticate, optionalAuthenticate, requireRole };
 }

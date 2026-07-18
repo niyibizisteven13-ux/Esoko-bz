@@ -1,7 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './index.css';
+import { LanguageProvider } from './context/LanguageContext';
+import { NotificationProvider } from './context/NotificationContext';
+import { RealTimeSyncProvider } from './context/RealTimeSyncContext';
+import { SocketProvider } from './lib/SocketContext';
 import { registerOfflineSync } from './services/offlineQueue';
 
 if ('serviceWorker' in navigator) {
@@ -16,6 +21,16 @@ registerOfflineSync();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <LanguageProvider>
+      <NotificationProvider>
+        <RealTimeSyncProvider>
+          <SocketProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </SocketProvider>
+        </RealTimeSyncProvider>
+      </NotificationProvider>
+    </LanguageProvider>
   </StrictMode>
 );

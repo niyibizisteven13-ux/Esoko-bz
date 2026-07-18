@@ -93,6 +93,7 @@ function initialsFor(name: string): string {
 
 const TraderOverview = React.lazy(() => import('../components/trader/TraderOverview'));
 const TraderProducts = React.lazy(() => import('../components/trader/TraderProducts'));
+const PostUploadModal = React.lazy(() => import('../components/trader/PostUploadModal'));
 const TraderPurchases = React.lazy(() => import('../components/trader/TraderPurchases'));
 const TraderAnalytics = React.lazy(() => import('../components/trader/TraderAnalytics'));
 const TraderQRCodes = React.lazy(() => import('../components/trader/TraderQRCodes'));
@@ -102,6 +103,7 @@ const TraderProfile = React.lazy(() => import('../components/trader/TraderProfil
 const TraderAccounting = React.lazy(() => import('../components/trader/TraderAccounting'));
 const TraderTeamManagement = React.lazy(() => import('../components/trader/TraderTeamManagement'));
 const TraderIncentives = React.lazy(() => import('../components/trader/TraderIncentives'));
+const TraderRewards = React.lazy(() => import('../components/trader/TraderRewards'));
 const TraderDeliveries = React.lazy(() => import('../components/trader/TraderDeliveries'));
 const TraderCustomers = React.lazy(() => import('../components/trader/TraderCustomers'));
 const TraderSuppliers = React.lazy(() => import('../components/trader/TraderSuppliers'));
@@ -243,6 +245,7 @@ export default function TraderDashboard() {
   const [showPreferences, setShowPreferences] = useState(false);
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showMoreHeader, setShowMoreHeader] = useState(false);
+  const [showPostUpload, setShowPostUpload] = useState(false);
   const [chatConversations, setChatConversations] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
@@ -1686,7 +1689,7 @@ export default function TraderDashboard() {
               animate={{ opacity: 1, y: 0 }}
               className="overflow-x-auto no-scrollbar"
             >
-              <div className="flex gap-2 sm:gap-3 pb-3 min-w-max sm:min-w-full">
+                <div className="flex gap-2 sm:gap-3 pb-3 min-w-max sm:min-w-full">
                 <StatCard
                   label="Today's Sales"
                   value={`${todaySales.toLocaleString()} RWF`}
@@ -1741,20 +1744,27 @@ export default function TraderDashboard() {
                   />
                 )}
                 {activeTab === 'products' && (
-                  <TraderProducts
-                    products={products}
-                    traderId={dashboardTraderId}
-                    traderName={userData?.businessName || userData?.name || t.common.trader}
-                    traderTin={userData?.tin || '---'}
-                    traderPhone={userData?.phone}
-                    traderAddress={userData?.businessAddress || userData?.location}
-                    traderData={userData}
-                    lowStockThreshold={userData?.lowStockThreshold || 10}
-                    initialStockFilter={initialStockFilter}
-                    initialEditProductId={initialEditProductId}
-                    setInitialEditProductId={setInitialEditProductId}
-                    onProductsChange={setProducts}
-                  />
+                  <>
+                    <div className="mb-4 flex justify-end">
+                      <button type="button" onClick={() => setShowPostUpload(true)} className="flex items-center gap-2 rounded-xl bg-orange-600 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-black hover:bg-orange-500">
+                        <Plus size={16} /> Post to marketplace
+                      </button>
+                    </div>
+                    <TraderProducts
+                      products={products}
+                      traderId={dashboardTraderId}
+                      traderName={userData?.businessName || userData?.name || t.common.trader}
+                      traderTin={userData?.tin || '---'}
+                      traderPhone={userData?.phone}
+                      traderAddress={userData?.businessAddress || userData?.location}
+                      traderData={userData}
+                      lowStockThreshold={userData?.lowStockThreshold || 10}
+                      initialStockFilter={initialStockFilter}
+                      initialEditProductId={initialEditProductId}
+                      setInitialEditProductId={setInitialEditProductId}
+                      onProductsChange={setProducts}
+                    />
+                  </>
                 )}
                 {activeTab === 'purchases' && (
                   <TraderPurchases
@@ -2064,8 +2074,9 @@ export default function TraderDashboard() {
                   icon={<VerifiedIcon size={20} />}
                   label="Status"
                 />
+                </div>
+                <TraderRewards traderId={dashboardTraderId} />
               </div>
-            </div>
           </nav>
         )}
 
@@ -2083,6 +2094,18 @@ export default function TraderDashboard() {
           </>
         )}
       </main>
+
+      <AnimatePresence>
+        {showPostUpload && (
+          <React.Suspense fallback={null}>
+            <PostUploadModal
+              traderId={dashboardTraderId}
+              products={products}
+              onClose={() => setShowPostUpload(false)}
+            />
+          </React.Suspense>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showScanner && (

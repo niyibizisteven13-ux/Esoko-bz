@@ -183,6 +183,20 @@ const wa = {
 	danger: '#e35b5b',
 };
 
+const CHAT_WALLPAPERS = {
+	dark: { label: 'Dark Modern', background: '#0B141A' },
+	beige: { label: 'Minimal Beige', background: '#E5DDD5' },
+	lavender: { label: 'Pastel Lavender', background: '#DAD3EE' },
+	navy: { label: 'Navy Pro', background: '#0A192F' },
+	sage: { label: 'Olive Sage', background: '#A8BBA4' },
+} as const;
+
+const DEFAULT_QUICK_REPLIES = [
+	{ shortcut: '/thanks', text: 'Thanks for reaching out. We will get back to you shortly.' },
+	{ shortcut: '/order', text: 'Please share your order number so I can check this for you.' },
+	{ shortcut: '/hours', text: 'Our business hours are Monday to Saturday, 8:00 AM to 6:00 PM.' },
+];
+
 function IconSearch() { return (<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>); }
 function IconPhone() { return (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" /></svg>); }
 function IconVideo() { return (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>); }
@@ -396,6 +410,12 @@ export default function TraderChat({
 	const [showInChatSearch, setShowInChatSearch] = useState(false);
 	const [inChatQuery, setInChatQuery] = useState('');
 	const [showContactInfo, setShowContactInfo] = useState(false);
+	const [showQuickReplies, setShowQuickReplies] = useState(false);
+	const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
+	const [chatWallpaper, setChatWallpaper] = useState<keyof typeof CHAT_WALLPAPERS>('dark');
+	const [quickReplies, setQuickReplies] = useState(DEFAULT_QUICK_REPLIES);
+	const [conversationLabels, setConversationLabels] = useState<Record<string, string[]>>({});
+	const preferencesLoadedRef = useRef(false);
 	const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
 	const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
 	// call state is now managed by parent via `call` prop
@@ -411,6 +431,9 @@ export default function TraderChat({
 	const [replyingToId, setReplyingToId] = useState<string | null>(null);
 	const [activeToolbarMessageId, setActiveToolbarMessageId] = useState<string | null>(null);
 	const [openReactionPickerId, setOpenReactionPickerId] = useState<string | null>(null);
+	const [isDragActive, setIsDragActive] = useState(false);
+	const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+	const lastNotifiedMessageIdRef = useRef<string | null>(null);
 	const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 	useEffect(() => {
@@ -424,8 +447,39 @@ export default function TraderChat({
 		if (messagesProp) setLocalMessages(messagesProp);
 	}, [messagesProp]);
 
+	useEffect(() => {
+		preferencesLoadedRef.current = false;
+		const storageKey = `esoko-chat-preferences-${traderId || 'default'}`;
+		try {
+			const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
+			if (saved.wallpaper && saved.wallpaper in CHAT_WALLPAPERS) setChatWallpaper(saved.wallpaper);
+			if (Array.isArray(saved.quickReplies) && saved.quickReplies.length > 0) setQuickReplies(saved.quickReplies);
+			if (saved.labels && typeof saved.labels === 'object') setConversationLabels(saved.labels);
+		} catch {
+			// Use defaults when local preferences are unavailable or malformed.
+		}
+		preferencesLoadedRef.current = true;
+	}, [traderId]);
+
+	useEffect(() => {
+		if (!preferencesLoadedRef.current) return;
+		const storageKey = `esoko-chat-preferences-${traderId || 'default'}`;
+		localStorage.setItem(storageKey, JSON.stringify({ wallpaper: chatWallpaper, quickReplies, labels: conversationLabels }));
+	}, [traderId, chatWallpaper, quickReplies, conversationLabels]);
+
 	const conversations = localConversations;
 	const messages = localMessages;
+
+	useEffect(() => {
+		const latestMessage = messagesProp?.[messagesProp.length - 1];
+		if (!latestMessage || latestMessage.id === lastNotifiedMessageIdRef.current) return;
+		const isIncoming = latestMessage.senderId !== 'me' && latestMessage.conversationId !== activeConversationId;
+		lastNotifiedMessageIdRef.current = latestMessage.id;
+		if (isIncoming && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+			const sender = conversations.find((conversation) => conversation.id === latestMessage.conversationId)?.name || 'New message';
+			new Notification(sender, { body: previewTextForMessage(latestMessage) });
+		}
+	}, [messagesProp, activeConversationId, conversations]);
 
 	useEffect(() => {
 		if (!activeConversationId && conversations.length > 0) {
@@ -504,6 +558,34 @@ export default function TraderChat({
 		return () => document.removeEventListener('mousedown', handleClick);
 	}, []);
 
+	useEffect(() => {
+		function handleKeyboardShortcut(event: KeyboardEvent) {
+			if (event.key === 'Escape') {
+				setReplyingToId(null);
+				setShowHeaderMenu(false);
+				setShowEmojiPicker(false);
+				return;
+			}
+			if (!event.ctrlKey && !event.metaKey) return;
+			if (event.key.toLowerCase() === 'n') {
+				event.preventDefault();
+				setMobilePane('list');
+				setShowAddContact(true);
+				return;
+			}
+			if (!event.shiftKey || !['[', ']'].includes(event.key) || conversations.length < 2) return;
+			event.preventDefault();
+			const currentIndex = conversations.findIndex((conversation) => conversation.id === activeConversationId);
+			const nextIndex = event.key === ']'
+				? (currentIndex + 1) % conversations.length
+				: (currentIndex - 1 + conversations.length) % conversations.length;
+			setActiveConversationId(conversations[nextIndex].id);
+			setMobilePane('chat');
+		}
+		document.addEventListener('keydown', handleKeyboardShortcut);
+		return () => document.removeEventListener('keydown', handleKeyboardShortcut);
+	}, [activeConversationId, conversations]);
+
 	function appendLocalMessage(newMessage: ChatMessage, previewText: string) {
 		setLocalMessages((prev) => [...prev, newMessage]);
 		setLocalConversations((prev) =>
@@ -576,13 +658,26 @@ export default function TraderChat({
 		textareaRef.current?.focus();
 	}
 
+	function insertQuickReply(replyText: string) {
+		setDraft(replyText);
+		setShowQuickReplies(false);
+		textareaRef.current?.focus();
+	}
+
+	function toggleConversationLabel(label: string) {
+		if (!activeConversationId) return;
+		setConversationLabels((previous) => {
+			const current = previous[activeConversationId] || [];
+			const next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label];
+			return { ...previous, [activeConversationId]: next };
+		});
+	}
+
 	function handleAttachClick() {
 		fileInputRef.current?.click();
 	}
 
-	function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-		const file = e.target.files?.[0];
-		e.target.value = '';
+	function sendFile(file: File) {
 		if (!file || !activeConversationId) return;
 
 		const objectUrl = URL.createObjectURL(file);
@@ -604,6 +699,25 @@ export default function TraderChat({
 		appendLocalMessage(newMessage, isImage ? '📷 Photo' : `📎 ${file.name}`);
 		setReplyingToId(null);
 		if (onSendFile) onSendFile(activeConversationId, file, replyingToId);
+	}
+
+	function handleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+		const file = e.target.files?.[0];
+		e.target.value = '';
+		if (file) sendFile(file);
+	}
+
+	function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+		e.preventDefault();
+		setIsDragActive(false);
+		const file = e.dataTransfer.files?.[0];
+		if (file) sendFile(file);
+	}
+
+	async function enableDesktopNotifications() {
+		if (!('Notification' in window)) return;
+		await Notification.requestPermission();
+		setShowHeaderMenu(false);
 	}
 
 	async function startRecording() {
@@ -762,7 +876,15 @@ export default function TraderChat({
 		<div
 			className={`relative grid h-[100dvh] max-h-[100dvh] min-h-0 w-full grid-cols-1 overflow-hidden rounded-none md:rounded-lg md:grid-cols-[280px_1fr] ${className ?? ''}`}
 			style={{ gridTemplateRows: '100%', backgroundColor: wa.sidebarBg, ...style }}
+			onDragOver={(event) => { event.preventDefault(); setIsDragActive(true); }}
+			onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragActive(false); }}
+			onDrop={handleDrop}
 		>
+			{isDragActive && (
+				<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center border-2 border-dashed" style={{ backgroundColor: 'rgba(0,168,132,0.16)', borderColor: wa.accent }}>
+					<div className="rounded-xl px-5 py-3 text-sm font-semibold shadow-xl" style={{ backgroundColor: wa.panelBg, color: wa.textPrimary }}>Drop a file to send</div>
+				</div>
+			)}
 			{/* Sidebar */}
 			<div className={`h-full min-h-0 flex-col ${mobilePane === 'chat' ? 'hidden md:flex' : 'flex'}`} style={{ borderRight: `1px solid ${wa.border}` }}>
 				<div className="flex flex-shrink-0 items-center justify-between px-4 py-3" style={{ backgroundColor: wa.panelBg }}>
@@ -850,7 +972,7 @@ export default function TraderChat({
 			{/* Active conversation */}
 			<div
 				className={`relative h-full min-h-0 min-w-0 flex flex-col ${mobilePane === 'list' ? 'hidden' : ''}`}
-				style={{ backgroundColor: wa.chatBg, backgroundImage: 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.02) 1px, transparent 1px), radial-gradient(circle at 60% 70%, rgba(255,255,255,0.02) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
+				style={{ backgroundColor: CHAT_WALLPAPERS[chatWallpaper].background, backgroundImage: chatWallpaper === 'dark' ? 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.02) 1px, transparent 1px), radial-gradient(circle at 60% 70%, rgba(255,255,255,0.02) 1px, transparent 1px)' : undefined, backgroundSize: '26px 26px' }}
 			>
 				{!activeConversation ? (
 					<div className="flex flex-1 items-center justify-center px-6">
@@ -901,9 +1023,12 @@ export default function TraderChat({
 									</button>
 									{showHeaderMenu && (
 										<div className="absolute right-0 top-full z-40 mt-1 w-56 overflow-hidden rounded-lg shadow-2xl" style={{ backgroundColor: '#233138', border: `1px solid ${wa.border}` }}>
-											<MenuItem icon={<IconInfo />} label="Contact info" onClick={() => { setShowContactInfo(true); setShowHeaderMenu(false); }} />
-											<MenuItem icon={<IconSearch />} label="Search in chat" onClick={() => { setShowInChatSearch(true); setShowHeaderMenu(false); }} />
-											<MenuItem icon={<IconBellOff />} label={isMuted ? 'Unmute notifications' : 'Mute notifications'} onClick={toggleMute} />
+																			<MenuItem icon={<IconInfo />} label="Contact info" onClick={() => { setShowContactInfo(true); setShowHeaderMenu(false); }} />
+																			<MenuItem icon={<IconSearch />} label="Search in chat" onClick={() => { setShowInChatSearch(true); setShowHeaderMenu(false); }} />
+																			<MenuItem icon={<IconSmile />} label="Quick replies" onClick={() => { setShowQuickReplies(true); setShowHeaderMenu(false); }} />
+																			<MenuItem icon={<IconInfo />} label="Chat wallpaper" onClick={() => { setShowWallpaperPicker(true); setShowHeaderMenu(false); }} />
+																			{typeof Notification !== 'undefined' && Notification.permission !== 'granted' && <MenuItem icon={<IconBellOff />} label="Enable desktop notifications" onClick={enableDesktopNotifications} />}
+																			<MenuItem icon={<IconBellOff />} label={isMuted ? 'Unmute notifications' : 'Mute notifications'} onClick={toggleMute} />
 											<MenuItem icon={<IconTrash />} label="Clear chat" onClick={handleClearChat} />
 											<MenuItem icon={<IconBan />} label={isBlocked ? 'Unblock' : 'Block'} onClick={toggleBlock} danger={!isBlocked} />
 											<MenuItem icon={<IconTrash2 />} label="Delete chat" onClick={handleDeleteChat} danger />
@@ -942,6 +1067,20 @@ export default function TraderChat({
 										key={m.id}
 										whileTap={{ scale: 0.985 }}
 										className={`trader-chat-message-bubble group relative flex ${isMine ? 'justify-end' : 'justify-start'}`}
+										onTouchStart={(event) => {
+											touchStartRef.current = { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
+										}}
+										onTouchEnd={(event) => {
+											const start = touchStartRef.current;
+											if (!start) return;
+											const deltaX = event.changedTouches[0].clientX - start.x;
+											const deltaY = Math.abs(event.changedTouches[0].clientY - start.y);
+											if (deltaX > 60 && deltaX > deltaY * 1.5) {
+												setReplyingToId(m.id);
+												setActiveToolbarMessageId(null);
+											}
+											touchStartRef.current = null;
+										}}
 										onClick={(e) => {
 											e.stopPropagation();
 											setActiveToolbarMessageId(id => (id === m.id ? null : m.id));
@@ -1189,6 +1328,41 @@ export default function TraderChat({
 							/>
 						)}
 
+						{showQuickReplies && (
+							<div className="absolute inset-0 z-40 overflow-y-auto p-6" style={{ backgroundColor: wa.chatBg }}>
+								<div className="mb-5 flex items-center justify-between">
+									<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Quick replies</h3>
+									<button onClick={() => setShowQuickReplies(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
+								</div>
+								<p className="mb-4 text-[13px]" style={{ color: wa.textSecondary }}>Choose a saved response to insert into the composer.</p>
+								<div className="space-y-2">
+									{quickReplies.map((reply) => (
+										<button key={reply.shortcut} onClick={() => insertQuickReply(reply.text)} className="w-full rounded-lg border p-3 text-left hover:bg-white/5" style={{ borderColor: wa.border }}>
+											<div className="text-[12px] font-semibold" style={{ color: wa.accent }}>{reply.shortcut}</div>
+											<div className="mt-1 text-[13px]" style={{ color: wa.textPrimary }}>{reply.text}</div>
+										</button>
+									))}
+								</div>
+							</div>
+						)}
+
+						{showWallpaperPicker && (
+							<div className="absolute inset-0 z-40 overflow-y-auto p-6" style={{ backgroundColor: wa.chatBg }}>
+								<div className="mb-5 flex items-center justify-between">
+									<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Chat wallpaper</h3>
+									<button onClick={() => setShowWallpaperPicker(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
+								</div>
+								<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+									{Object.entries(CHAT_WALLPAPERS).map(([key, wallpaper]) => (
+										<button key={key} onClick={() => { setChatWallpaper(key as keyof typeof CHAT_WALLPAPERS); setShowWallpaperPicker(false); }} className="overflow-hidden rounded-lg border text-left" style={{ borderColor: chatWallpaper === key ? wa.accent : wa.border }}>
+											<div className="h-20" style={{ backgroundColor: wallpaper.background }} />
+											<div className="p-2 text-[12px]" style={{ backgroundColor: wa.panelBg, color: wa.textPrimary }}>{wallpaper.label}</div>
+										</button>
+									))}
+								</div>
+							</div>
+						)}
+
 						{showContactInfo && (
 							<div className="absolute inset-0 z-30 flex flex-col items-center gap-4 overflow-y-auto p-8" style={{ backgroundColor: wa.chatBg }}>
 								<button onClick={() => setShowContactInfo(false)} className="self-start rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}>
@@ -1200,6 +1374,15 @@ export default function TraderChat({
 								<div className="text-center">
 									<div className="text-[18px]" style={{ color: wa.textPrimary }}>{activeConversation.name}</div>
 									<div className="mt-1 text-[13px]" style={{ color: wa.textSecondary }}>#{activeConversation.accountNumber}</div>
+								</div>
+								<div className="w-full max-w-sm">
+									<div className="mb-2 text-[12px] font-semibold uppercase tracking-wide" style={{ color: wa.textSecondary }}>Business labels</div>
+									<div className="flex flex-wrap gap-2">
+										{['New lead', 'Paid', 'To follow up'].map((label) => {
+											const selected = (conversationLabels[activeConversationId] || []).includes(label);
+											return <button key={label} onClick={() => toggleConversationLabel(label)} className="rounded-full border px-3 py-1.5 text-[12px]" style={{ backgroundColor: selected ? wa.accent : 'transparent', borderColor: selected ? wa.accent : wa.border, color: selected ? wa.sidebarBg : wa.textSecondary }}>{label}</button>;
+										})}
+									</div>
 								</div>
 							</div>
 						)}

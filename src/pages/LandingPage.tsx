@@ -77,7 +77,7 @@ export default function LandingPage() {
             Rwanda's Unified Digital Wallet
           </div>
           <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-neutral-900 mb-6">
-            <span className="text-orange-600">ESOKO</span> Wallet
+            <span className="text-orange-600">Makasi</span>
           </h1>
           <p className="text-xl text-neutral-600 mb-10 leading-relaxed">
             The all-in-one platform for digital payments, inventory management, and reporting in
@@ -228,7 +228,7 @@ export default function LandingPage() {
             </Link>
           </div>
           <p className="text-neutral-400 text-sm">
-            © 2026 ESOKO Wallet. Built for Rwanda's Digital Future.
+            © 2026 Makasi. Built for Rwanda's Digital Future.
           </p>
         </div>
       </footer>

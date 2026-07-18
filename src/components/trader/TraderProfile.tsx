@@ -31,6 +31,7 @@ import { getCurrentCoordinates } from '../../lib/locationUtils';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { isAccountVerified } from '../../lib/verification';
 import { apiPost } from '../../services/apiClient';
+import { getTraderStats } from '../../services/postService';
 
 interface TraderProfileProps {
   userData: any;
@@ -49,6 +50,7 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
   const [verificationError, setVerificationError] = useState('');
   const [businessProof, setBusinessProof] = useState<File | null>(null);
   const [businessProofType, setBusinessProofType] = useState('rdb_certificate');
+  const [traderStats, setTraderStats] = useState<{ qualityScore: number; ratingCount: number; totalSales: number } | null>(null);
 
   const [formData, setFormData] = useState({
     name: userData?.name || '',
@@ -80,6 +82,12 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
       }));
     }
   }, [userData]);
+
+  useEffect(() => {
+    const traderId = userData?.id || userData?.uid;
+    if (!traderId) return;
+    void getTraderStats(traderId).then((response) => setTraderStats(response.stats)).catch(() => {});
+  }, [userData?.id, userData?.uid]);
 
   const handleSetLocation = async () => {
     setGettingLocation(true);
@@ -229,6 +237,16 @@ export default function TraderProfile({ userData }: TraderProfileProps) {
           <p className="text-neutral-500 dark:text-neutral-400 font-medium mt-1 text-sm">
             {t.profile.subtitle}
           </p>
+          {traderStats && (
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-black">
+              <span className="rounded-full bg-amber-500/10 px-3 py-2 text-amber-500">
+                ★ {traderStats.qualityScore.toFixed(1)} quality
+              </span>
+              <span className="rounded-full bg-neutral-500/10 px-3 py-2 text-neutral-500">
+                {traderStats.ratingCount} verified ratings · {traderStats.totalSales} sales
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="px-6 pt-6 pb-0 flex-shrink-0 overflow-y-auto">

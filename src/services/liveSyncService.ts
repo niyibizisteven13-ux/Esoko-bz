@@ -1,4 +1,5 @@
 import { hasStoredAuthUser } from './sessionService';
+import { getAuthToken } from './apiClient';
 
 type LiveSyncPayload = {
   id?: string;
@@ -28,7 +29,7 @@ function notifyListeners(payload: LiveSyncPayload) {
 
 function ensureEventSource() {
   if (typeof window === 'undefined' || eventSource) return;
-  if (!hasStoredAuthUser()) return;
+  if (!hasStoredAuthUser() || !getAuthToken()) return;
 
   eventSource = new EventSource('/api/events', { withCredentials: true });
 
@@ -43,7 +44,7 @@ function ensureEventSource() {
   eventSource.onerror = () => {
     eventSource?.close();
     eventSource = null;
-    if (!hasStoredAuthUser()) return;
+    if (!hasStoredAuthUser() || !getAuthToken()) return;
     window.setTimeout(() => {
       if (listeners.size > 0) ensureEventSource();
     }, 3000);

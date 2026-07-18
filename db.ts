@@ -243,6 +243,68 @@ function initializeDatabase() {
       FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS marketplace_posts (
+      id TEXT PRIMARY KEY,
+      traderId TEXT NOT NULL,
+      productId TEXT,
+      mediaType TEXT NOT NULL DEFAULT 'image',
+      mediaUrl TEXT NOT NULL,
+      thumbnailUrl TEXT,
+      caption TEXT,
+      price REAL DEFAULT 0,
+      stock INTEGER DEFAULT 0,
+      category TEXT,
+      likeCount INTEGER DEFAULT 0,
+      followCount INTEGER DEFAULT 0,
+      viewCount INTEGER DEFAULT 0,
+      commentCount INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (productId) REFERENCES products(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS post_likes (
+      postId TEXT NOT NULL,
+      userId TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (postId, userId),
+      FOREIGN KEY (postId) REFERENCES marketplace_posts(id) ON DELETE CASCADE,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS trader_follows (
+      followerId TEXT NOT NULL,
+      traderId TEXT NOT NULL,
+      sourcePostId TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (followerId, traderId),
+      FOREIGN KEY (followerId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS post_favorites (
+      postId TEXT NOT NULL,
+      userId TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (postId, userId),
+      FOREIGN KEY (postId) REFERENCES marketplace_posts(id) ON DELETE CASCADE,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS post_reports (
+      id TEXT PRIMARY KEY,
+      postId TEXT NOT NULL,
+      traderId TEXT NOT NULL,
+      reporterId TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (postId) REFERENCES marketplace_posts(id) ON DELETE CASCADE,
+      FOREIGN KEY (reporterId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS purchases (
       id TEXT PRIMARY KEY,
       customerId TEXT NOT NULL,
@@ -351,6 +413,127 @@ function initializeDatabase() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS trader_stats (
+      traderId TEXT PRIMARY KEY,
+      followerCount INTEGER NOT NULL DEFAULT 0,
+      qualityScore REAL NOT NULL DEFAULT 0,
+      totalSales INTEGER NOT NULL DEFAULT 0,
+      rewardBalance REAL NOT NULL DEFAULT 0,
+      lastRewardPayoutAt TEXT,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ratings (
+      id TEXT PRIMARY KEY,
+      transactionId TEXT NOT NULL UNIQUE,
+      traderId TEXT NOT NULL,
+      buyerId TEXT NOT NULL,
+      stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+      tags TEXT,
+      comment TEXT,
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (transactionId) REFERENCES transactions(id) ON DELETE CASCADE,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (buyerId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TRIGGER IF NOT EXISTS trg_ratings_update_quality_score
+    AFTER INSERT ON ratings
+    BEGIN
+      INSERT INTO trader_stats (traderId, qualityScore, totalSales)
+      VALUES (NEW.traderId, NEW.stars, 0)
+      ON CONFLICT(traderId) DO UPDATE SET
+        qualityScore = (SELECT AVG(stars) FROM ratings WHERE traderId = NEW.traderId);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_completed_transaction_adds_sale
+    AFTER INSERT ON transactions
+    WHEN NEW.status = 'completed' AND NEW.traderId IS NOT NULL
+    BEGIN
+      INSERT INTO trader_stats (traderId, totalSales)
+      VALUES (NEW.traderId, 1)
+      ON CONFLICT(traderId) DO UPDATE SET
+        totalSales = (
+          SELECT COUNT(*) FROM transactions
+          WHERE traderId = NEW.traderId AND status = 'completed'
+        );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_transaction_status_updates_sales
+    AFTER UPDATE OF status, traderId ON transactions
+    WHEN NEW.traderId IS NOT NULL OR OLD.traderId IS NOT NULL
+    BEGIN
+      INSERT INTO trader_stats (traderId, totalSales)
+      SELECT NEW.traderId, COUNT(*)
+      FROM transactions
+      WHERE traderId = NEW.traderId AND status = 'completed'
+      AND NEW.traderId IS NOT NULL
+      ON CONFLICT(traderId) DO UPDATE SET
+        totalSales = (
+          SELECT COUNT(*) FROM transactions
+          WHERE traderId = NEW.traderId AND status = 'completed'
+        );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_transaction_status_updates_previous_trader_sales
+    AFTER UPDATE OF status, traderId ON transactions
+    WHEN OLD.traderId IS NOT NULL
+    BEGIN
+      UPDATE trader_stats
+      SET totalSales = (
+        SELECT COUNT(*) FROM transactions
+        WHERE traderId = OLD.traderId AND status = 'completed'
+      )
+      WHERE traderId = OLD.traderId;
+    END;
+
+    CREATE TABLE IF NOT EXISTS reward_ledger (
+      id TEXT PRIMARY KEY,
+      traderId TEXT NOT NULL,
+      followerId TEXT NOT NULL,
+      sourcePostId TEXT,
+      transactionId TEXT NOT NULL UNIQUE,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+      createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (transactionId) REFERENCES transactions(id) ON DELETE CASCADE,
+      FOREIGN KEY (traderId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (followerId) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (sourcePostId) REFERENCES marketplace_posts(id) ON DELETE SET NULL
+    );
+
+    CREATE TRIGGER IF NOT EXISTS trg_completed_transaction_creates_follower_reward
+    AFTER INSERT ON transactions
+    WHEN NEW.status = 'completed' AND NEW.traderId IS NOT NULL AND NEW.customerId IS NOT NULL
+    BEGIN
+      INSERT OR IGNORE INTO reward_ledger (id, traderId, followerId, sourcePostId, transactionId, amount)
+      SELECT lower(hex(randomblob(16))), NEW.traderId, follows.followerId, follows.sourcePostId, NEW.id,
+        MAX(100, ROUND(NEW.amount * 0.01, 2))
+      FROM trader_follows follows
+      WHERE follows.followerId = NEW.customerId AND follows.traderId = NEW.traderId;
+
+      INSERT INTO trader_stats (traderId, rewardBalance)
+      SELECT NEW.traderId, ledger.amount FROM reward_ledger ledger
+      WHERE ledger.transactionId = NEW.id AND changes() = 1
+      ON CONFLICT(traderId) DO UPDATE SET rewardBalance = rewardBalance + excluded.rewardBalance;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_transaction_completion_creates_follower_reward
+    AFTER UPDATE OF status ON transactions
+    WHEN NEW.status = 'completed' AND OLD.status != 'completed' AND NEW.traderId IS NOT NULL AND NEW.customerId IS NOT NULL
+    BEGIN
+      INSERT OR IGNORE INTO reward_ledger (id, traderId, followerId, sourcePostId, transactionId, amount)
+      SELECT lower(hex(randomblob(16))), NEW.traderId, follows.followerId, follows.sourcePostId, NEW.id,
+        MAX(100, ROUND(NEW.amount * 0.01, 2))
+      FROM trader_follows follows
+      WHERE follows.followerId = NEW.customerId AND follows.traderId = NEW.traderId;
+
+      INSERT INTO trader_stats (traderId, rewardBalance)
+      SELECT NEW.traderId, ledger.amount FROM reward_ledger ledger
+      WHERE ledger.transactionId = NEW.id AND changes() = 1
+      ON CONFLICT(traderId) DO UPDATE SET rewardBalance = rewardBalance + excluded.rewardBalance;
+    END;
 
     CREATE TABLE IF NOT EXISTS wallet_transactions (
       id TEXT PRIMARY KEY,

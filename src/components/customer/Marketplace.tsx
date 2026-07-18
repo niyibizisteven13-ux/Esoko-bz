@@ -6,6 +6,8 @@ import {
   Copy,
   Eye,
   Heart,
+  Bookmark,
+  UserPlus,
   Navigation,
   Play,
   Loader2,
@@ -24,6 +26,14 @@ import LiveTraderRoom from './LiveTraderRoom';
 import { cn, formatCurrency } from '../../lib/utils';
 import { useLanguage } from '../../context/LanguageContext';
 import { getProducts } from '../../services/productService';
+import {
+  getMarketplacePosts,
+  recordPostView,
+  togglePostFavorite,
+  togglePostLike,
+  toggleTraderFollow,
+  MarketplacePost,
+} from '../../services/postService';
 import { subscribeToLiveUpdates } from '../../services/liveSyncService';
 import { createTicket } from '../../services/ticketService';
 import PurchaseModal from './PurchaseModal';
@@ -191,6 +201,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 }) => {
   const { t } = useLanguage();
   const [products, setProducts] = useState<Product[]>([]);
+  const [posts, setPosts] = useState<MarketplacePost[]>([]);
+  const [postEngagement, setPostEngagement] = useState<Record<string, Partial<MarketplacePost>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchMode, setSearchMode] = useState<'products' | 'shops'>(initialSearchMode);
@@ -233,9 +245,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const el = videoRefs.current[productId];
     if (!el) return;
     if (el.paused) {
+      // Try to play unmuted (user-initiated). If browser blocks it, fall back to muted autoplay.
       el.muted = false;
       el.volume = 1;
-      void el.play();
+      void el.play().catch(() => {
+        // Play was blocked; try muted autoplay as a fallback.
+        el.muted = true;
+        el.play().catch(() => console.warn('It was not possible to play the video.'));
+      });
       setPausedVideos((prev) => {
         const next = new Set(prev);
         next.delete(productId);
@@ -280,9 +297,28 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       setLoading(true);
       setError('');
       try {
-        const data = await getProducts({ status: 'available', limit: 100 });
+        const [data, postData] = await Promise.all([
+          getProducts({ status: 'available', limit: 100 }),
+          getMarketplacePosts({ limit: 100 }),
+        ]);
         const mapped = (data?.products || []).map(normalizeProduct);
-        if (!cancelled) setProducts(mapped);
+        const loadedPosts = postData?.posts || [];
+        const postProducts = loadedPosts.map((post) =>
+          normalizeProduct({
+            ...post,
+            id: `post-${post.id}`,
+            name: post.caption || post.traderBusinessName || post.traderName || 'Marketplace post',
+            description: post.caption || 'Shared by a verified trader.',
+            imageUrl: post.mediaType === 'image' ? post.mediaUrl : undefined,
+            mediaItems: [{ id: `${post.id}-media`, type: post.mediaType, url: post.mediaUrl }],
+          })
+        );
+        const productIdsInPosts = new Set(loadedPosts.map((post) => post.productId).filter(Boolean));
+        const combined = [...postProducts, ...mapped.filter((product: Product) => !productIdsInPosts.has(product.id))];
+        if (!cancelled) {
+          setPosts(loadedPosts);
+          setProducts(combined);
+        }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
@@ -299,7 +335,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     // Subscribe to live updates so marketplace refreshes when products change
     const unsubscribe = subscribeToLiveUpdates((event) => {
       const collection = (event.collection || (event.path || '').match(/^\/api\/([^/?]+)/)?.[1]) || '';
-      if (!collection || collection === 'products') {
+      if (!collection || collection === 'products' || collection === 'marketplace') {
         setTimeout(() => void fetchMarketplace(), 200);
       }
     });
@@ -309,6 +345,50 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       unsubscribe();
     };
   }, []);
+
+  const postForProduct = (product: Product) =>
+    posts.find((post) => `post-${post.id}` === product.id || post.productId === product.id);
+
+  const showAuthNotice = () => setNotice('Please sign in to engage with marketplace posts.');
+
+  const engageWithPost = async (product: Product, action: 'like' | 'follow' | 'favorite') => {
+    const post = postForProduct(product);
+    if (!post) return;
+    try {
+      if (action === 'like') {
+        const result = await togglePostLike(post.id);
+        setPostEngagement((current) => ({
+          ...current,
+          [post.id]: { ...current[post.id], liked: result.liked, likeCount: result.likeCount },
+        }));
+        return;
+      }
+      if (action === 'follow') {
+        const result = await toggleTraderFollow(post.traderId, post.id);
+        setPostEngagement((current) => ({
+          ...current,
+          [post.id]: { ...current[post.id], following: result.following },
+        }));
+        return;
+      }
+      const result = await togglePostFavorite(post.id);
+      setPostEngagement((current) => ({
+        ...current,
+        [post.id]: {
+          ...current[post.id],
+          favorited: result.favorited,
+        },
+      }));
+    } catch (err: any) {
+      if (String(err?.message || '').includes('401')) showAuthNotice();
+      else setNotice('That action could not be completed.');
+    }
+  };
+
+  useEffect(() => {
+    const post = activeVideoId ? postForProduct(products.find((item) => item.id === activeVideoId) as Product) : null;
+    if (post) void recordPostView(post.id).catch(() => {});
+  }, [activeVideoId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -483,9 +563,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       if (!video) return;
       if (productId === activeVideoId) {
         if (!pausedVideos.has(productId)) {
-          video.muted = false;
+          // Use muted autoplay for intersection-driven playback to avoid NotAllowedError.
+          video.muted = true;
           video.volume = 1;
-          void video.play();
+          void video.play().catch(() => console.warn('Auto play blocked'));
         }
       } else {
         if (!video.paused) {
@@ -794,6 +875,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         ) : null}
 
         {displayProducts.map((product) => {
+          const post = postForProduct(product);
+          const engagement = post ? { ...post, ...postEngagement[post.id] } : null;
           const background = product.mediaBlocks.find((block) => block.type === 'video' || block.type === 'image');
           const textOverlays = product.mediaBlocks.filter(
             (block) => block.type === 'text' || (!block.url && block.type !== 'image' && block.type !== 'video')
@@ -921,6 +1004,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                               animated
                               className="!border-white/10"
                             />
+                            {post && Number(engagement?.qualityScore || 0) > 0 && (
+                              <span className="text-[10px] font-black text-amber-300">
+                                ★ {Number(engagement?.qualityScore || 0).toFixed(1)}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -1000,6 +1088,33 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   {/* Desktop-only horizontal action row. On phones this is replaced entirely
                       by the right-side vertical rail below. */}
                   <div className="hidden md:flex md:items-center md:gap-3 md:flex-wrap">
+                    {post && (
+                      <>
+                        <button
+                          onClick={() => void engageWithPost(product, 'like')}
+                          className={cn('flex h-11 items-center gap-2 rounded-2xl border border-white/10 px-3 text-white transition hover:bg-white/10', engagement?.liked ? 'text-rose-400' : '')}
+                          aria-label="Like post"
+                        >
+                          <Heart size={18} fill={engagement?.liked ? 'currentColor' : 'none'} />
+                          <span className="text-[10px] font-black">{engagement?.likeCount || 0}</span>
+                        </button>
+                        <button
+                          onClick={() => void engageWithPost(product, 'follow')}
+                          className="flex h-11 items-center gap-2 rounded-2xl border border-white/10 px-3 text-white transition hover:bg-white/10"
+                          aria-label="Follow trader"
+                        >
+                          <UserPlus size={18} />
+                          <span className="text-[10px] font-black">{engagement?.following ? 'Following' : 'Follow'}</span>
+                        </button>
+                        <button
+                          onClick={() => void engageWithPost(product, 'favorite')}
+                          className={cn('flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 text-white transition hover:bg-white/10', engagement?.favorited ? 'text-amber-400' : '')}
+                          aria-label="Save post"
+                        >
+                          <Bookmark size={18} fill={engagement?.favorited ? 'currentColor' : 'none'} />
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => (isShopCard ? setShopTraderId(product.traderId || null) : setSelectedProduct(product))}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
@@ -1087,6 +1202,31 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     against the whole card, so it floats over both the media and the info
                     panel at a fixed spot on the right edge and never scrolls away. */}
                 <div className="pointer-events-auto absolute right-3 bottom-4 z-40 flex flex-col items-center gap-3 md:hidden">
+                  {post && (
+                    <>
+                      <button
+                        onClick={() => void engageWithPost(product, 'like')}
+                        className={cn('flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90', engagement?.liked ? 'text-rose-400' : '')}
+                        aria-label="Like post"
+                      >
+                        <Heart size={19} fill={engagement?.liked ? 'currentColor' : 'none'} />
+                      </button>
+                      <button
+                        onClick={() => void engageWithPost(product, 'follow')}
+                        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
+                        aria-label="Follow trader"
+                      >
+                        <UserPlus size={18} />
+                      </button>
+                      <button
+                        onClick={() => void engageWithPost(product, 'favorite')}
+                        className={cn('flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90', engagement?.favorited ? 'text-amber-400' : '')}
+                        aria-label="Save post"
+                      >
+                        <Bookmark size={18} fill={engagement?.favorited ? 'currentColor' : 'none'} />
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => (isShopCard ? setShopTraderId(product.traderId || null) : setSelectedProduct(product))}
                     className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"

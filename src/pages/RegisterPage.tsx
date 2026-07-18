@@ -113,8 +113,8 @@ export default function RegisterPage() {
         userId: currentUser.id,
         message:
           role === 'trader'
-            ? 'Welcome to ESOKO. Your shop is ready. Upload one business proof when you want a verified badge.'
-            : 'Welcome to ESOKO. You can start shopping and paying now.',
+            ? 'Welcome to Makasi. Your shop is ready. Upload one business proof when you want a verified badge.'
+            : 'Welcome to Makasi. You can start shopping and paying now.',
         type: 'success',
         subType: 'system',
       }).catch((notifErr) => console.error('Welcome notification failed:', notifErr));

@@ -7,6 +7,11 @@ const API_BASE = (() => {
 
   try {
     const parsed = new URL(DEFAULT_API_BASE, window.location.origin);
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const isRemoteApi = !['localhost', '127.0.0.1'].includes(parsed.hostname);
+    if (isLocalHost && isRemoteApi) {
+      return '';
+    }
     const isMixedContent = window.location.protocol === 'https:' && parsed.protocol === 'http:';
     if (isMixedContent) {
       return '';

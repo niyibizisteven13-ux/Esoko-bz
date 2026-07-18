@@ -43,7 +43,8 @@ import { isAccountVerified } from '../lib/verification';
 import { generateReceipt } from '../lib/pdfGenerator';
 import { Download } from 'lucide-react';
 import { auth } from '../firebase';
-import { getCurrentUser } from '../services/sessionService';
+import { getCurrentUser, loginWithEmail, registerWithEmail } from '../services/sessionService';
+import AuthModal, { AuthRole } from '../components/auth/AuthModal';
 
 // Services
 import { getUser, updateUser } from '../services/userService';
@@ -91,6 +92,11 @@ const FADE_IN_UP = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -20 },
 };
+
+// Tabs a guest (no account) can open without hitting the auth modal. Everything else
+// shows personal data or moves money, so it prompts sign-in inline instead of gating
+// the whole app behind a login screen.
+const GUEST_ALLOWED_TABS: Tab[] = ['marketplace', 'support'];
 
 function SlitLoader() {
   return (
@@ -175,6 +181,14 @@ export default function CustomerDashboard() {
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string>('');
+
+  // Unified auth modal — the only place identity is ever requested. No dedicated
+  // /login route is used for entering the app; this opens inline wherever an action
+  // (follow, chat, buy, post, view personal data) actually needs an account.
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalRole, setAuthModalRole] = useState<AuthRole>('customer');
+  const [authModalReason, setAuthModalReason] = useState<string | undefined>(undefined);
+
   const chatAccountNumber = useMemo(
     () => userData?.appNumber || currentUser?.appNumber || currentUser?.uid || currentUser?.id || '',
     [userData?.appNumber, currentUser?.appNumber, currentUser?.uid, currentUser?.id]
@@ -195,22 +209,60 @@ export default function CustomerDashboard() {
     }
   };
 
+  /**
+   * Gate for any action that needs identity. Returns true (and does nothing) if
+   * already signed in; otherwise opens the unified AuthModal with the right role
+   * pre-selected and a short reason, and returns false so the caller can bail out.
+   */
+  const requireAuth = useCallback(
+    (role: AuthRole = 'customer', reason?: string) => {
+      if (currentUser) return true;
+      setAuthModalRole(role);
+      setAuthModalReason(reason);
+      setShowAuthModal(true);
+      return false;
+    },
+    [currentUser]
+  );
+
+  const handleAuthSignIn = useCallback(async (email: string, password: string, role: AuthRole) => {
+    const response = await loginWithEmail(email, password);
+    setCurrentUser(response.user);
+    setShowAuthModal(false);
+    if (response.user?.role === 'trader' && role === 'trader') window.location.assign('/trader');
+  }, []);
+
+  const handleAuthSignUp = useCallback(
+    async (input: { email: string; password: string; name: string; role: AuthRole }) => {
+      const response = await registerWithEmail(input.email, input.name, input.password, input.role);
+      setCurrentUser(response.user);
+      setShowAuthModal(false);
+      if (input.role === 'trader') window.location.assign('/trader');
+    },
+    []
+  );
+
   useEffect(() => {
     let unsubscribeTransactions: (() => void) | undefined;
     let unsubscribeUserData: (() => void) | undefined;
 
     const setupRealTimeListeners = async () => {
       const current = auth.currentUser || (await getCurrentUser());
+
+      // No account? Stay right here as a guest — land on the marketplace like everyone
+      // else. Personal tabs and actions call requireAuth() themselves when needed,
+      // instead of the whole app bouncing to a login page before it's even rendered.
       if (!current) {
+        setCurrentUser(null);
         setLoading(false);
-        if (typeof window !== 'undefined') window.location.href = '/login';
         return;
       }
 
       const normalized = current.uid || current.id;
       if (!normalized || String(normalized) === 'undefined') {
+        // Malformed/partial session — treat as guest rather than redirecting to a dead end.
+        setCurrentUser(null);
         setLoading(false);
-        if (typeof window !== 'undefined') window.location.href = '/login';
         return;
       }
 
@@ -220,7 +272,6 @@ export default function CustomerDashboard() {
         let userId = current.uid || current.id;
         if (!userId || String(userId) === 'undefined') {
           setLoading(false);
-          if (typeof window !== 'undefined') window.location.href = '/login';
           return;
         }
 
@@ -269,6 +320,10 @@ export default function CustomerDashboard() {
 
   const handleTabChange = (tab: Tab) => {
     if (tab === activeTab) return;
+    if (!GUEST_ALLOWED_TABS.includes(tab) && !currentUser) {
+      requireAuth('customer', `Sign in to open ${tab}`);
+      return;
+    }
     // Instant tab change for better UX
     setActiveTab(tab);
     setIsSidebarOpen(false);
@@ -388,6 +443,7 @@ export default function CustomerDashboard() {
 
   const handleAskTrader = useCallback(
     async (product: any, initialMessage?: string) => {
+      if (!requireAuth('customer', 'Sign in to message this trader')) return;
       if (!chatAccountNumber || !product?.traderId) return;
       setActiveTab('chat');
       setIsSidebarOpen(false);
@@ -447,14 +503,14 @@ export default function CustomerDashboard() {
         setChatLoading(false);
       }
     },
-    [chatAccountNumber, chatConversations]
+    [chatAccountNumber, chatConversations, requireAuth]
   );
 
   const handleChatSendMessage = useCallback(
-    async (conversationId: string, text: string) => {
+    async (conversationId: string, text: string, replyToMessageId?: string | null) => {
       if (!chatAccountNumber) return;
       try {
-        const message = await sendChatMessage(conversationId, text, chatAccountNumber);
+        const message = await sendChatMessage(conversationId, text, chatAccountNumber, replyToMessageId);
         setChatMessages((prev) => [...prev, message]);
         setChatConversations((prev) =>
           prev.map((conversation) =>
@@ -475,11 +531,22 @@ export default function CustomerDashboard() {
   );
 
   const handleChatSendFile = useCallback(
-    async (conversationId: string, file: File) => {
+    async (conversationId: string, file: File, replyToMessageId?: string | null) => {
       if (!chatAccountNumber) return;
       try {
-        const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber);
+        const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber, replyToMessageId);
         setChatMessages((prev) => [...prev, message]);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  lastMessagePreview: file.type.startsWith('image/') ? '📷 Photo' : `📎 ${file.name}`,
+                  lastMessageTime: message.timestamp,
+                }
+              : conversation
+          )
+        );
       } catch (err) {
         console.error('[CustomerDashboard] failed to send chat attachment', err);
       }
@@ -649,40 +716,60 @@ export default function CustomerDashboard() {
             </button>
           </div>
 
-          {/* Profile Card */}
+          {/* Profile Card — signed-in shows the account card as before; guests get a
+              one-tap sign-in prompt instead, same footprint, no separate screen. */}
           <div className="flex-shrink-0 mb-4 px-2">
             {!isSidebarCollapsed && (
-              <button
-                type="button"
-                onClick={() => handleTabChange('profile')}
-                className="group flex w-full items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
-              >
-                <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40 flex-shrink-0">
-                  {userData?.name?.[0] || 'U'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-[11px] font-black truncate leading-tight tracking-tight uppercase">
-                      {userData?.name || 'User'}
-                    </p>
-                    {accountVerified && (
-                      <VerifiedBadge
-                        level={getCustomerBadgeLevel(userData?.category)}
-                        size="xs"
-                        showLabel={false}
-                        animated
-                        className="!border-white/10"
-                      />
-                    )}
+              currentUser ? (
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('profile')}
+                  className="group flex w-full items-center gap-2 p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40 flex-shrink-0">
+                    {userData?.name?.[0] || 'U'}
                   </div>
-                  <p className="text-[8px] text-white/50 font-black uppercase tracking-[0.2em] mt-0.5">
-                    {userData?.tier || 'Standard'}
-                  </p>
-                  <p className="text-[8px] text-white/40 font-black uppercase tracking-[0.2em] mt-1">
-                    App #{customerAppNumber || '---'}
-                  </p>
-                </div>
-              </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[11px] font-black truncate leading-tight tracking-tight uppercase">
+                        {userData?.name || 'User'}
+                      </p>
+                      {accountVerified && (
+                        <VerifiedBadge
+                          level={getCustomerBadgeLevel(userData?.category)}
+                          size="xs"
+                          showLabel={false}
+                          animated
+                          className="!border-white/10"
+                        />
+                      )}
+                    </div>
+                    <p className="text-[8px] text-white/50 font-black uppercase tracking-[0.2em] mt-0.5">
+                      {userData?.tier || 'Standard'}
+                    </p>
+                    <p className="text-[8px] text-white/40 font-black uppercase tracking-[0.2em] mt-1">
+                      App #{customerAppNumber || '---'}
+                    </p>
+                  </div>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => requireAuth('customer', 'Sign in to access your account')}
+                  className="group flex w-full items-center gap-3 p-3 rounded-2xl bg-white/5 border border-white/10 shadow-inner text-left transition hover:bg-white/10"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center flex-shrink-0">
+                    <User size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-black uppercase tracking-tight text-white">Sign in</p>
+                    <p className="text-[8px] text-white/50 font-black uppercase tracking-[0.2em] mt-0.5">
+                      Browsing as guest
+                    </p>
+                  </div>
+                  <ChevronRight size={16} className="text-white/30 group-hover:text-white/60 transition-colors" />
+                </button>
+              )
             )}
           </div>
 
@@ -796,7 +883,9 @@ export default function CustomerDashboard() {
                 <SidebarItem
                   collapsed={isSidebarCollapsed}
                   active={false}
-                  onClick={() => setShowScanner(true)}
+                  onClick={() => {
+                    if (requireAuth('customer', 'Sign in to pay or scan a code')) setShowScanner(true);
+                  }}
                   icon={<QrCode size={20} />}
                   label="Pay & Scan"
                   description="Quick payments"
@@ -819,7 +908,9 @@ export default function CustomerDashboard() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-black text-white">Messenger</p>
                     <p className="truncate text-[11px] text-white/60">
-                      {chatLoading
+                      {!currentUser
+                        ? 'Sign in to start messaging traders'
+                        : chatLoading
                         ? 'Loading chats...'
                         : chatConversations.length > 0
                         ? `${chatConversations.length} conversation${chatConversations.length === 1 ? '' : 's'}`
@@ -833,26 +924,42 @@ export default function CustomerDashboard() {
 
           {/* Bottom Section */}
           <div className="mt-auto pt-4 border-t border-white/10 shrink-0">
-            {isSidebarCollapsed && (
+            {isSidebarCollapsed && currentUser && (
               <div className="w-10 h-10 rounded-xl bg-orange-600 flex items-center justify-center font-black text-sm shadow-xl shadow-orange-900/40 mx-auto">
                 {userData?.name?.[0] || 'U'}
               </div>
             )}
-            <button
-              onClick={() =>
-                auth.signOut().then(() => {
-                  if (typeof window !== 'undefined') window.location.href = '/login';
-                })
-              }
-              className={cn(
-                'w-full flex items-center transition-all font-bold text-xs rounded-xl mt-3',
-                isSidebarCollapsed ? 'justify-center p-3' : 'gap-3 py-3 px-4',
-                'text-white/40 hover:text-red-500 hover:bg-red-500/10 active:scale-95'
-              )}
-              title={isSidebarCollapsed ? 'Logout' : undefined}
-            >
-              <History className="rotate-180" size={20} /> {!isSidebarCollapsed && t.common.logout}
-            </button>
+            {currentUser ? (
+              <button
+                onClick={() =>
+                  auth.signOut().then(() => {
+                    setCurrentUser(null);
+                    setUserData(null);
+                    setActiveTab('marketplace');
+                  })
+                }
+                className={cn(
+                  'w-full flex items-center transition-all font-bold text-xs rounded-xl mt-3',
+                  isSidebarCollapsed ? 'justify-center p-3' : 'gap-3 py-3 px-4',
+                  'text-white/40 hover:text-red-500 hover:bg-red-500/10 active:scale-95'
+                )}
+                title={isSidebarCollapsed ? 'Logout' : undefined}
+              >
+                <History className="rotate-180" size={20} /> {!isSidebarCollapsed && t.common.logout}
+              </button>
+            ) : (
+              <button
+                onClick={() => requireAuth('customer', 'Sign in to access your account')}
+                className={cn(
+                  'w-full flex items-center transition-all font-bold text-xs rounded-xl mt-3',
+                  isSidebarCollapsed ? 'justify-center p-3' : 'gap-3 py-3 px-4',
+                  'text-orange-500 hover:text-orange-400 hover:bg-orange-500/10 active:scale-95'
+                )}
+                title={isSidebarCollapsed ? 'Sign in' : undefined}
+              >
+                <User size={20} /> {!isSidebarCollapsed && 'Sign In'}
+              </button>
+            )}
           </div>
         </div>
       </aside>
@@ -956,16 +1063,31 @@ export default function CustomerDashboard() {
               </div>
 
               <div className="pt-4 border-t border-white/10">
-                <button
-                  onClick={() =>
-                    auth.signOut().then(() => {
-                      if (typeof window !== 'undefined') window.location.href = '/login';
-                    })
-                  }
-                  className="w-full flex items-center justify-center gap-3 py-4 bg-red-500/10 text-red-500 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em]"
-                >
-                  <History className="rotate-180" size={16} /> Sign Out
-                </button>
+                {currentUser ? (
+                  <button
+                    onClick={() =>
+                      auth.signOut().then(() => {
+                        setCurrentUser(null);
+                        setUserData(null);
+                        setActiveTab('marketplace');
+                        setIsSidebarOpen(false);
+                      })
+                    }
+                    className="w-full flex items-center justify-center gap-3 py-4 bg-red-500/10 text-red-500 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em]"
+                  >
+                    <History className="rotate-180" size={16} /> Sign Out
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      requireAuth('customer', 'Sign in to access your account');
+                    }}
+                    className="w-full flex items-center justify-center gap-3 py-4 bg-orange-600/10 text-orange-500 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em]"
+                  >
+                    <User size={16} /> Sign In
+                  </button>
+                )}
               </div>
             </div>
           </motion.aside>
@@ -999,6 +1121,14 @@ export default function CustomerDashboard() {
             <Logo dark className="scale-90" />
           </div>
           <div className="flex items-center gap-2">
+            {!currentUser && (
+              <button
+                onClick={() => requireAuth('customer', 'Sign in to access your account')}
+                className="px-3 py-2 bg-orange-600/10 text-orange-500 rounded-xl text-[10px] font-black uppercase tracking-widest"
+              >
+                Sign In
+              </button>
+            )}
             <button
               onClick={() => handleTabChange('notifications')}
               className="p-2.5 bg-white/5 rounded-xl text-neutral-400 hover:bg-white/10 transition-colors"
@@ -1467,14 +1597,18 @@ export default function CustomerDashboard() {
         {activeTab !== 'chat' && (
           <div className="fixed bottom-8 right-8 hidden md:flex flex-col gap-4 z-50">
             <button
-              onClick={() => setShowNearPay(true)}
+              onClick={() => {
+                if (requireAuth('customer', 'Sign in to use Near Pay')) setShowNearPay(true);
+              }}
               className="w-16 h-16 bg-[#0a0a0a] text-emerald-400 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
               title="Near Pay"
             >
               <Nfc size={32} className="group-hover:scale-110 transition-transform" />
             </button>
             <button
-              onClick={() => setShowScanner(true)}
+              onClick={() => {
+                if (requireAuth('customer', 'Sign in to pay or scan a code')) setShowScanner(true);
+              }}
               className="w-16 h-16 bg-[#0a0a0a] text-orange-600 rounded-2xl shadow-2xl border border-white/5 flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
             >
               <QrCode size={32} className="group-hover:scale-110 transition-transform" />
@@ -1501,6 +1635,17 @@ export default function CustomerDashboard() {
         )}
         {showNearPay && <NearPayDirectoryModal onClose={() => setShowNearPay(false)} />}
       </AnimatePresence>
+
+      {/* Unified auth surface — the only place sign-in/sign-up ever happens. Opened
+          inline by requireAuth() wherever an action needs identity; never shown on load. */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        initialRole={authModalRole}
+        initialReason={authModalReason}
+        onSignIn={handleAuthSignIn}
+        onSignUp={handleAuthSignUp}
+      />
     </div>
   );
 }

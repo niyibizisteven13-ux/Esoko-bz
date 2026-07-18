@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Esoko Nexus Mobile</string>
-    <string name="title_activity_main">Esoko Nexus Mobile</string>
+    <string name="app_name">Makasi</string>
+    <string name="title_activity_main">Makasi</string>
     <string name="package_name">com.esoko.nexus</string>
     <string name="custom_url_scheme">com.esoko.nexus</string>
 </resources>
