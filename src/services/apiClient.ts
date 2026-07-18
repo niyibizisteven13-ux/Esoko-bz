@@ -1,4 +1,5 @@
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+const NETWORK_API_BASE = import.meta.env.VITE_NETWORK_API_URL || ''; // For phone on local network
 let inMemoryToken: string | null = null;
 const DEFAULT_BACKEND_PORT = '5173';
 const DEFAULT_BACKEND_BASE = `http://localhost:${DEFAULT_BACKEND_PORT}`;
@@ -35,6 +36,10 @@ function resolveApiBase(): string {
   }
 
   if (isNativeWrapper()) {
+    // For Capacitor apps, try Android emulator IP first, then fallback to network IP
+    if (NETWORK_API_BASE) {
+      return NETWORK_API_BASE;
+    }
     return 'http://10.0.2.2:5173';
   }
 

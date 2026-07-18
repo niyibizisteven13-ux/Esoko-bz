@@ -14963,10 +14963,11 @@ async function startServer() {
     return createHttpServer(app);
   };
 
-  const bindHost = isProduction ? '0.0.0.0' : '127.0.0.1';
+  const bindHost = env.LISTEN_HOST || (isProduction ? '0.0.0.0' : '0.0.0.0');
   activeServer = createServerWithMessenger().listen(listenPort, bindHost, () => {
     const protocol = sslKeyPath && sslCertPath && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath) ? 'https' : 'http';
-    console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://127.0.0.1:${listenPort}`);
+    console.log(`${protocol === 'https' ? '🔒 HTTPS' : 'HTTP'} Server running at ${protocol}://0.0.0.0:${listenPort}`);
+    console.log(`✓ Accessible from network at ${protocol}://172.20.26.58:${listenPort}`);
     console.log(`SQLite database: ${path.join(process.cwd(), 'data', 'esoko.db')}`);
     console.log('Self-contained mode: Firebase and Firestore are not used.');
   });
