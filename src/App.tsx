@@ -72,22 +72,22 @@ export default function App() {
     };
   }, []);
 
-  const redirectTo = getRoleRedirect(role);
   const marketplaceEntry = '/customer?tab=marketplace';
-  const fallbackDestination = authToken ? redirectTo : marketplaceEntry;
-  const showLanding = !Capacitor.isNativePlatform() && import.meta.env.VITE_ENABLE_PUBLIC_LANDING === 'true';
+  // Force the app to land on the public marketplace so users can login inline there.
+  const fallbackDestination = marketplaceEntry;
+  const showLanding = false; // disable public landing to land directly on marketplace
 
   return (
     <Suspense fallback={<DashboardLoading />}>
       <Routes>
         <Route path="/" element={<Navigate to={fallbackDestination} replace />} />
-        <Route path="/login" element={<Navigate to={marketplaceEntry} replace />} />
-        <Route path="/register" element={<Navigate to={marketplaceEntry} replace />} />
+        <Route path="/login" element={<Navigate to={marketplaceEntry + '&auth=login'} replace />} />
+        <Route path="/register" element={<Navigate to={marketplaceEntry + '&auth=register'} replace />} />
         <Route path="/customer/*" element={<CustomerDashboard />} />
         <Route path="/trader/*" element={authToken ? <TraderDashboard /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/admin/*" element={authToken ? <AdminPortal /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/agent/*" element={authToken ? <AgentPortal /> : <Navigate to={marketplaceEntry} replace />} />
-        <Route path="/landing" element={showLanding ? <LandingPage /> : <Navigate to={marketplaceEntry} replace />} />
+        <Route path="/landing" element={<Navigate to={marketplaceEntry} replace />} />
         <Route path="*" element={<Navigate to={fallbackDestination} replace />} />
       </Routes>
     </Suspense>

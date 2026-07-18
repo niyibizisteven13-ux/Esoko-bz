@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import {
   History,
@@ -138,7 +139,8 @@ type Tab =
 
 export default function CustomerDashboard() {
   const { t } = useLanguage();
-  const locationSearch = typeof window !== 'undefined' ? window.location.search : '';
+  const location = useLocation();
+  const locationSearch = location?.search || '';
 
   const getInitialTab = (): Tab => {
     const tab = new URLSearchParams(locationSearch).get('tab');
@@ -189,6 +191,21 @@ export default function CustomerDashboard() {
   const [authModalRole, setAuthModalRole] = useState<AuthRole>('customer');
   const [authModalReason, setAuthModalReason] = useState<string | undefined>(undefined);
 
+  // Open auth modal when landing with explicit auth query (e.g. /login -> ?auth=login)
+  useEffect(() => {
+    const params = new URLSearchParams(locationSearch);
+    const auth = params.get('auth');
+    if (auth === 'login') {
+      setAuthModalRole('customer');
+      setAuthModalReason(undefined);
+      setShowAuthModal(true);
+    } else if (auth === 'register') {
+      setAuthModalRole('customer');
+      setAuthModalReason('register');
+      setShowAuthModal(true);
+    }
+  }, [locationSearch]);
+
   const chatAccountNumber = useMemo(
     () => userData?.appNumber || currentUser?.appNumber || currentUser?.uid || currentUser?.id || '',
     [userData?.appNumber, currentUser?.appNumber, currentUser?.uid, currentUser?.id]
@@ -229,7 +246,6 @@ export default function CustomerDashboard() {
     const response = await loginWithEmail(email, password);
     setCurrentUser(response.user);
     setShowAuthModal(false);
-    if (response.user?.role === 'trader' && role === 'trader') window.location.assign('/trader');
   }, []);
 
   const handleAuthSignUp = useCallback(
@@ -237,7 +253,6 @@ export default function CustomerDashboard() {
       const response = await registerWithEmail(input.email, input.name, input.password, input.role);
       setCurrentUser(response.user);
       setShowAuthModal(false);
-      if (input.role === 'trader') window.location.assign('/trader');
     },
     []
   );
@@ -890,6 +905,16 @@ export default function CustomerDashboard() {
                   label="Pay & Scan"
                   description="Quick payments"
                 />
+                {currentUser?.role === 'trader' && (
+                  <SidebarItem
+                    collapsed={isSidebarCollapsed}
+                    active={false}
+                    onClick={() => window.location.assign('/trader')}
+                    icon={<Store size={20} />}
+                    label="Trader Dashboard"
+                    description="Manage your store"
+                  />
+                )}
               </div>
             </div>
           </nav>
