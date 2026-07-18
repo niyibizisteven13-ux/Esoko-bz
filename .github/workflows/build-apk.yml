@@ -30,7 +30,7 @@ jobs:
 
       - name: Build web app
         env:
-          VITE_API_BASE_URL: https://amenities-wagon-dividend-exit.trycloudflare.com
+          VITE_API_BASE_URL: http://13.50.247.15:5173
         run: npm run build
 
       - name: Sync Capacitor Android project
@@ -38,7 +38,9 @@ jobs:
 
       - name: Assemble debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
