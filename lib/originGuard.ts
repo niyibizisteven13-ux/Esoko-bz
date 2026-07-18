@@ -18,6 +18,10 @@ function devAllowedOrigins(port: number) {
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://10.0.2.2:5173',
+    'http://10.0.2.2:3000',
+    'capacitor://localhost',
+    'capacitor://127.0.0.1',
   ]);
 }
 

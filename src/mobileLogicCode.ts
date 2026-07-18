@@ -1,5 +1,7 @@
 const TOKEN_STORAGE_KEY = 'esoko_jwt_token';
 const MEMORY_CACHE_TTL_MS = 60_000;
+const DEFAULT_BACKEND_PORT = '5173';
+const DEFAULT_BACKEND_BASE = `http://localhost:${DEFAULT_BACKEND_PORT}`;
 
 interface CacheEntry<T> {
   value: T;
@@ -20,7 +22,44 @@ function getStorage(): Storage | null {
   }
 }
 
-export const BACKEND_SERVER_URL = 'http://localhost:5173';
+function isNativeWebWrapper(): boolean {
+  if (typeof window === 'undefined') return false;
+  const nav = window.navigator as any;
+  const userAgent = typeof nav?.userAgent === 'string' ? nav.userAgent : '';
+
+  const isNativeWrapper = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|EsokoNexus|esoko-nexus)/i.test(
+    userAgent
+  );
+  const hasCapacitorNative = Boolean((window as any).Capacitor?.isNative);
+  return isNativeWrapper || hasCapacitorNative;
+}
+
+function getBackendServerUrl(): string {
+  if (typeof window === 'undefined') return DEFAULT_BACKEND_BASE;
+
+  const hostname = window.location.hostname;
+  const protocol = window.location.protocol;
+  const port = window.location.port || DEFAULT_BACKEND_PORT;
+
+  const localhostHosts = new Set(['localhost', '127.0.0.1', '::1']);
+  if (localhostHosts.has(hostname)) {
+    if (protocol === 'http:' || protocol === 'https:') {
+      return `${protocol}//${hostname}:${port}`;
+    }
+    return DEFAULT_BACKEND_BASE;
+  }
+
+  if (isNativeWebWrapper()) {
+    if (protocol === 'http:' || protocol === 'https:') {
+      return `${protocol}//${hostname}:${port}`;
+    }
+    return DEFAULT_BACKEND_BASE;
+  }
+
+  return import.meta.env.VITE_API_BASE_URL || DEFAULT_BACKEND_BASE;
+}
+
+export const BACKEND_SERVER_URL = getBackendServerUrl();
 
 export function setAuthToken(token: string | null): void {
   const storage = getStorage();

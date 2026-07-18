@@ -1,26 +1,47 @@
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 let inMemoryToken: string | null = null;
+const DEFAULT_BACKEND_PORT = '5173';
+const DEFAULT_BACKEND_BASE = `http://localhost:${DEFAULT_BACKEND_PORT}`;
 
-const API_BASE = (() => {
-  if (typeof window === 'undefined') return DEFAULT_API_BASE;
-  if (!DEFAULT_API_BASE) return '';
+function isNativeWrapper(): boolean {
+  if (typeof window === 'undefined') return false;
+  const nav = window.navigator as any;
+  const userAgent = typeof nav?.userAgent === 'string' ? nav.userAgent : '';
+  const isCapacitor = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|EsokoNexus|esoko-nexus)/i.test(userAgent);
+  const hasCapacitorNative = Boolean((window as any).Capacitor?.isNative);
+  return isCapacitor || hasCapacitorNative;
+}
 
-  try {
-    const parsed = new URL(DEFAULT_API_BASE, window.location.origin);
-    const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const isRemoteApi = !['localhost', '127.0.0.1'].includes(parsed.hostname);
-    if (isLocalHost && isRemoteApi) {
-      return '';
+function resolveApiBase(): string {
+  if (typeof window === 'undefined') return DEFAULT_API_BASE || DEFAULT_BACKEND_BASE;
+
+  const currentOrigin = window.location.origin;
+  if (DEFAULT_API_BASE) {
+    try {
+      const parsed = new URL(DEFAULT_API_BASE, currentOrigin);
+      const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      const isRemoteApi = !['localhost', '127.0.0.1'].includes(parsed.hostname);
+      if (isLocalHost && isRemoteApi) {
+        return '';
+      }
+      const isMixedContent = window.location.protocol === 'https:' && parsed.protocol === 'http:';
+      if (isMixedContent) {
+        return '';
+      }
+      return DEFAULT_API_BASE;
+    } catch {
+      return DEFAULT_API_BASE;
     }
-    const isMixedContent = window.location.protocol === 'https:' && parsed.protocol === 'http:';
-    if (isMixedContent) {
-      return '';
-    }
-    return DEFAULT_API_BASE;
-  } catch {
-    return DEFAULT_API_BASE;
   }
-})();
+
+  if (isNativeWrapper()) {
+    return 'http://10.0.2.2:5173';
+  }
+
+  return '';
+}
+
+const API_BASE = resolveApiBase();
 
 export interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;

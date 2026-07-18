@@ -62,7 +62,15 @@ const config = loadAppConfig(__dirname);
 const isProduction = config.isProduction;
 const FRONTEND_URLS = config.frontendUrls;
 const allowDynamicPublicOrigins = !isProduction || env.ALLOW_DYNAMIC_PUBLIC_ORIGINS === 'true';
-const MOBILE_ALLOWED_ORIGINS = ['https://localhost', 'http://localhost', 'https://localhost:5173', 'http://localhost:5173'];
+const MOBILE_ALLOWED_ORIGINS = [
+  'https://localhost',
+  'http://localhost',
+  'https://localhost:5173',
+  'http://localhost:5173',
+  'http://10.0.2.2:5173',
+  'capacitor://localhost',
+  'capacitor://127.0.0.1',
+];
 const SMTP_USER = config.smtp.user;
 const SMTP_PASS = config.smtp.pass;
 const SMTP_HOST = config.smtp.host;
