@@ -3,6 +3,8 @@
   "appName": "Makasi",
   "webDir": "dist",
   "server": {
+    "url": "http://172.20.26.58:5173",
+    "cleartext": true,
     "androidScheme": "https"
   }
 }
