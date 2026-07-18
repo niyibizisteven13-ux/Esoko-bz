@@ -26,7 +26,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
 
   if (request.method !== 'GET') return;
-  if (url.pathname.startsWith('/api/')) return;
+  // Don't interfere with API or realtime socket endpoints or Vite dev endpoints
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io') || url.pathname.startsWith('/__vite') || url.pathname.startsWith('/favicon')) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(
@@ -36,7 +37,12 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
           return response;
         })
-        .catch(() => caches.match('/index.html').then((cached) => cached || caches.match('/')))
+        .catch(() =>
+          caches.match('/index.html').then((cached) => {
+            if (cached) return cached;
+            return new Response('<html><body><h1>Offline</h1></body></html>', { status: 503, headers: { 'Content-Type': 'text/html' } });
+          })
+        )
     );
     return;
   }
@@ -52,7 +58,10 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => cached);
-      return cached || network;
+      return (cached || network).then((res) => {
+        if (res) return res;
+        return new Response('', { status: 204 });
+      });
     })
   );
 });
