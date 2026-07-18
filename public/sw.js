@@ -60,9 +60,9 @@ self.addEventListener('fetch', (event) => {
         .catch(() => cached);
       const fallback = cached || network;
       if (fallback instanceof Promise) {
-        return fallback.then((res) => res || new Response('', { status: 204 }));
+        return fallback.then((res) => res || new Response(undefined, { status: 204 }));
       }
-      return fallback || new Response('', { status: 204 });
+      return fallback || new Response(undefined, { status: 204 });
     })
   );
 });

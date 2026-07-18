@@ -20,6 +20,14 @@ import { motion, AnimatePresence } from 'framer-motion';
  *    element and live progress bar on both ends.
  *  - Image attachments render as actual inline thumbnails (not a generic
  *    file icon) and open full-resolution in a lightbox on click.
+ *  - Reply threading, reactions (click-to-toggle toolbar + quick-reaction
+ *    popover, both spring-animated via framer-motion).
+ *  - Chat wallpaper: 8 options, each with a real tileable doodle pattern
+ *    (generated locally as inline SVG, tinted per-wallpaper) — actually
+ *    applied to both the active conversation background and the picker's
+ *    preview swatches, not just a flat color.
+ *  - Quick replies, per-conversation business labels, drag-and-drop file
+ *    send, swipe-to-reply on touch, desktop keyboard shortcuts.
  *
  * WHAT NEEDS BACKEND WIRING TO BE MORE THAN A UI SHELL:
  *  - Voice/video calls: clicking the phone/video buttons opens a real
@@ -27,10 +35,10 @@ import { motion, AnimatePresence } from 'framer-motion';
  *    but the actual audio/video stream requires your hub's WebRTC
  *    signaling to be connected to that callback. See the CallModal
  *    component and the `onStartCall` prop for the exact hookup point.
- *  - Mute/Clear/Block/Delete all update local UI state immediately and
- *    call their respective optional callback props — wire those to your
- *    backend to persist the action; without them, it's local-only (still
- *    fully usable, just resets on reload).
+ *  - Mute/Clear/Block/Delete/Reactions all update local UI state
+ *    immediately and call their respective optional callback props —
+ *    wire those to your backend to persist the action; without them,
+ *    it's local-only (still fully usable, just resets on reload).
  *
  * SIZING NOTE (fixes composer getting cut off at the bottom of the page):
  * This component fills 100% of its parent's height via `h-full`. That only
@@ -184,12 +192,46 @@ const wa = {
 };
 
 const CHAT_WALLPAPERS = {
-	dark: { label: 'Dark Modern', background: '#0B141A' },
-	beige: { label: 'Minimal Beige', background: '#E5DDD5' },
-	lavender: { label: 'Pastel Lavender', background: '#DAD3EE' },
-	navy: { label: 'Navy Pro', background: '#0A192F' },
-	sage: { label: 'Olive Sage', background: '#A8BBA4' },
+	dark: { label: 'Dark Modern', background: '#0B141A', patternColor: '#ffffff', patternOpacity: 0.055 },
+	beige: { label: 'Minimal Beige', background: '#E5DDD5', patternColor: '#4a3c2e', patternOpacity: 0.07 },
+	lavender: { label: 'Pastel Lavender', background: '#DAD3EE', patternColor: '#3c3160', patternOpacity: 0.065 },
+	navy: { label: 'Navy Pro', background: '#0A192F', patternColor: '#ffffff', patternOpacity: 0.05 },
+	sage: { label: 'Olive Sage', background: '#A8BBA4', patternColor: '#2c3626', patternOpacity: 0.08 },
+	terracotta: { label: 'Warm Terracotta', background: '#3D2B26', patternColor: '#e8a87c', patternOpacity: 0.06 },
+	teal: { label: 'Ocean Teal', background: '#0F2E2E', patternColor: '#5fd4c4', patternOpacity: 0.055 },
+	charcoal: { label: 'Charcoal', background: '#1A1A1D', patternColor: '#c9c9d1', patternOpacity: 0.05 },
 } as const;
+
+// A tileable doodle pattern in the spirit of WhatsApp's real chat wallpaper —
+// generated locally as inline SVG (no external asset), re-tinted per wallpaper
+// so light backgrounds get dark doodles and dark backgrounds get light ones.
+// Applied to both the active conversation background and the picker's preview
+// swatches below, so every wallpaper option actually shows its pattern.
+function buildDoodlePatternUrl(strokeColor: string, opacity: number): string {
+	const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <g fill="none" stroke="${strokeColor}" stroke-width="1.1" stroke-linecap="round" opacity="${opacity}">
+    <path d="M20 30c6-10 20-10 26 0s-4 20-13 20-19-10-13-20z" />
+    <path d="M33 24v18M26 33h14" />
+    <circle cx="95" cy="45" r="9" />
+    <path d="M95 36v-8M95 62v-8M86 45h-8M112 45h-8" />
+    <path d="M170 25l6 12 13 2-9 9 2 13-12-6-12 6 2-13-9-9 13-2z" />
+    <path d="M45 110c10-8 24-4 26 8 2 10-8 18-18 16-9-2-14-14-8-24z" />
+    <path d="M140 100c0 12-9 20-20 20s-20-8-20-20 9-20 20-20 20 8 20 20z" />
+    <path d="M120 92v16M112 100h16" />
+    <path d="M205 95c8 0 14 6 14 14s-6 14-14 14-14-6-14-14 6-14 14-14z" />
+    <path d="M20 170c8-6 18-2 19 8 1 8-7 14-15 12-7-2-11-12-4-20z" />
+    <path d="M95 165l5 10 11 2-8 8 2 11-10-5-10 5 2-11-8-8 11-2z" />
+    <path d="M175 175c9-9 23-9 29 1 6 9-1 21-12 22-10 1-20-13-17-23z" />
+    <path d="M187 168v20M177 178h20" />
+    <path d="M55 205c7-7 18-6 22 3 4 8-3 17-12 17-8 0-15-12-10-20z" />
+    <path d="M225 200a10 10 0 1 1-0.01 0z" />
+    <path d="M10 60l6 6-6 6M225 60l-6 6 6 6" />
+    <path d="M150 210c5-9 17-9 21 0 3 7-4 14-11 14s-13-7-10-14z" />
+  </g>
+</svg>`.trim();
+	return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 
 const DEFAULT_QUICK_REPLIES = [
 	{ shortcut: '/thanks', text: 'Thanks for reaching out. We will get back to you shortly.' },
@@ -425,12 +467,20 @@ export default function TraderChat({
 	const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 	const audioChunksRef = useRef<Blob[]>([]);
 	const recordIntervalRef = useRef<number | null>(null);
+	// recordSecondsRef mirrors recordSeconds but is readable inside the
+	// MediaRecorder onstop closure without going stale; pendingSendRecordingRef
+	// tells that same closure whether this stop was a "send" or a "cancel".
+	const recordSecondsRef = useRef(0);
+	const pendingSendRecordingRef = useRef(true);
 	const headerMenuRef = useRef<HTMLDivElement>(null);
 	const emojiPickerRef = useRef<HTMLDivElement>(null);
 	const reactionPickerRef = useRef<HTMLDivElement>(null);
 	const [replyingToId, setReplyingToId] = useState<string | null>(null);
 	const [activeToolbarMessageId, setActiveToolbarMessageId] = useState<string | null>(null);
 	const [openReactionPickerId, setOpenReactionPickerId] = useState<string | null>(null);
+	// Whether the reaction popover for openReactionPickerId is showing the full
+	// emoji grid (via its "+" button) instead of just the 6 quick reactions.
+	const [reactionPickerExpanded, setReactionPickerExpanded] = useState(false);
 	const [isDragActive, setIsDragActive] = useState(false);
 	const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 	const lastNotifiedMessageIdRef = useRef<string | null>(null);
@@ -548,10 +598,14 @@ export default function TraderChat({
 			const target = e.target as Element;
 			if (headerMenuRef.current && !headerMenuRef.current.contains(target)) setShowHeaderMenu(false);
 			if (emojiPickerRef.current && !emojiPickerRef.current.contains(target)) setShowEmojiPicker(false);
-			if (reactionPickerRef.current && !reactionPickerRef.current.contains(target)) setOpenReactionPickerId(null);
+			if (reactionPickerRef.current && !reactionPickerRef.current.contains(target)) {
+				setOpenReactionPickerId(null);
+				setReactionPickerExpanded(false);
+			}
 			if (!target.closest('.trader-chat-message-bubble') && !target.closest('.trader-chat-toolbar') && !target.closest('.trader-chat-reaction-picker')) {
 				setActiveToolbarMessageId(null);
 				setOpenReactionPickerId(null);
+				setReactionPickerExpanded(false);
 			}
 		}
 		document.addEventListener('mousedown', handleClick);
@@ -726,13 +780,27 @@ export default function TraderChat({
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			const recorder = new MediaRecorder(stream);
 			audioChunksRef.current = [];
+			pendingSendRecordingRef.current = true;
 			recorder.ondataavailable = (ev) => {
 				if (ev.data.size > 0) audioChunksRef.current.push(ev.data);
 			};
 			recorder.onstop = () => {
 				stream.getTracks().forEach((t) => t.stop());
+
+				// A cancel (trash-can) calls stopRecording(false), which flips this
+				// ref before recorder.stop() fires. Bail out here so a canceled
+				// recording never gets built into a message or sent.
+				if (!pendingSendRecordingRef.current) {
+					audioChunksRef.current = [];
+					return;
+				}
+
 				const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-				const durationLabel = formatDuration(recordSeconds);
+				// Read from the ref, not the `recordSeconds` state — this closure
+				// was created once when recording started, so the state value it
+				// captured is permanently 0. The ref is updated live by the
+				// interval below, so it reflects the actual elapsed time.
+				const durationLabel = formatDuration(recordSecondsRef.current);
 				const objectUrl = URL.createObjectURL(blob);
 				const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
 
@@ -751,7 +819,11 @@ export default function TraderChat({
 			recorder.start();
 			setIsRecording(true);
 			setRecordSeconds(0);
-			recordIntervalRef.current = window.setInterval(() => setRecordSeconds((s) => s + 1), 1000);
+			recordSecondsRef.current = 0;
+			recordIntervalRef.current = window.setInterval(() => {
+				recordSecondsRef.current += 1;
+				setRecordSeconds(recordSecondsRef.current);
+			}, 1000);
 		} catch (err) {
 			console.error('[TraderChat] microphone access denied or unavailable', err);
 			window.alert('Could not access the microphone. Check your browser permissions.');
@@ -763,12 +835,15 @@ export default function TraderChat({
 			window.clearInterval(recordIntervalRef.current);
 			recordIntervalRef.current = null;
 		}
+		// Tell the onstop closure (already bound from startRecording) whether
+		// this is a real send or a cancel, before triggering it.
+		pendingSendRecordingRef.current = send;
 		if (!send) {
-			// Discard: detach the stop handler's send behavior by clearing chunks first
 			audioChunksRef.current = [];
 		}
 		mediaRecorderRef.current?.stop();
 		setIsRecording(false);
+		setRecordSeconds(0);
 	}
 
 	async function handleAddContact() {
@@ -871,10 +946,11 @@ export default function TraderChat({
 
 	const isMuted = activeConversationId ? mutedIds.has(activeConversationId) : false;
 	const isBlocked = activeConversationId ? blockedIds.has(activeConversationId) : false;
+	const activeWallpaper = CHAT_WALLPAPERS[chatWallpaper];
 
 	return (
 		<div
-			className={`relative grid h-[100dvh] max-h-[100dvh] min-h-0 w-full grid-cols-1 overflow-hidden rounded-none md:rounded-lg md:grid-cols-[280px_1fr] ${className ?? ''}`}
+			className={`relative grid h-[100dvh] max-h-[100dvh] min-h-0 w-full grid-cols-1 overflow-hidden rounded-none md:rounded-lg md:grid-cols-[280px_1fr] 2xl:max-w-[1600px] 2xl:mx-auto ${className ?? ''}`}
 			style={{ gridTemplateRows: '100%', backgroundColor: wa.sidebarBg, ...style }}
 			onDragOver={(event) => { event.preventDefault(); setIsDragActive(true); }}
 			onDragLeave={(event) => { if (event.currentTarget === event.target) setIsDragActive(false); }}
@@ -972,7 +1048,12 @@ export default function TraderChat({
 			{/* Active conversation */}
 			<div
 				className={`relative h-full min-h-0 min-w-0 flex flex-col ${mobilePane === 'list' ? 'hidden' : ''}`}
-				style={{ backgroundColor: CHAT_WALLPAPERS[chatWallpaper].background, backgroundImage: chatWallpaper === 'dark' ? 'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.02) 1px, transparent 1px), radial-gradient(circle at 60% 70%, rgba(255,255,255,0.02) 1px, transparent 1px)' : undefined, backgroundSize: '26px 26px' }}
+				style={{
+					backgroundColor: activeWallpaper.background,
+					backgroundImage: `url("${buildDoodlePatternUrl(activeWallpaper.patternColor, activeWallpaper.patternOpacity)}")`,
+					backgroundSize: '240px 240px',
+					backgroundRepeat: 'repeat',
+				}}
 			>
 				{!activeConversation ? (
 					<div className="flex flex-1 items-center justify-center px-6">
@@ -1170,6 +1251,7 @@ export default function TraderChat({
 														onClick={(e) => {
 															e.stopPropagation();
 															setOpenReactionPickerId((id) => (id === m.id ? null : m.id));
+															setReactionPickerExpanded(false);
 														}}
 														aria-label="React"
 														className="rounded-full p-1.5 transition-colors hover:bg-white/10"
@@ -1195,7 +1277,7 @@ export default function TraderChat({
 
 										{/* Quick-reaction popover — pops in with a slight overshoot, staggered emoji entrance */}
 										<AnimatePresence>
-											{openReactionPickerId === m.id && (
+											{openReactionPickerId === m.id && !reactionPickerExpanded && (
 												<motion.div
 													initial={{ opacity: 0, scale: 0.7, y: 8 }}
 													animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1219,10 +1301,17 @@ export default function TraderChat({
 															{emoji}
 														</motion.button>
 													))}
+													{/*
+														"+" expands this same popover into the full emoji grid below —
+														it used to open the composer's draft emoji picker instead,
+														which typed the emoji into the message box rather than
+														reacting to this message. Now it stays anchored to the
+														message and calls toggleReaction just like the quick set.
+													*/}
 													<motion.button
 														whileHover={{ scale: 1.15 }}
 														whileTap={{ scale: 0.9 }}
-														onClick={() => { setShowEmojiPicker(true); setOpenReactionPickerId(null); }}
+														onClick={() => setReactionPickerExpanded(true)}
 														aria-label="More reactions"
 														className="rounded-full p-1.5 text-[13px]"
 														style={{ color: wa.textSecondary }}
@@ -1231,13 +1320,41 @@ export default function TraderChat({
 													</motion.button>
 												</motion.div>
 											)}
+											{openReactionPickerId === m.id && reactionPickerExpanded && (
+												<motion.div
+													initial={{ opacity: 0, scale: 0.85, y: 8 }}
+													animate={{ opacity: 1, scale: 1, y: 0 }}
+													exit={{ opacity: 0, scale: 0.85, y: 8 }}
+													transition={{ type: 'spring', stiffness: 500, damping: 24 }}
+													onClick={(e) => e.stopPropagation()}
+													className={`trader-chat-reaction-picker absolute top-8 z-40 grid w-[220px] grid-cols-8 gap-0.5 rounded-lg p-2 shadow-2xl backdrop-blur-md ${isMine ? 'right-0' : 'left-0'}`}
+													style={{ backgroundColor: '#233138e6', border: `1px solid ${wa.border}` }}
+												>
+													{EMOJIS.map((emoji) => (
+														<button
+															key={emoji}
+															onClick={() => { toggleReaction(m.id, emoji); setOpenReactionPickerId(null); setReactionPickerExpanded(false); setActiveToolbarMessageId(null); }}
+															className="rounded p-1 text-[16px] leading-none hover:bg-white/10"
+														>
+															{emoji}
+														</button>
+													))}
+												</motion.div>
+											)}
 										</AnimatePresence>
 									</motion.div>
 								);
 							})}
 						</div>
 
-						<div className="sticky bottom-0 z-10 bg-[#0d161d] pb-[calc(env(safe-area-inset-bottom)+72px)]">
+						{/*
+							Was: pb-[calc(env(safe-area-inset-bottom)+72px)] — that hardcoded
+							+72px left a large empty gap below the composer on every screen,
+							not just notched phones. Now it only reserves the iOS home-indicator
+							safe area (0px on desktop and most Android devices), so the
+							composer sits flush at the bottom with no leftover space.
+						*/}
+						<div className="sticky bottom-0 z-10 bg-[#0d161d]" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
 						<input ref={fileInputRef} type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={handleFileChosen} />
 
 						{isBlocked ? (
@@ -1328,64 +1445,152 @@ export default function TraderChat({
 							/>
 						)}
 
-						{showQuickReplies && (
-							<div className="absolute inset-0 z-40 overflow-y-auto p-6" style={{ backgroundColor: wa.chatBg }}>
-								<div className="mb-5 flex items-center justify-between">
-									<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Quick replies</h3>
-									<button onClick={() => setShowQuickReplies(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
-								</div>
-								<p className="mb-4 text-[13px]" style={{ color: wa.textSecondary }}>Choose a saved response to insert into the composer.</p>
-								<div className="space-y-2">
-									{quickReplies.map((reply) => (
-										<button key={reply.shortcut} onClick={() => insertQuickReply(reply.text)} className="w-full rounded-lg border p-3 text-left hover:bg-white/5" style={{ borderColor: wa.border }}>
-											<div className="text-[12px] font-semibold" style={{ color: wa.accent }}>{reply.shortcut}</div>
-											<div className="mt-1 text-[13px]" style={{ color: wa.textPrimary }}>{reply.text}</div>
-										</button>
-									))}
-								</div>
-							</div>
-						)}
+						<AnimatePresence>
+							{showQuickReplies && (
+								<motion.div
+									initial={{ opacity: 0 }}
+									animate={{ opacity: 1 }}
+									exit={{ opacity: 0 }}
+									className="absolute inset-0 z-40 overflow-y-auto p-6"
+									style={{ backgroundColor: wa.chatBg }}
+								>
+									<motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="mb-5 flex items-center justify-between">
+										<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Quick replies</h3>
+										<button onClick={() => setShowQuickReplies(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
+									</motion.div>
+									<p className="mb-4 text-[13px]" style={{ color: wa.textSecondary }}>Choose a saved response to insert into the composer.</p>
+									<div className="space-y-2">
+										{quickReplies.map((reply, i) => (
+											<motion.button
+												key={reply.shortcut}
+												initial={{ opacity: 0, y: 8 }}
+												animate={{ opacity: 1, y: 0 }}
+												transition={{ delay: 0.05 + i * 0.04 }}
+												whileHover={{ scale: 1.01 }}
+												whileTap={{ scale: 0.99 }}
+												onClick={() => insertQuickReply(reply.text)}
+												className="w-full rounded-lg border p-3 text-left hover:bg-white/5"
+												style={{ borderColor: wa.border }}
+											>
+												<div className="text-[12px] font-semibold" style={{ color: wa.accent }}>{reply.shortcut}</div>
+												<div className="mt-1 text-[13px]" style={{ color: wa.textPrimary }}>{reply.text}</div>
+											</motion.button>
+										))}
+									</div>
+								</motion.div>
+							)}
+						</AnimatePresence>
 
-						{showWallpaperPicker && (
-							<div className="absolute inset-0 z-40 overflow-y-auto p-6" style={{ backgroundColor: wa.chatBg }}>
-								<div className="mb-5 flex items-center justify-between">
-									<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Chat wallpaper</h3>
-									<button onClick={() => setShowWallpaperPicker(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
-								</div>
-								<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-									{Object.entries(CHAT_WALLPAPERS).map(([key, wallpaper]) => (
-										<button key={key} onClick={() => { setChatWallpaper(key as keyof typeof CHAT_WALLPAPERS); setShowWallpaperPicker(false); }} className="overflow-hidden rounded-lg border text-left" style={{ borderColor: chatWallpaper === key ? wa.accent : wa.border }}>
-											<div className="h-20" style={{ backgroundColor: wallpaper.background }} />
-											<div className="p-2 text-[12px]" style={{ backgroundColor: wa.panelBg, color: wa.textPrimary }}>{wallpaper.label}</div>
-										</button>
-									))}
-								</div>
-							</div>
-						)}
+						<AnimatePresence>
+							{showWallpaperPicker && (
+								<motion.div
+									initial={{ opacity: 0 }}
+									animate={{ opacity: 1 }}
+									exit={{ opacity: 0 }}
+									className="absolute inset-0 z-40 overflow-y-auto p-6"
+									style={{ backgroundColor: wa.chatBg }}
+								>
+									<motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="mb-5 flex items-center justify-between">
+										<h3 className="text-[18px] font-semibold" style={{ color: wa.textPrimary }}>Chat wallpaper</h3>
+										<button onClick={() => setShowWallpaperPicker(false)} className="rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}><IconX /></button>
+									</motion.div>
 
-						{showContactInfo && (
-							<div className="absolute inset-0 z-30 flex flex-col items-center gap-4 overflow-y-auto p-8" style={{ backgroundColor: wa.chatBg }}>
-								<button onClick={() => setShowContactInfo(false)} className="self-start rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}>
-									<IconArrowLeft />
-								</button>
-								<div className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-semibold text-white" style={{ backgroundColor: activeConversation.avatarColor }}>
-									{activeConversation.initials}
-								</div>
-								<div className="text-center">
-									<div className="text-[18px]" style={{ color: wa.textPrimary }}>{activeConversation.name}</div>
-									<div className="mt-1 text-[13px]" style={{ color: wa.textSecondary }}>#{activeConversation.accountNumber}</div>
-								</div>
-								<div className="w-full max-w-sm">
-									<div className="mb-2 text-[12px] font-semibold uppercase tracking-wide" style={{ color: wa.textSecondary }}>Business labels</div>
-									<div className="flex flex-wrap gap-2">
-										{['New lead', 'Paid', 'To follow up'].map((label) => {
-											const selected = (conversationLabels[activeConversationId] || []).includes(label);
-											return <button key={label} onClick={() => toggleConversationLabel(label)} className="rounded-full border px-3 py-1.5 text-[12px]" style={{ backgroundColor: selected ? wa.accent : 'transparent', borderColor: selected ? wa.accent : wa.border, color: selected ? wa.sidebarBg : wa.textSecondary }}>{label}</button>;
+									<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+										{Object.entries(CHAT_WALLPAPERS).map(([key, wallpaper], i) => {
+											const isSelected = chatWallpaper === key;
+											return (
+												<motion.button
+													key={key}
+													initial={{ opacity: 0, scale: 0.9 }}
+													animate={{ opacity: 1, scale: 1 }}
+													transition={{ delay: 0.05 + i * 0.03, type: 'spring', stiffness: 300, damping: 22 }}
+													whileHover={{ scale: 1.03 }}
+													whileTap={{ scale: 0.97 }}
+													onClick={() => { setChatWallpaper(key as keyof typeof CHAT_WALLPAPERS); setShowWallpaperPicker(false); }}
+													className="relative overflow-hidden rounded-lg border-2 text-left"
+													style={{ borderColor: isSelected ? wa.accent : wa.border }}
+												>
+													<div
+														className="h-24"
+														style={{
+															backgroundColor: wallpaper.background,
+															backgroundImage: `url("${buildDoodlePatternUrl(wallpaper.patternColor, wallpaper.patternOpacity)}")`,
+															backgroundSize: '120px 120px',
+														}}
+													/>
+													{isSelected && (
+														<motion.div
+															initial={{ scale: 0 }}
+															animate={{ scale: 1 }}
+															transition={{ type: 'spring', stiffness: 500 }}
+															className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full"
+															style={{ backgroundColor: wa.accent, color: wa.sidebarBg }}
+														>
+															<IconCheck1 />
+														</motion.div>
+													)}
+													<div className="p-2 text-[12px]" style={{ backgroundColor: wa.panelBg, color: wa.textPrimary }}>
+														{wallpaper.label}
+													</div>
+												</motion.button>
+											);
 										})}
 									</div>
-								</div>
-							</div>
-						)}
+								</motion.div>
+							)}
+						</AnimatePresence>
+
+						<AnimatePresence>
+							{showContactInfo && (
+								<motion.div
+									initial={{ opacity: 0 }}
+									animate={{ opacity: 1 }}
+									exit={{ opacity: 0 }}
+									className="absolute inset-0 z-30 flex flex-col items-center gap-4 overflow-y-auto p-8"
+									style={{ backgroundColor: wa.chatBg }}
+								>
+									<button onClick={() => setShowContactInfo(false)} className="self-start rounded-full p-2 hover:bg-white/5" style={{ color: wa.textSecondary }}>
+										<IconArrowLeft />
+									</button>
+									<motion.div
+										initial={{ opacity: 0, scale: 0.85 }}
+										animate={{ opacity: 1, scale: 1 }}
+										transition={{ type: 'spring', stiffness: 300, damping: 22 }}
+										className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-semibold text-white"
+										style={{ backgroundColor: activeConversation.avatarColor }}
+									>
+										{activeConversation.initials}
+									</motion.div>
+									<div className="text-center">
+										<div className="text-[18px]" style={{ color: wa.textPrimary }}>{activeConversation.name}</div>
+										<div className="mt-1 text-[13px]" style={{ color: wa.textSecondary }}>#{activeConversation.accountNumber}</div>
+									</div>
+									<div className="w-full max-w-sm">
+										<div className="mb-2 text-[12px] font-semibold uppercase tracking-wide" style={{ color: wa.textSecondary }}>Business labels</div>
+										<div className="flex flex-wrap gap-2">
+											{['New lead', 'Paid', 'To follow up'].map((label, i) => {
+												const selected = (conversationLabels[activeConversationId] || []).includes(label);
+												return (
+													<motion.button
+														key={label}
+														initial={{ opacity: 0, y: 6 }}
+														animate={{ opacity: 1, y: 0 }}
+														transition={{ delay: 0.1 + i * 0.05 }}
+														whileHover={{ scale: 1.05 }}
+														whileTap={{ scale: 0.95 }}
+														onClick={() => toggleConversationLabel(label)}
+														className="rounded-full border px-3 py-1.5 text-[12px]"
+														style={{ backgroundColor: selected ? wa.accent : 'transparent', borderColor: selected ? wa.accent : wa.border, color: selected ? wa.sidebarBg : wa.textSecondary }}
+													>
+														{label}
+													</motion.button>
+												);
+											})}
+										</div>
+									</div>
+								</motion.div>
+							)}
+						</AnimatePresence>
 					</>
 				)}
 			</div>
