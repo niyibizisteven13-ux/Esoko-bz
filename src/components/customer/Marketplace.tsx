@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowRight,
@@ -12,6 +13,7 @@ import {
   Play,
   Loader2,
   MapPin,
+  MessageCircle,
   MessageSquare,
   Package,
   Search,
@@ -220,6 +222,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const navigate = useNavigate();
   const [liveSessions, setLiveSessions] = useState<any[]>([]);
   const [activeLiveSession, setActiveLiveSession] = useState<any>(null);
   const [liveOverlayProduct, setLiveOverlayProduct] = useState<Product | null>(null);
@@ -240,18 +243,27 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const observerRef = useRef<IntersectionObserver | null>(null);
   const [pausedVideos, setPausedVideos] = useState<Set<string>>(new Set());
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
+  const [soundVideoId, setSoundVideoId] = useState<string | null>(null);
 
   const toggleVideoPlay = (productId: string) => {
     const el = videoRefs.current[productId];
     if (!el) return;
+
+    Object.entries(videoRefs.current).forEach(([id, video]) => {
+      if (!video || id === productId) return;
+      if (!video.paused) video.pause();
+    });
+
     if (el.paused) {
-      // Try to play unmuted (user-initiated). If browser blocks it, fall back to muted autoplay.
+      setActiveVideoId(productId);
+      setSoundVideoId(productId);
       el.muted = false;
       el.volume = 1;
       void el.play().catch(() => {
-        // Play was blocked; try muted autoplay as a fallback.
         el.muted = true;
-        el.play().catch(() => console.warn('It was not possible to play the video.'));
+        el.volume = 1;
+        void el.play().catch(() => console.warn('It was not possible to play the video.'));
+        setSoundVideoId(null);
       });
       setPausedVideos((prev) => {
         const next = new Set(prev);
@@ -261,6 +273,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     } else {
       el.pause();
       setPausedVideos((prev) => new Set(prev).add(productId));
+      if (soundVideoId === productId) setSoundVideoId(null);
     }
   };
 
@@ -346,6 +359,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
   }, []);
 
+  // Fix mobile 100vh issues: use real viewport height to avoid address-bar clipping
+  useEffect(() => {
+    const setVh = () => document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+    setVh();
+    window.addEventListener('resize', setVh);
+    return () => window.removeEventListener('resize', setVh);
+  }, []);
+
   const postForProduct = (product: Product) =>
     posts.find((post) => `post-${post.id}` === product.id || post.productId === product.id);
 
@@ -396,9 +417,26 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const loadLiveSessions = async () => {
       setLiveLoading(true);
       setLiveError('');
+      if (!auth.currentUser) {
+        if (!cancelled) {
+          setLiveSessions([]);
+          setLiveError('');
+        }
+        setLiveLoading(false);
+        return;
+      }
       try {
         const res = await fetch('/api/live/sessions', { credentials: 'include' });
-        if (!res.ok) throw new Error('Unable to fetch live sessions');
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            if (!cancelled) {
+              setLiveSessions([]);
+              setLiveError('');
+            }
+            return;
+          }
+          throw new Error('Unable to fetch live sessions');
+        }
         const data = await res.json();
         if (!cancelled) setLiveSessions(data.sessions || []);
       } catch (err) {
@@ -419,6 +457,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   const getLiveSessionForProduct = (product: Product) =>
     liveSessions.find((session) => session.traderId === product.traderId);
+
+  const openLiveRoom = (product: Product, session: any) => {
+    if (!session) return;
+    if (!auth.currentUser) {
+      navigate('/login');
+      return;
+    }
+    setActiveLiveSession(session);
+    setLiveOverlayProduct(product);
+  };
 
   useEffect(() => {
     setSearchMode(initialSearchMode);
@@ -559,22 +607,37 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const traderRecords = useMemo(() => buildTraderRecords(displayProducts), [displayProducts]);
 
   useEffect(() => {
+    if (soundVideoId && soundVideoId !== activeVideoId) {
+      const previous = videoRefs.current[soundVideoId];
+      if (previous && !previous.paused) {
+        previous.pause();
+      }
+      setSoundVideoId(null);
+    }
+
     Object.entries(videoRefs.current).forEach(([productId, video]) => {
       if (!video) return;
       if (productId === activeVideoId) {
-        if (!pausedVideos.has(productId)) {
-          // Use muted autoplay for intersection-driven playback to avoid NotAllowedError.
-          video.muted = true;
-          video.volume = 1;
-          void video.play().catch(() => console.warn('Auto play blocked'));
+        if (pausedVideos.has(productId)) {
+          video.pause();
+          return;
         }
+        if (soundVideoId === productId) {
+          video.muted = false;
+          video.volume = 1;
+          void video.play().catch(() => console.warn('Play blocked for sound video.'));
+          return;
+        }
+        video.muted = true;
+        video.volume = 1;
+        void video.play().catch(() => console.warn('Auto play blocked'));
       } else {
         if (!video.paused) {
           video.pause();
         }
       }
     });
-  }, [activeVideoId, pausedVideos]);
+  }, [activeVideoId, pausedVideos, soundVideoId]);
 
   useEffect(() => {
     if (!observerRef.current) return;
@@ -776,7 +839,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     // permanently docks at the top on desktop.
     <div
       className="flex flex-col min-h-[100dvh] h-full"
-      style={{ height: '100dvh' }}
+      style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -803,14 +866,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setSidebarOpen(false)}
-              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
+              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden"
             />
             <motion.div
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'tween', duration: 0.25 }}
-              className="fixed inset-y-0 left-0 z-50 w-[86%] max-w-sm md:max-w-md overflow-y-auto bg-[#050505] pb-6"
+              className="fixed inset-y-0 left-0 z-50 w-[86%] max-w-sm md:max-w-md overflow-y-auto bg-[#050505] pb-6 md:hidden"
             >
               <div className="flex items-center justify-between p-4">
                 <span className="text-[10px] font-black uppercase tracking-[0.24em] text-white/50">
@@ -829,6 +892,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           </>
         )}
       </AnimatePresence>
+
+      {/* Desktop search/filter header is always visible on larger screens. */}
+      <div className="hidden md:block">{headerContent}</div>
 
       {/* TikTok-style full-height snap scroller: one scroll container, one card per viewport,
           filling the entire 100dvh since there's no in-flow header taking up space anymore. */}
@@ -891,7 +957,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
               ref={(el) => {
                 if (el) slideRefs.current[product.id] = el;
               }}
-              className="snap-start snap-always h-full w-full flex items-start md:items-center justify-center md:px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-[calc(1rem+env(safe-area-inset-bottom))] px-0 md:px-0"
+              className="snap-start snap-always h-full w-full flex items-start md:items-center justify-center md:px-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] px-0 md:px-0"
               style={{ scrollSnapStop: 'always' }}
             >
               <motion.article
@@ -916,6 +982,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 )}
               >
                 <div className="relative h-full flex-1 min-h-[160px] flex flex-col overflow-hidden bg-black text-white">
+                  
                   {background?.type === 'image' && background.url ? (
                     <div className="absolute inset-0 w-full h-full overflow-hidden">
                       <img
@@ -936,10 +1003,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         playsInline
                         autoPlay
                         loop
+                        muted
                         className="absolute inset-0 h-full w-full object-cover"
                         onLoadedData={(event) => {
                           const target = event.currentTarget;
-                          target.muted = false;
+                          target.muted = true;
                           target.volume = 1;
                         }}
                         onClick={() => toggleVideoPlay(product.id)}
@@ -1022,10 +1090,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       <div className="pointer-events-auto absolute right-4 top-4 z-30 flex flex-col items-center gap-3 rounded-[2rem] bg-black/60 px-3 py-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
                         <button
                           type="button"
-                          onClick={() => {
-                            setActiveLiveSession(liveSession);
-                            setLiveOverlayProduct(product);
-                          }}
+                          onClick={() => openLiveRoom(product, liveSession)}
                           className="flex items-center gap-2 rounded-full bg-red-600 px-3 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white shadow-lg shadow-red-900/40 transition hover:bg-red-500"
                         >
                           <span className="h-2.5 w-2.5 rounded-full bg-white animate-pulse" />
