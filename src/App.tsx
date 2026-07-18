@@ -10,6 +10,7 @@ const CustomerDashboard = lazy(() => import('./pages/CustomerDashboard'));
 const TraderDashboard = lazy(() => import('./pages/TraderDashboard'));
 const AdminPortal = lazy(() => import('./pages/AdminPortal'));
 const AgentPortal = lazy(() => import('./pages/AgentPortal'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 
 const DashboardLoading = () => <div className="flex min-h-screen items-center justify-center bg-[#0B141A] text-sm text-white">Loading Makasi…</div>;
 
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/trader/*" element={authToken ? <TraderDashboard /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/admin/*" element={authToken ? <AdminPortal /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/agent/*" element={authToken ? <AgentPortal /> : <Navigate to={marketplaceEntry} replace />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/landing" element={<Navigate to={marketplaceEntry} replace />} />
         <Route path="*" element={<Navigate to={fallbackDestination} replace />} />
       </Routes>

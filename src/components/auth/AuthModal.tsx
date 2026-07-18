@@ -1,4 +1,5 @@
 import React, { FormEvent, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2, LogIn, UserPlus, X } from 'lucide-react';
 
 export type AuthRole = 'customer' | 'trader';
@@ -88,6 +89,16 @@ export default function AuthModal({
             </div>
           )}
           {error && <p className="text-sm font-semibold text-red-300">{error}</p>}
+          {mode === 'sign-in' && (
+            <div className="text-right">
+              <Link
+                to="/forgot-password"
+                className="text-[10px] font-black text-orange-400 uppercase tracking-[0.25em] hover:text-orange-300"
+              >
+                Forgot password?
+              </Link>
+            </div>
+          )}
           <button disabled={submitting} className="flex w-full items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-3 text-sm font-black text-black disabled:opacity-50">
             {submitting ? <Loader2 size={17} className="animate-spin" /> : mode === 'sign-in' ? <LogIn size={17} /> : <UserPlus size={17} />}
             {submitting ? 'Please wait...' : mode === 'sign-in' ? 'Sign in' : 'Create account'}
