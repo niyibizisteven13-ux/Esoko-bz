@@ -1,5 +1,5 @@
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || '';
-const NETWORK_API_BASE = import.meta.env.VITE_NETWORK_API_URL || ''; // For phone on local network
+const NETWORK_API_BASE = import.meta.env.VITE_NETWORK_API_URL || 'http://172.20.26.58:5173'; // Default to local network IP
 let inMemoryToken: string | null = null;
 const DEFAULT_BACKEND_PORT = '5173';
 const DEFAULT_BACKEND_BASE = `http://localhost:${DEFAULT_BACKEND_PORT}`;
@@ -16,6 +16,19 @@ function isNativeWrapper(): boolean {
 function resolveApiBase(): string {
   if (typeof window === 'undefined') return DEFAULT_API_BASE || DEFAULT_BACKEND_BASE;
 
+  // For native mobile apps (Capacitor/Android)
+  if (isNativeWrapper()) {
+    // Prefer network IP for physical devices/real phones
+    if (NETWORK_API_BASE && NETWORK_API_BASE !== '') {
+      console.log('🔗 Using network API:', NETWORK_API_BASE);
+      return NETWORK_API_BASE;
+    }
+    // Fallback to Android emulator magic IP
+    console.log('🔗 Using Android emulator API: http://10.0.2.2:5173');
+    return 'http://10.0.2.2:5173';
+  }
+
+  // For web browsers
   const currentOrigin = window.location.origin;
   if (DEFAULT_API_BASE) {
     try {
@@ -33,14 +46,6 @@ function resolveApiBase(): string {
     } catch {
       return DEFAULT_API_BASE;
     }
-  }
-
-  if (isNativeWrapper()) {
-    // For Capacitor apps, try Android emulator IP first, then fallback to network IP
-    if (NETWORK_API_BASE) {
-      return NETWORK_API_BASE;
-    }
-    return 'http://10.0.2.2:5173';
   }
 
   return '';
