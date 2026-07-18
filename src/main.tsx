@@ -7,6 +7,7 @@ import { LanguageProvider } from './context/LanguageContext';
 import { NotificationProvider } from './context/NotificationContext';
 import { RealTimeSyncProvider } from './context/RealTimeSyncContext';
 import { SocketProvider } from './lib/SocketContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { registerOfflineSync } from './services/offlineQueue';
 
 if ('serviceWorker' in navigator) {
@@ -25,9 +26,11 @@ createRoot(document.getElementById('root')!).render(
       <NotificationProvider>
         <RealTimeSyncProvider>
           <SocketProvider>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
+            <ThemeProvider>
+              <BrowserRouter>
+                <App />
+              </BrowserRouter>
+            </ThemeProvider>
           </SocketProvider>
         </RealTimeSyncProvider>
       </NotificationProvider>
