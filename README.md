@@ -1,55 +1,36 @@
-# Esoko Nexus Local
+﻿# Esoko-bz
+### Digital Tax & Business Management Platform for Small Businesses in Rwanda
 
-A self-contained full-stack commerce and wallet app.
+**Developer:** Niyibizi Steven  
+**Location:** Butare, Rwanda  
+**Status:** Active Project | In Development  
+**GitHub:** @niyibizisteven13-ux
 
-## Stack
+---
 
-- React frontend
-- Express backend
-- SQLite database in `data/esoko.db`
-- JWT authentication
-- No Firebase, Firestore, Google Cloud, Stripe, or external app backend
+### About the Project
+Esoko-bz is a digital platform I am building to help small businesses in Rwanda manage sales, issue digital receipts, track inventory, and comply with tax regulations. 
 
-## Run
+In Rwanda, many entrepreneurs want to grow and pay taxes correctly, but the process is often confusing and manual. This platform aims to simplify compliance, increase transparency between businesses and government, and support the growth of "Made in Rwanda" businesses.
 
-```bash
-npm install
-npm run seed
-npm run dev
-```
+### Key Features Planned
+- **Digital Receipts & QR Codes**: Generate compliant receipts for every sale
+- **Inventory Management**: Track stock in real-time
+- **Tax Reminders**: Automated alerts for tax deadlines 
+- **Business Dashboard**: Simple reports for sales and expenses
+- **Mobile-First Design**: Built for phones, because that’s what most vendors use
 
-Open `http://localhost:5173`.
+### Tech Stack
+HTML CSS JavaScript Python React *(More coming as development progresses)*
 
-## Environment Variables
+### My Mission
+I am developing Esoko-bz as part of my commitment to use technology and entrepreneurship to solve real economic problems in Africa. This project connects to my studies in Economics and my goal to build businesses that create jobs and expand trade under AfCFTA.
 
-Copy `.env.example` to `.env` and set production values before deployment. At minimum, set:
+I am currently learning software development through freeCodeCamp and ALX, and applying those skills directly to this project.
 
-- `JWT_SECRET` — strong random secret for signing JWTs
-- `SSL_KEY_PATH` — path to your TLS private key file
-- `SSL_CERT_PATH` — path to your TLS certificate file
+### Contact
+For questions about this project: [your email]  
+Linked to my ALU Application: Niyibizi Steven - International Business and Trade Applicant
 
-When HTTPS is configured, the server will start with TLS support automatically.
-
-## Deployment Notes
-
-- Keep `.env` out of source control
-- Use a local or cloud key store for production secrets
-- Engage a Rwandan legal advisor to review Terms, Privacy, and Acceptable Use policies
-- Perform professional security testing before going live
-
-## Demo Accounts
-
-- Admin: `admin@esoko.rw` / `admin123`
-- Trader: `trader1@esoko.rw` / `trader123`
-- Customer: `customer1@esoko.rw` / `customer123`
-- Agent: `agent1@esoko.rw` / `agent123`
-
-## Useful Commands
-
-```bash
-npm run lint
-npm run build
-npm run test:api
-```
-
-`npm run test:api` expects the dev server to be running and the database to be seeded.
+---
+*Last Updated: July 2026*
