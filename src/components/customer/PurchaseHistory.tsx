@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { auth } from '../../firebase';
 import {
   collection,
@@ -190,7 +190,7 @@ export default function PurchaseHistory() {
                     <div className="flex items-center gap-3 mt-1">
                       <div className="flex items-center gap-1 text-[10px] text-neutral-500 font-bold uppercase tracking-widest">
                         <Store size={12} />
-                        {purchase.traderName || 'ESOKO Merchant'}
+                        {purchase.traderName || 'Bwenge Merchant'}
                       </div>
                       <div className="flex items-center gap-1 text-[10px] text-neutral-500 font-bold uppercase tracking-widest">
                         <Clock size={12} />

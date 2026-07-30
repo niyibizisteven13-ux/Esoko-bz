@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { auth } from '../../firebase';
 import {
   collection,
@@ -544,7 +544,7 @@ export default function PayCodeForm({
                           Merchant
                         </p>
                         <p className="text-xs font-bold text-white">
-                          {trader?.businessName || trader?.name || 'ESOKO Merchant'}
+                          {trader?.businessName || trader?.name || 'Bwenge Merchant'}
                         </p>
                       </div>
                     </div>

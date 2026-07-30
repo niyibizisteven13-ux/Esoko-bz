@@ -3,7 +3,7 @@ export type Language = 'en' | 'rw' | 'fr';
 export const translations = {
   en: {
     common: {
-      welcome: 'Welcome to ESOKO Wallet',
+      welcome: 'Welcome to Bwenge Wallet',
       login: 'Login',
       signup: 'Sign Up',
       logout: 'Logout',
@@ -206,7 +206,7 @@ export const translations = {
       otpSent: 'Code sent to your phone.',
       resendOtp: 'Resend code',
       welcomeBackUser: 'Welcome back,',
-      signInToAccount: 'Sign in to your ESOKO account',
+      signInToAccount: 'Sign in to your Bwenge account',
       createAccount: 'Create account',
       forgotPassword: 'Forgot password?',
       orContinueWith: 'or continue with',
@@ -519,7 +519,7 @@ export const translations = {
       qrScanDescription: 'Show this code to receive global transfers',
     },
     onboarding: {
-      title: 'Welcome to ESOKO',
+      title: 'Welcome to Bwenge',
       subtitle: "Let's personalize your experience based on your needs.",
       step: 'Step',
       of: 'of',
@@ -622,7 +622,7 @@ export const translations = {
   },
   rw: {
     common: {
-      welcome: 'Murakaza neza kuri ESOKO Wallet',
+      welcome: 'Murakaza neza kuri Bwenge Wallet',
       login: 'Injira',
       signup: 'Kwiyandikisha',
       logout: 'Sohoka',
@@ -825,7 +825,7 @@ export const translations = {
       otpSent: 'Icode yoherejwe kuri terefone yawe.',
       resendOtp: 'Ongera wohereze icode',
       welcomeBackUser: 'Murakaza neza,',
-      signInToAccount: 'Injira muri konti yawe ya ESOKO',
+      signInToAccount: 'Injira muri konti yawe ya Bwenge',
       createAccount: 'Fungura konti',
       forgotPassword: "Wibagiwe ijambo ry'ibanga?",
       orContinueWith: 'Cyangwa ukomeze na',
@@ -1138,7 +1138,7 @@ export const translations = {
       qrScanDescription: 'Erekana iyi code kugira ngo wakire amafaranga kuri Nexus',
     },
     onboarding: {
-      title: 'Murakaza neza kuri ESOKO',
+      title: 'Murakaza neza kuri Bwenge',
       subtitle: 'Reka tugufashe gutunganya konti yawe hashingiwe ku byo ukeneye.',
       step: 'Intambwe',
       of: 'kuri',
@@ -1241,7 +1241,7 @@ export const translations = {
   },
   fr: {
     common: {
-      welcome: 'Bienvenue sur ESOKO Wallet',
+      welcome: 'Bienvenue sur Bwenge Wallet',
       login: 'Connexion',
       signup: "S'inscrire",
       logout: 'Déconnexion',
@@ -1447,7 +1447,7 @@ export const translations = {
       otpSent: 'Code envoyé sur votre téléphone.',
       resendOtp: 'Renvoyer le code',
       welcomeBackUser: 'Bon retour,',
-      signInToAccount: 'Connectez-vous à votre compte ESOKO',
+      signInToAccount: 'Connectez-vous à votre compte Bwenge',
       createAccount: 'Créer un compte',
       forgotPassword: 'Mot de passe oublié ?',
       orContinueWith: 'ou continuer avec',
@@ -1760,7 +1760,7 @@ export const translations = {
       qrScanDescription: 'Affichez ce code pour recevoir des transferts Nexus globaux',
     },
     onboarding: {
-      title: 'Bienvenue sur ESOKO',
+      title: 'Bienvenue sur Bwenge',
       subtitle: 'Personnalisons votre expérience en fonction de vos besoins.',
       step: 'Étape',
       of: 'sur',

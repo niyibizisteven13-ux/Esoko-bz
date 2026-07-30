@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Book,
   FileText,
@@ -296,7 +296,7 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
       body = [['Sample Data', 'Real data will be available after setup']];
     }
 
-    generateAccountingReport(tabLabel, headers, body, 'ESOKO Merchant');
+    generateAccountingReport(tabLabel, headers, body, 'Bwenge Merchant');
   };
 
   const buildFinancialStatementRows = (statementType: string) => {
@@ -344,7 +344,7 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
       .toUpperCase()}`;
     const reportRows = buildFinancialStatementRows(statementType);
     const verificationPayload = JSON.stringify({
-      app: 'ESOKO Nexus',
+      app: 'Bwenge Nexus',
       reportId,
       traderId,
       statementType,
@@ -371,7 +371,7 @@ export default function TraderAccounting({ traderId, tier }: { traderId: string;
         pendingStatementReport.title,
         pendingStatementReport.headers,
         pendingStatementReport.body,
-        'ESOKO Merchant',
+        'Bwenge Merchant',
         {
           reportId: pendingStatementReport.reportId,
           statementType: pendingStatementReport.title,

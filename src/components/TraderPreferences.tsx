@@ -203,7 +203,7 @@ export const TraderPreferences: React.FC<TraderPreferencesProps> = ({
               Trader Preferences
             </h2>
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Customize your ESOKO experience
+              Customize your Bwenge experience
             </p>
           </div>
         </div>

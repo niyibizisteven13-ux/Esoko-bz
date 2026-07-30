@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   CheckCircle,
   XCircle,
@@ -402,7 +402,7 @@ export default function TraderPurchases({
           transactionId: purchase.id,
           receiptNumber: `RCP-${purchase.id.slice(-8).toUpperCase()}`,
           date: toDate(purchase.timestamp).toLocaleString(),
-          traderName: traderName || 'ESOKO trader',
+          traderName: traderName || 'Bwenge trader',
           traderTin,
           traderPhone,
           traderAddress,
@@ -421,12 +421,12 @@ export default function TraderPurchases({
       await sendEmail({
         to: purchase.customerEmail,
         message: {
-          subject: `Receipt from ${traderName || 'ESOKO trader'} - ${purchase.id.slice(0, 8)}`,
+          subject: `Receipt from ${traderName || 'Bwenge trader'} - ${purchase.id.slice(0, 8)}`,
           text,
           html: `<pre style="font-family:Arial,sans-serif;white-space:pre-wrap;line-height:1.6">${text}</pre>`,
           attachments: [
             {
-              filename: `ESOKO_Receipt_${purchase.id}.pdf`,
+              filename: `Bwenge_Receipt_${purchase.id}.pdf`,
               contentBase64,
               contentType: 'application/pdf',
             },

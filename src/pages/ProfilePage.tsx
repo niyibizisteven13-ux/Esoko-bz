@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
 import { motion } from 'framer-motion';
@@ -82,7 +82,7 @@ export default function ProfilePage() {
                 )}
               </div>
               <p className="text-neutral-500 dark:text-neutral-400 font-medium">
-                Manage your personal identity on ESOKO
+                Manage your personal identity on Bwenge
               </p>
             </div>
           </div>

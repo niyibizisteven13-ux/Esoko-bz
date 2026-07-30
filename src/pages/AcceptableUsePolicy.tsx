@@ -31,7 +31,7 @@ export default function AcceptableUsePolicy() {
           <section>
             <h2 className="text-2xl font-bold text-neutral-900 mb-4">1. Purpose</h2>
             <p className="text-neutral-700 leading-relaxed">
-              This Acceptable Use Policy outlines the rules for using Makasi services. By
+              This Acceptable Use Policy outlines the rules for using Bwenge services. By
               using our platform, you agree to comply with these guidelines.
             </p>
           </section>

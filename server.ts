@@ -5928,40 +5928,35 @@ app.get('/api/health', (_req, res) => {
     database = 'error';
   }
 
-  res.json({
+  const response = {
     status: database === 'connected' ? 'ok' : 'degraded',
     app: 'Esoko Nexus',
     database,
     accountStore: accountStoreBackend,
-    storage: {
-      dataDir: path.resolve(env.DATA_DIR || path.join(process.cwd(), 'data')),
-      uploadDir,
-    },
     backend: 'express',
     firebase: false,
-    email: {
-      configured: EMAIL_CONFIGURED,
-      provider: EMAIL_PROVIDER,
-      resendConfigured: RESEND_CONFIGURED,
-      smtpConfigured: SMTP_CONFIGURED,
-      smtpAuthConfigured: SMTP_AUTH_CONFIGURED,
-      smtpRequireAuth: SMTP_REQUIRE_AUTH,
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      fallbackPorts: SMTP_FALLBACK_PORTS,
-      secure: SMTP_SECURE,
-      family: Number(env.SMTP_FAMILY || 4),
-      requireTls: SMTP_REQUIRE_TLS,
-      connectionTimeoutMs: SMTP_CONNECTION_TIMEOUT_MS,
-      greetingTimeoutMs: SMTP_GREETING_TIMEOUT_MS,
-      socketTimeoutMs: SMTP_SOCKET_TIMEOUT_MS,
-      correctedMisconfiguredGmailPort: shouldUseGmailStartTls,
-      forcedIpv4Lookup: true,
-      from: SMTP_FROM ? 'configured' : 'missing',
-    },
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-  });
+  };
+
+  if (!isProduction) {
+    res.json({
+      ...response,
+      storage: {
+        dataDir: path.resolve(env.DATA_DIR || path.join(process.cwd(), 'data')),
+        uploadDir,
+      },
+      email: {
+        configured: EMAIL_CONFIGURED,
+        provider: EMAIL_PROVIDER,
+        smtpConfigured: SMTP_CONFIGURED,
+        smtpAuthConfigured: SMTP_AUTH_CONFIGURED,
+      },
+    });
+    return;
+  }
+
+  res.json(response);
 });
 
 app.post('/api/auth/register', validateRequest(RegisterSchema), (req: any, res): any => {
@@ -15429,7 +15424,9 @@ async function startServer() {
     });
   }
 
-  const listenPort = await findAvailablePort(port);
+  // External tunnels, containers, and platform health checks target the
+  // configured port. Never silently move production to another listener.
+  const listenPort = isProduction ? port : await findAvailablePort(port);
   if (listenPort !== port) {
     console.warn(`Port ${port} is already in use; falling back to ${listenPort}.`);
   }

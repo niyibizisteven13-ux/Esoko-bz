@@ -1,19 +1,20 @@
-# Esoko Nexus Deployment Readiness
+# Bwenge Deployment Readiness
 
-This app is ready for local demo and internal beta after the current checks pass. For public production, use this checklist before connecting real users, real wallets, or paid subscriptions.
+This app is ready for local demo and internal beta after the current checks pass. It is not yet production-ready for real wallets or paid subscriptions until the database and file-storage requirements below are completed.
 
 ## Required Environment
 
 Set these variables in the hosting platform, not in committed files:
 
 - `NODE_ENV=production`
-- `APP_URL=https://api.your-domain.com`
-- `FRONTEND_URLS=https://app.your-domain.com`
+- `APP_URL=https://bwenge.space`
+- `FRONTEND_URLS=https://bwenge.space`
 - `JWT_SECRET=<at least 32 random characters>`
 - `TRUST_PROXY=1` when deployed behind Render, Railway, Fly.io, Nginx, Cloudflare, or another TLS proxy
 - `COOKIE_SAMESITE=strict` for same-origin deployments, or `none` only when frontend/backend are cross-site over HTTPS
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 - `UPLOAD_MAX_MB=10` or lower unless uploads move to object storage
+- `DATABASE_URL=<managed PostgreSQL connection string>` after the full data migration is complete
 
 Do not set `DEV_JWT_SECRET` in production.
 
@@ -53,9 +54,9 @@ Money-moving endpoints must be treated as non-repeatable operations:
 
 The app is now much closer to production shape, but a true 10/10 launch still needs:
 
-- PostgreSQL migration from local SQLite.
+- Full PostgreSQL migration for all transactional, identity, audit, idempotency, and scheduler data. The current PostgreSQL integration mirrors account data only; it is not a complete production database backend.
 - Immutable ledger correction entries for every admin money adjustment.
 - More route modules split out of `server.ts`.
 - File content scanning for public uploads.
-- CI pipeline for typecheck, build, API tests, and lint report.
+- Expand CI with full integration tests for auth, roles, wallet, revenue, subscriptions, and admin refunds.
 - Full integration tests for auth, roles, wallet, revenue, subscriptions, and admin refunds.

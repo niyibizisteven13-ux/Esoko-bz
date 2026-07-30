@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Plus,
   Search,
@@ -2235,7 +2235,7 @@ export default function TraderProducts({
 
               <div className="p-8 bg-neutral-50 dark:bg-neutral-900/50 border-t border-neutral-100 dark:border-neutral-800">
                 <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] text-center">
-                  ESOKO Sourcing Engine â€¢ Real-time Supply Chain
+                  Bwenge Sourcing Engine â€¢ Real-time Supply Chain
                 </p>
               </div>
             </motion.div>

@@ -31,7 +31,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-neutral-900 mb-4">1. Acceptance of Terms</h2>
             <p className="text-neutral-700 leading-relaxed">
-              By accessing and using Makasi, you accept and agree to be bound by the terms and
+              By accessing and using Bwenge, you accept and agree to be bound by the terms and
               provision of this agreement. If you do not agree to abide by the above, please do not
               use this service.
             </p>
@@ -40,7 +40,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-neutral-900 mb-4">2. Services</h2>
             <p className="text-neutral-700 leading-relaxed mb-4">
-              Makasi provides digital payment solutions, inventory management, and marketplace
+              Bwenge provides digital payment solutions, inventory management, and marketplace
               services for traders and customers in Rwanda.
             </p>
             <ul className="list-disc list-inside text-neutral-700 space-y-2">
@@ -75,7 +75,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-neutral-900 mb-4">5. Intellectual Property</h2>
             <p className="text-neutral-700 leading-relaxed">
-              All content, trademarks, and data on Makasi are owned by us or our licensors.
+              All content, trademarks, and data on Bwenge are owned by us or our licensors.
               You may not reproduce, distribute, or create derivative works without permission.
             </p>
           </section>
@@ -91,7 +91,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-neutral-900 mb-4">7. Limitation of Liability</h2>
             <p className="text-neutral-700 leading-relaxed">
-              Makasi shall not be liable for any indirect, incidental, or consequential
+              Bwenge shall not be liable for any indirect, incidental, or consequential
               damages. Our total liability shall not exceed the amount paid by you in the 12 months
               preceding the claim.
             </p>

@@ -208,8 +208,8 @@ export default function LoginPage() {
         userId: currentUser.id,
         message:
           role === 'trader'
-            ? 'Welcome to Makasi. Your shop is ready. Upload one business proof when you want a verified badge.'
-            : 'Welcome to Makasi. You can start shopping and paying now.',
+            ? 'Welcome to Bwenge. Your shop is ready. Upload one business proof when you want a verified badge.'
+            : 'Welcome to Bwenge. You can start shopping and paying now.',
         type: 'success',
         subType: 'system',
       }).catch((notifErr) => console.error('Welcome notification failed:', notifErr));
@@ -699,7 +699,7 @@ export default function LoginPage() {
 
         {/* bottom footer */}
         <p className="absolute bottom-10 text-[10px] text-neutral-700 font-black uppercase tracking-[0.4em] text-center w-full px-12 pointer-events-none">
-          Â© 2026 ESOKO Â· Secure Digital Trade Ecosystem
+          Â© 2026 Bwenge Â· Secure Digital Trade Ecosystem
         </p>
       </div>
 

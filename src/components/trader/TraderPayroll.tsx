@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   collection,
   query,
@@ -200,7 +200,7 @@ export default function TraderPayroll({ traderId }: { traderId: string }) {
   const generatePayslip = (record: any) => {
     const doc = new jsPDF();
     doc.setFontSize(20);
-    doc.text('ESOKO PAYSLIP', 105, 20, { align: 'center' });
+    doc.text('Bwenge PAYSLIP', 105, 20, { align: 'center' });
 
     doc.setFontSize(12);
     doc.text(`Employee: ${record.employeeName}`, 20, 40);

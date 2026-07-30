@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Download, Share2, Store, Package, Printer, Zap, X } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -42,7 +42,7 @@ export default function TraderQRCodes({
     if (!canvas) return;
     const url = canvas.toDataURL('image/png');
     const link = document.createElement('a');
-    link.download = `ESOKO_QR_${name.replace(/\s+/g, '_')}.png`;
+    link.download = `Bwenge_QR_${name.replace(/\s+/g, '_')}.png`;
     link.href = url;
     link.click();
   };

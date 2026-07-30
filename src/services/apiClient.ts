@@ -4,11 +4,19 @@ let inMemoryToken: string | null = null;
 const DEFAULT_BACKEND_PORT = '5173';
 const DEFAULT_BACKEND_BASE = `http://localhost:${DEFAULT_BACKEND_PORT}`;
 
+function isPrivateNetworkHostname(hostname: string): boolean {
+  if (['localhost', '127.0.0.1', '::1'].includes(hostname)) return true;
+  if (/^10\./.test(hostname) || /^192\.168\./.test(hostname)) return true;
+
+  const private172 = hostname.match(/^172\.(\d{1,3})\./);
+  return Boolean(private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31);
+}
+
 function isNativeWrapper(): boolean {
   if (typeof window === 'undefined') return false;
   const nav = window.navigator as any;
   const userAgent = typeof nav?.userAgent === 'string' ? nav.userAgent : '';
-  const isCapacitor = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|EsokoNexus|esoko-nexus)/i.test(userAgent);
+  const isCapacitor = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|BwengeNexus|esoko-nexus)/i.test(userAgent);
   const hasCapacitorNative = Boolean((window as any).Capacitor?.isNative);
   return isCapacitor || hasCapacitorNative;
 }
@@ -42,6 +50,12 @@ function resolveApiBase(): string {
       }
 
       if (isApiLocalHost && !isLocalHost && NETWORK_API_BASE) {
+        // Public tunnels serve the frontend and API from one origin. Rewriting
+        // an HTTPS tunnel page to an HTTP/LAN address causes mixed-content and
+        // unreachable-private-network failures in the browser.
+        if (!isPrivateNetworkHostname(window.location.hostname)) {
+          return '';
+        }
         console.log('🔗 Using network fallback API host for remote browser:', NETWORK_API_BASE);
         return NETWORK_API_BASE;
       }

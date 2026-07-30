@@ -13,7 +13,7 @@ const slides = [
   {
     title: 'One Platform. Three Advantages.',
     description:
-      'Esoko Nexus combines a Mentorship Hub, a Commerce Platform, and CBDC E-Money — solving SME failure and telecom monopoly in one ecosystem.',
+      'Bwenge Nexus combines a Mentorship Hub, a Commerce Platform, and CBDC E-Money — solving SME failure and telecom monopoly in one ecosystem.',
     accent: 'from-violet-500 via-fuchsia-500 to-pink-500',
     showCard: false,
   },
@@ -117,13 +117,13 @@ export default function HybridCarousel() {
       <div className="max-w-7xl mx-auto">
         <div className="mb-10 text-center">
           <p className="text-sm uppercase tracking-[0.35em] text-orange-300 font-semibold mb-3">
-            ESOKO NEXUS · BUILT FOR RWANDA'S MERCHANTS
+            Bwenge NEXUS · BUILT FOR RWANDA'S MERCHANTS
           </p>
           <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
             Mentorship. Commerce. Digital Money. One Platform.
           </h2>
           <p className="max-w-2xl mx-auto mt-4 text-neutral-300 leading-8">
-            From SME failure to telecom monopoly fees — swipe through the real problems we solve and how Esoko Nexus fights back.
+            From SME failure to telecom monopoly fees — swipe through the real problems we solve and how Bwenge Nexus fights back.
           </p>
         </div>
 
@@ -161,7 +161,7 @@ export default function HybridCarousel() {
                   />
                   <div className="space-y-4">
                     <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs uppercase tracking-[0.3em] text-white/90">
-                      <Heart size={16} /> ESOKO NEXUS · SOLUTION
+                      <Heart size={16} /> Bwenge NEXUS · SOLUTION
                     </div>
                     <h3
                       key={index}
@@ -229,7 +229,7 @@ export default function HybridCarousel() {
                       <div className="rounded-3xl bg-white/10 p-5 backdrop-blur-sm">
                         <p className="text-sm uppercase tracking-[0.3em] text-neutral-200">OUR IMPACT</p>
                         <p className="mt-3 text-neutral-100 leading-7">
-                          Merchants save up to RWF 45,000/month by switching from telecom fees to Esoko Nexus CBDC payments.
+                          Merchants save up to RWF 45,000/month by switching from telecom fees to Bwenge Nexus CBDC payments.
                         </p>
                       </div>
                     </div>

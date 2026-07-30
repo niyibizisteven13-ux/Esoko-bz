@@ -58,7 +58,7 @@ class AutoReceiptService {
         date: receiptDate.toLocaleString(),
         customerName: enrichedData.customerName || 'Valued Customer',
         customerEmail: enrichedData.customerEmail,
-        traderName: enrichedData.traderName || 'ESOKO Merchant',
+        traderName: enrichedData.traderName || 'Bwenge Merchant',
         traderEmail: enrichedData.traderEmail,
         items: [
           {
@@ -77,7 +77,7 @@ class AutoReceiptService {
         status: 'completed',
         paymentMethod: 'Mobile Payment',
         senderName: enrichedData.customerName || 'Valued Customer',
-        recipientName: enrichedData.traderName || 'ESOKO Merchant',
+        recipientName: enrichedData.traderName || 'Bwenge Merchant',
         productName: enrichedData.productName,
         quantity: enrichedData.quantity,
         transactionId: purchaseId,
@@ -175,7 +175,7 @@ class AutoReceiptService {
           html: htmlBody,
           attachments: [
             {
-              filename: `ESOKO_Receipt_${receiptData.transactionId}.pdf`,
+              filename: `Bwenge_Receipt_${receiptData.transactionId}.pdf`,
               contentBase64,
               contentType: 'application/pdf',
             },
@@ -193,7 +193,7 @@ class AutoReceiptService {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <div style="background: linear-gradient(135deg, #f97316, #ea580c); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-          <h1 style="margin: 0; font-size: 24px;">ESOKO Receipt</h1>
+          <h1 style="margin: 0; font-size: 24px;">Bwenge Receipt</h1>
           <p style="margin: 10px 0 0 0; opacity: 0.9;">Thank you for your purchase!</p>
         </div>
 

@@ -1,6 +1,6 @@
 {
-  "name": "Esoko Nexus - B2B Commerce & Payments",
-  "description": "The premium unified platform for digital payments, smart inventory, and trader analytics in Rwanda. empower your business with Esoko Nexus's secure QR payments, real-time reporting, and automated incentive programs.",
+  "name": "Bwenge - B2B Commerce & Payments",
+  "description": "Bwenge is a unified platform for digital payments, smart inventory, and business analytics in Rwanda.",
   "requestFramePermissions": [
     "camera",
     "microphone",

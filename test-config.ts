@@ -72,6 +72,24 @@ await test('production config accepts explicit secure settings', () => {
   if (config.port !== 8080) throw new Error('Port was not parsed');
 });
 
+await test('production config rejects insecure public URLs', () => {
+  resetEnv({
+    NODE_ENV: 'production',
+    APP_URL: 'http://api.example.com',
+    FRONTEND_URLS: 'https://app.example.com',
+    JWT_SECRET: 'a'.repeat(48),
+  });
+
+  try {
+    loadAppConfig(isolatedRoot);
+  } catch (error: any) {
+    if (error.message.includes('must use HTTPS')) return;
+    throw error;
+  }
+
+  throw new Error('Production config should reject an insecure APP_URL');
+});
+
 process.env = originalEnv;
 fs.rmSync(isolatedRoot, { recursive: true, force: true });
 console.log(`\n${passed} config tests passed, ${failed} failed`);

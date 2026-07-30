@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { auth } from '../firebase';
 import {
   LayoutDashboard,
@@ -177,7 +177,7 @@ export default function ManagerDashboard() {
             </div>
             {isSidebarOpen && (
               <span className="text-2xl font-black text-neutral-900 dark:text-white tracking-tighter">
-                ESOKO <span className="text-orange-600">MANAGER</span>
+                Bwenge <span className="text-orange-600">MANAGER</span>
               </span>
             )}
           </div>

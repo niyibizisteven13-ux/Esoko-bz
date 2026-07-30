@@ -108,7 +108,7 @@ function normalizeMediaBlocks(product: any): MediaBlock[] {
   if (product.videoUrl) {
     return [{ id: `vid-${product.id}`, type: 'video', url: product.videoUrl }];
   }
-  return [{ id: `fallback-${product.id}`, type: 'text', text: product.name || 'ESOKO' }];
+  return [{ id: `fallback-${product.id}`, type: 'text', text: product.name || 'Bwenge' }];
 }
 
 function normalizeVerificationLevel(value: unknown): string | null {

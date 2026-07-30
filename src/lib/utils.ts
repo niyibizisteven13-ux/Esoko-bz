@@ -36,7 +36,7 @@ export function isAppEnvironment(): boolean {
   const nav = window.navigator as any;
   const userAgent = typeof nav?.userAgent === 'string' ? nav.userAgent : '';
 
-  const isNativeWrapper = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|EsokoNexus|esoko-nexus)/i.test(
+  const isNativeWrapper = /(?:Capacitor|Cordova|ReactNative|Electron|NexusApp|BwengeNexus|esoko-nexus)/i.test(
     userAgent
   );
   const hasNativeWebView = 'ReactNativeWebView' in window;

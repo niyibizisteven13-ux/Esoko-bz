@@ -13,7 +13,7 @@ const AgentPortal = lazy(() => import('./pages/AgentPortal'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const FeedPage = lazy(() => import('./pages/FeedPage'));
 
-const DashboardLoading = () => <div className="flex min-h-screen items-center justify-center bg-[#0B141A] text-sm text-white">Loading Makasi…</div>;
+const DashboardLoading = () => <div className="flex min-h-screen items-center justify-center bg-[#0B141A] text-sm text-white">Loading Bwenge…</div>;
 
 function getStoredRole(): string | null {
   if (typeof window === 'undefined') return null;

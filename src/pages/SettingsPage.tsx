@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
 import {
@@ -528,7 +528,7 @@ export default function SettingsPage() {
               </div>
               <p className="text-[10px] text-neutral-400 dark:text-neutral-500 mt-4 font-medium italic">
                 This is your unique wallet identifier. Share this number to receive money from other
-                ESOKO users.
+                Bwenge users.
               </p>
             </div>
           </div>

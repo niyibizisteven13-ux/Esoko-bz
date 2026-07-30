@@ -136,7 +136,7 @@ export default function VerifiedReports({
     const verificationCode = checksum(seed);
     const reportId = `RPT-${verificationCode}-${Date.now().toString(36).toUpperCase()}`;
     const verificationPayload = JSON.stringify({
-      app: 'ESOKO Nexus',
+      app: 'Bwenge Nexus',
       reportId,
       userId,
       role,
@@ -169,7 +169,7 @@ export default function VerifiedReports({
       generateVerifiedActivityReport({
         reportId: report.reportId,
         title: `${role} Activity Report`,
-        ownerName: userName || 'ESOKO User',
+        ownerName: userName || 'Bwenge User',
         ownerRole: role,
         ownerId: userId,
         periodLabel: range.label,

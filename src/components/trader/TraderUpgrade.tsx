@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Zap,
   ShieldCheck,
@@ -198,7 +198,7 @@ export default function TraderUpgrade({
                       If you have any questions, contact our support team at support@esoko.com or reply to this email.
                     </p>
                   </div>
-                  <p style="text-align: center; color: #ea580c; font-weight: bold;">Welcome to the ESOKO Premium Community! 🚀</p>
+                  <p style="text-align: center; color: #ea580c; font-weight: bold;">Welcome to the Bwenge Premium Community! 🚀</p>
                 </div>
               `,
             },

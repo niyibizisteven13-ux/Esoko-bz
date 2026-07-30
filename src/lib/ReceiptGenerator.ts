@@ -33,7 +33,7 @@ export const generateReceipt = (data: ReceiptData) => {
   // Header
   doc.setFontSize(18);
   doc.setTextColor(234, 88, 12); // Orange-600
-  doc.text('ESOKO WALLET', pageWidth / 2, 15, { align: 'center' });
+  doc.text('Bwenge WALLET', pageWidth / 2, 15, { align: 'center' });
 
   doc.setFontSize(10);
   doc.setTextColor(100);
@@ -120,13 +120,13 @@ export const generateReceipt = (data: ReceiptData) => {
   doc.setFontSize(8);
   doc.setFont('helvetica', 'italic');
   doc.setTextColor(150);
-  doc.text('Thank you for using ESOKO Wallet!', pageWidth / 2, pageWidth * 1.4 - 5, {
+  doc.text('Thank you for using Bwenge Wallet!', pageWidth / 2, pageWidth * 1.4 - 5, {
     align: 'center',
   });
   doc.text('Verified Digital Transaction', pageWidth / 2, pageWidth * 1.4, { align: 'center' });
 
   // Save the PDF
-  doc.save(`ESOKO_Receipt_${data.transactionId}.pdf`);
+  doc.save(`Bwenge_Receipt_${data.transactionId}.pdf`);
 };
 
 // Compatibility wrapper for TraderPurchases.tsx

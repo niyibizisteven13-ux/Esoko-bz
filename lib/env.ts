@@ -65,6 +65,19 @@ export function loadAppConfig(rootDir = process.cwd()): AppConfig {
     parseUrls(appUrl, 'APP_URL');
   }
 
+  if (isProduction) {
+    const insecureUrls = [appUrl, ...frontendUrls].filter(Boolean).filter((url) => {
+      try {
+        return new URL(url as string).protocol !== 'https:';
+      } catch {
+        return true;
+      }
+    });
+    if (insecureUrls.length > 0) {
+      throw new Error('APP_URL and FRONTEND_URLS must use HTTPS in production');
+    }
+  }
+
   const jwtSecret = env.JWT_SECRET?.trim() || undefined;
   const devJwtSecret = env.DEV_JWT_SECRET?.trim() || undefined;
   const missing: string[] = [];

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, Mic, MapPin, Globe, ShieldCheck, ChevronRight } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
@@ -93,7 +93,7 @@ export default function PermissionModal() {
         <div className="px-8 py-4 bg-neutral-50 border-t border-neutral-100 flex items-center gap-2">
           <ShieldCheck size={14} className="text-neutral-400" />
           <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
-            Secure & Private â€¢ ESOKO Trust
+            Secure & Private â€¢ Bwenge Trust
           </span>
         </div>
       </motion.div>

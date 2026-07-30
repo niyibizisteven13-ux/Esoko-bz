@@ -77,7 +77,7 @@ export default function LandingPage() {
             Rwanda's Unified Digital Wallet
           </div>
           <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight text-neutral-900 mb-6">
-            <span className="text-orange-600">Makasi</span>
+            <span className="text-orange-600">Bwenge</span>
           </h1>
           <p className="text-xl text-neutral-600 mb-10 leading-relaxed">
             The all-in-one platform for digital payments, inventory management, and reporting in
@@ -226,9 +226,16 @@ export default function LandingPage() {
             <Link to="/restrictions" className="hover:text-orange-400 transition-colors">
               Acceptable Use
             </Link>
+            <a
+              href="/bwenge-logo.svg"
+              download="bwenge-logo.svg"
+              className="hover:text-orange-400 transition-colors"
+            >
+              Download Logo
+            </a>
           </div>
           <p className="text-neutral-400 text-sm">
-            © 2026 Makasi. Built for Rwanda's Digital Future.
+            © 2026 Bwenge. Built for Rwanda's Digital Future.
           </p>
         </div>
       </footer>

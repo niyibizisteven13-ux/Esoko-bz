@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: esoko
+    name: bwenge
     runtime: docker
     plan: starter
     autoDeploy: true
     healthCheckPath: /api/health
     disk:
-      name: esoko-data
+      name: bwenge-data
       mountPath: /app/data
       sizeGB: 1
     envVars:
@@ -17,9 +17,9 @@ services:
       - key: COOKIE_SAMESITE
         value: strict
       - key: APP_URL
-        value: https://esoko-bz-1.onrender.com
+        value: https://bwenge.space
       - key: FRONTEND_URLS
-        value: https://esoko-bz-1.onrender.com
+        value: https://bwenge.space
       - key: DATA_DIR
         value: /app/data
       - key: UPLOAD_DIR

@@ -53,7 +53,7 @@ export default function OnboardingPage() {
   const dashboardPath = role === 'trader' ? '/trader' : '/customer?tab=marketplace';
 
   const title = useMemo(() => {
-    if (step === 1) return role === 'trader' ? 'What do you sell?' : 'How will you use ESOKO?';
+    if (step === 1) return role === 'trader' ? 'What do you sell?' : 'How will you use Bwenge?';
     if (step === 2) return 'Main device';
     return 'Pick your goals';
   }, [role, step]);

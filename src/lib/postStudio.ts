@@ -1,4 +1,4 @@
-﻿// src/lib/postStudio.ts
+// src/lib/postStudio.ts
 //
 // Shared logic for the marketplace "studio" — the multi-media composer used
 // by both the trader post flow and the customer "share your purchase" flow.
@@ -144,11 +144,11 @@ export function templatesFor(variant: StudioVariant): StudioTemplate[] {
 }
 
 const CATEGORY_HASHTAGS: Record<string, string[]> = {
-  produce: ['#FreshProduce', '#FarmToTable', '#EsokoMarket'],
-  electronics: ['#TechDeals', '#Electronics', '#EsokoMarket'],
-  fashion: ['#Fashion', '#Style', '#EsokoMarket'],
-  home: ['#HomeGoods', '#EsokoMarket'],
-  default: ['#EsokoMarket', '#SupportLocal', '#ShopLocal'],
+  produce: ['#FreshProduce', '#FarmToTable', '#BwengeMarket'],
+  electronics: ['#TechDeals', '#Electronics', '#BwengeMarket'],
+  fashion: ['#Fashion', '#Style', '#BwengeMarket'],
+  home: ['#HomeGoods', '#BwengeMarket'],
+  default: ['#BwengeMarket', '#SupportLocal', '#ShopLocal'],
 };
 
 /** Skip filler words when turning an item's label into hashtag candidates. */

@@ -70,7 +70,7 @@ class EmailService {
             }
           </p>
           <p><a href="${verificationUrl}" style="background:#111827;color:white;padding:12px 18px;border-radius:12px;text-decoration:none;font-weight:700;">${isTrader ? 'Get Trader Verified' : 'Get Verified'}</a></p>
-          <p style="font-size:12px;color:#9a3412;">Document upload is optional for normal account creation. Only upload documents through official ESOKO links after signing in.</p>
+          <p style="font-size:12px;color:#9a3412;">Document upload is optional for normal account creation. Only upload documents through official Bwenge links after signing in.</p>
         </div>
         <p>If you have any questions, our support team is available 24/7 in the app.</p>
         <p>Best regards,<br/>The Nexus Team</p>

@@ -2,7 +2,7 @@ import React from 'react';
 import { cn } from '../lib/utils';
 
 // Use public path for logo to ensure it loads correctly in all environments
-const makasiLogo = '/makasi-logo.svg';
+const bwengeLogo = '/bwenge-logo.svg';
 
 interface LogoProps {
   className?: string;
@@ -15,8 +15,8 @@ export default function Logo({ className, iconOnly, dark }: LogoProps) {
     <div className={cn('flex items-center gap-3', className)}>
       <div className="w-10 h-10 overflow-hidden rounded-xl shadow-lg shadow-orange-200">
         <img 
-          src={makasiLogo} 
-          alt="Makasi logo" 
+          src={bwengeLogo}
+          alt="Bwenge logo"
           className="h-full w-full object-cover"
           loading="lazy"
         />
@@ -28,7 +28,7 @@ export default function Logo({ className, iconOnly, dark }: LogoProps) {
             dark ? 'text-white' : 'text-neutral-900'
           )}
         >
-          MAKASI
+          BWENGE
         </span>
       )}
     </div>

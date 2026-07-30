@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { auth } from '../../firebase';
 import {
@@ -430,7 +430,7 @@ export default function QRScanner({ onClose, onSuccess, tier = 'free' }: QRScann
           return;
         }
       }
-      setError('User not found in ESOKO Nexus.');
+      setError('User not found in Bwenge Nexus.');
       setStatus('error');
     } catch (err) {
       setError('Verification failed.');
@@ -909,7 +909,7 @@ export default function QRScanner({ onClose, onSuccess, tier = 'free' }: QRScann
                                 Merchant
                               </p>
                               <p className="text-xs font-bold text-white">
-                                {trader?.businessName || trader?.name || 'ESOKO Merchant'}
+                                {trader?.businessName || trader?.name || 'Bwenge Merchant'}
                               </p>
                             </div>
                           </div>

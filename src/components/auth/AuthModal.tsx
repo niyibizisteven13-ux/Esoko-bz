@@ -60,7 +60,7 @@ export default function AuthModal({
       <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-[#101010] p-6 text-white shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-orange-400">Makasi account</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-orange-400">Bwenge account</p>
             <h2 className="mt-1 text-2xl font-black">{mode === 'sign-in' ? 'Continue to your account' : 'Create your account'}</h2>
             {initialReason && <p className="mt-2 text-sm text-white/55">{initialReason}</p>}
           </div>
@@ -105,7 +105,7 @@ export default function AuthModal({
           </button>
         </form>
         <button type="button" onClick={() => setMode((current) => current === 'sign-in' ? 'sign-up' : 'sign-in')} className="mt-5 w-full text-center text-xs font-bold text-orange-400 hover:text-orange-300">
-          {mode === 'sign-in' ? 'New to Makasi? Create an account' : 'Already have an account? Sign in'}
+          {mode === 'sign-in' ? 'New to Bwenge? Create an account' : 'Already have an account? Sign in'}
         </button>
       </div>
     </div>
