@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Package,
+  Plus,
   PlusCircle,
   Bell,
   MapPin,
@@ -30,6 +31,7 @@ import {
   ChevronRight,
   FileText,
   Nfc,
+  Flame,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
@@ -63,7 +65,9 @@ import {
   clearChat,
   blockContact,
   deleteConversation,
+  isBwengeConversation,
 } from '../services/chatService';
+import { getAssistantReply } from '../services/aiAssistantService';
 
 // Sub-components
 import PurchaseHistory from '../components/customer/PurchaseHistory';
@@ -79,6 +83,8 @@ const TraderChat = React.lazy(() => import('../components/trader/TraderChat'));
 import Logo from '../components/Logo';
 import ThemeToggle from '../components/ThemeToggle';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import PostStudioModal from '../components/shared/PostStudioModal';
+import FeedWidget from '../components/shared/FeedWidget';
 
 const STAGGER_CHILDREN = {
   animate: {
@@ -98,33 +104,6 @@ const FADE_IN_UP = {
 // shows personal data or moves money, so it prompts sign-in inline instead of gating
 // the whole app behind a login screen.
 const GUEST_ALLOWED_TABS: Tab[] = ['marketplace', 'support'];
-
-function SlitLoader() {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#050505]/95 backdrop-blur-xl"
-    >
-      <div className="relative w-64 h-[2px] bg-white/5 rounded-full overflow-hidden">
-        <motion.div
-          initial={{ x: '-100%' }}
-          animate={{ x: '100%' }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'easeInOut' }}
-          className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-500 to-transparent"
-        />
-      </div>
-      <motion.p
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mt-6 text-[10px] font-black uppercase tracking-[0.4em] text-orange-600 animate-pulse"
-      >
-        Initializing Nexus...
-      </motion.p>
-    </motion.div>
-  );
-}
 
 type Tab =
   | 'overview'
@@ -153,11 +132,10 @@ export default function CustomerDashboard() {
       tab === 'support' ||
       tab === 'reports'
       ? tab
-      : 'marketplace';
+      : 'overview';
   };
 
   const [activeTab, setActiveTab] = useState<Tab>(getInitialTab());
-  const [isChangingTab, setIsChangingTab] = useState(false);
   const [marketplaceConfig, setMarketplaceConfig] = useState<{
     mode: 'products' | 'shops';
     nearby: boolean;
@@ -178,11 +156,22 @@ export default function CustomerDashboard() {
   const [showScanner, setShowScanner] = useState(false);
   const [showPayCode, setShowPayCode] = useState(false);
   const [showNearPay, setShowNearPay] = useState(false);
+  const [showPostStudio, setShowPostStudio] = useState(false);
   const [chatConversations, setChatConversations] = useState<ChatConversationSummary[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessageShape[]>([]);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string>('');
+  // Remembers "conversationId:accountNumber" pairs whose message fetch already
+  // 404'd, so a flapping chatAccountNumber (which can momentarily change while
+  // userData/currentUser are still settling right after sign-in) can't re-run
+  // the effect below and refire the same doomed request over and over.
+  const failedMessageFetchesRef = React.useRef<Set<string>>(new Set());
+  // Tracks which chatAccountNumber we've already attempted to resolve/create a
+  // Bwenge conversation for, so the "open Bwenge on chat tab" effect doesn't
+  // retry createConversation('bwenge', ...) on every re-render or every time
+  // chatAccountNumber flickers — only once per account number per session.
+  const bwengeSetupAttemptedRef = React.useRef<string>('');
 
   // Unified auth modal — the only place identity is ever requested. No dedicated
   // /login route is used for entering the app; this opens inline wherever an action
@@ -191,22 +180,31 @@ export default function CustomerDashboard() {
   const [authModalRole, setAuthModalRole] = useState<AuthRole>('customer');
   const [authModalReason, setAuthModalReason] = useState<string | undefined>(undefined);
 
+  const navigate = useNavigate();
+
   // Open auth modal when landing with explicit auth query (e.g. /login -> ?auth=login)
   useEffect(() => {
     const params = new URLSearchParams(locationSearch);
     const auth = params.get('auth');
-    if (auth === 'login') {
-      setAuthModalRole('customer');
-      setAuthModalReason(undefined);
-      setShowAuthModal(true);
-    } else if (auth === 'register') {
-      setAuthModalRole('customer');
-      setAuthModalReason('register');
-      setShowAuthModal(true);
-    }
-  }, [locationSearch]);
+    if (auth === 'login' || auth === 'register') {
+      if (currentUser) {
+        params.delete('auth');
+        const cleanSearch = params.toString() ? `?${params.toString()}` : '';
+        navigate({ pathname: location.pathname, search: cleanSearch }, { replace: true });
+        return;
+      }
 
-  const navigate = useNavigate();
+      if (!showAuthModal) {
+        setAuthModalRole('customer');
+        setAuthModalReason(auth === 'register' ? 'register' : undefined);
+        setShowAuthModal(true);
+
+        params.delete('auth');
+        const cleanSearch = params.toString() ? `?${params.toString()}` : '';
+        navigate({ pathname: location.pathname, search: cleanSearch }, { replace: true });
+      }
+    }
+  }, [locationSearch, showAuthModal, currentUser, navigate, location.pathname]);
 
   // Trader choice: when a trader signs in, prompt whether to continue to trader dashboard
   const [showTraderChoice, setShowTraderChoice] = useState(false);
@@ -383,21 +381,57 @@ export default function CustomerDashboard() {
     }, 50);
   };
 
+  const ensureLocalBwengeConversation = useCallback(() => {
+    const fallbackConversation: ChatConversationSummary = {
+      id: 'bwenge-local',
+      accountNumber: 'bwenge',
+      name: 'Bwenge',
+      initials: 'BW',
+      avatarColor: '#e8622c',
+      online: false,
+      lastMessagePreview: 'Start a chat',
+      lastMessageTime: '',
+      unreadCount: 0,
+      profilePhoto: '/bwenge-ai.svg',
+      description: 'AI commerce companion for ideas, guidance, and practical next steps. Think and work with Bwenge.',
+      lastSeen: null,
+    };
+
+    setChatConversations((prev) => {
+      const existing = prev.find((conversation) => conversation.accountNumber === 'bwenge' || conversation.id === 'bwenge-local');
+      if (existing) {
+        return prev;
+      }
+      return [fallbackConversation, ...prev];
+    });
+    setSelectedChatConversationId((current) => current || fallbackConversation.id);
+    return fallbackConversation;
+  }, []);
+
   const loadChatConversations = useCallback(async () => {
-    if (!chatAccountNumber) return;
+    if (!chatAccountNumber) {
+      ensureLocalBwengeConversation();
+      setChatMessages([]);
+      setChatLoading(false);
+      return;
+    }
     setChatLoading(true);
     setChatError('');
     try {
       const conversations = await fetchConversations(chatAccountNumber);
       setChatConversations(conversations);
-      setSelectedChatConversationId((current) => current || conversations[0]?.id || '');
+      const preferredConversation = conversations.find((conversation) => {
+        const name = (conversation.name || '').toLowerCase();
+        return name.includes('bwenge') || conversation.accountNumber === 'bwenge';
+      });
+      setSelectedChatConversationId((current) => current || preferredConversation?.id || conversations[0]?.id || '');
     } catch (err: any) {
       console.error('[CustomerDashboard] failed to load chat conversations', err);
       setChatError(err?.message || 'Unable to load chats.');
     } finally {
       setChatLoading(false);
     }
-  }, [chatAccountNumber]);
+  }, [chatAccountNumber, ensureLocalBwengeConversation]);
 
   const handleChatSelectConversation = useCallback((conversationId: string) => {
     setSelectedChatConversationId(conversationId);
@@ -409,7 +443,80 @@ export default function CustomerDashboard() {
   }, [chatAccountNumber, loadChatConversations]);
 
   useEffect(() => {
+    if (activeTab !== 'chat') return;
+    if (!chatAccountNumber) {
+      ensureLocalBwengeConversation();
+      return;
+    }
+    // Only attempt this once per resolved account number. Without this guard,
+    // any flap in chatAccountNumber (e.g. while userData/currentUser are still
+    // settling right after sign-in) re-runs this effect, and — because a
+    // failed/placeholder Bwenge conversation is never actually persisted on
+    // the server — fetchConversations() won't return it on the next attempt,
+    // so every flap triggered a brand new createConversation('bwenge', ...)
+    // call, each one landing on the same dead-end and re-triggering the
+    // message-fetch 404 below. One attempt per account number is enough.
+    if (bwengeSetupAttemptedRef.current === chatAccountNumber) return;
+    bwengeSetupAttemptedRef.current = chatAccountNumber;
+
+    const openBwengeConversation = async () => {
+      try {
+        const conversations = await fetchConversations(chatAccountNumber);
+        const existing = conversations.find((conversation) => {
+          const name = (conversation.name || '').toLowerCase();
+          return name.includes('bwenge') || conversation.accountNumber === 'bwenge';
+        });
+
+        if (existing?.id) {
+          setSelectedChatConversationId(existing.id);
+          return;
+        }
+
+        const created = await createConversation('bwenge', 'Bwenge', chatAccountNumber);
+        if (isBwengeConversation(created) && !created?.id) {
+          // Defensive: no usable id came back — fall back to the local-only
+          // Bwenge conversation instead of selecting something we can't fetch.
+          ensureLocalBwengeConversation();
+          return;
+        }
+        setChatConversations((prev) => [...prev, created]);
+        setSelectedChatConversationId(created.id);
+      } catch (error) {
+        console.error('[CustomerDashboard] failed to open Bwenge conversation', error);
+        // Server-side Bwenge setup didn't work — fall back to the local-only
+        // conversation so the person can still chat with Bwenge without the
+        // UI repeatedly hammering a broken endpoint.
+        ensureLocalBwengeConversation();
+      }
+    };
+
+    void openBwengeConversation();
+  }, [activeTab, chatAccountNumber, ensureLocalBwengeConversation]);
+
+  useEffect(() => {
     if (!selectedChatConversationId || !chatAccountNumber) return;
+
+    // Bwenge conversations are AI-assistant chats that live entirely on the
+    // client (see the isBwengeConversation branch in handleChatSendMessage
+    // below) — there is no server-side thread to fetch, so hitting the
+    // messages endpoint for one always 404s. Skip the network call for those
+    // instead of repeating a request that can never succeed.
+    const selectedConversation = chatConversations.find((c) => c.id === selectedChatConversationId);
+    if (
+      isBwengeConversation(selectedConversation) ||
+      selectedChatConversationId === 'bwenge-local' ||
+      selectedChatConversationId.startsWith('bwenge-')
+    ) {
+      return;
+    }
+
+    const fetchKey = `${selectedChatConversationId}:${chatAccountNumber}`;
+    if (failedMessageFetchesRef.current.has(fetchKey)) {
+      // Already confirmed dead for this exact conversation/account pairing —
+      // skip the network call instead of repeating the same failing request.
+      return;
+    }
+
     let cancelled = false;
 
     const loadMessages = async () => {
@@ -418,6 +525,7 @@ export default function CustomerDashboard() {
         if (!cancelled) setChatMessages(messages);
       } catch (err: any) {
         console.error('[CustomerDashboard] failed to load messages', err);
+        if (!cancelled) failedMessageFetchesRef.current.add(fetchKey);
       }
     };
 
@@ -426,7 +534,7 @@ export default function CustomerDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selectedChatConversationId, chatAccountNumber]);
+  }, [selectedChatConversationId, chatAccountNumber, chatConversations]);
 
   // Join account room and listen for incoming socket messages
   useEffect(() => {
@@ -500,32 +608,36 @@ export default function CustomerDashboard() {
       setChatError('');
 
       try {
-        const existingConversation = chatConversations.find(
-          (conversation) => conversation.accountNumber === String(product.traderId)
-        );
+        const targetIdentifier = String(product.raw?.appNumber || product.traderId || '').trim();
+      if (!targetIdentifier) return;
 
-        let conversation = existingConversation;
-        if (!conversation) {
-          try {
-            const account = await lookupChatAccount(String(product.traderId));
-            conversation = await createConversation(
-              String(product.traderId),
-              account?.name || product.seller || undefined,
-              chatAccountNumber
-            );
-          } catch (innerErr) {
-            console.warn('[CustomerDashboard] createConversation fallback', innerErr);
-            conversation = await createConversation(
-              String(product.traderId),
-              product.seller || undefined,
-              chatAccountNumber
-            );
-          }
+      const resolvedAccount = await lookupChatAccount(targetIdentifier).catch(() => null);
+      const recipientAccountNumber = String(resolvedAccount?.accountNumber || targetIdentifier);
+      const existingConversation = chatConversations.find(
+        (conversation) => conversation.accountNumber === recipientAccountNumber
+      );
 
-          if (conversation) {
-            setChatConversations((prev) => [...prev, conversation] as ChatConversationSummary[]);
-          }
+      let conversation = existingConversation;
+      if (!conversation) {
+        try {
+          conversation = await createConversation(
+            recipientAccountNumber,
+            resolvedAccount?.name || product.seller || undefined,
+            chatAccountNumber
+          );
+        } catch (innerErr) {
+          console.warn('[CustomerDashboard] createConversation fallback', innerErr);
+          conversation = await createConversation(
+            recipientAccountNumber,
+            product.seller || undefined,
+            chatAccountNumber
+          );
         }
+
+        if (conversation) {
+          setChatConversations((prev) => [...prev, conversation] as ChatConversationSummary[]);
+        }
+      }
 
         if (conversation?.id) {
           setSelectedChatConversationId(conversation.id);
@@ -557,8 +669,81 @@ export default function CustomerDashboard() {
 
   const handleChatSendMessage = useCallback(
     async (conversationId: string, text: string, replyToMessageId?: string | null) => {
-      if (!chatAccountNumber) return;
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const bwengeHistory = chatMessages
+        .filter((item) => item.conversationId === conversationId && (item.senderId === 'me' || item.senderId === 'bwenge'))
+        .slice(-8)
+        .map((item) => ({ role: item.senderId === 'me' ? 'user' : 'assistant', content: item.text || '' }))
+        .filter((item) => item.content);
+      if (!chatAccountNumber) {
+        const localMessage: ChatMessageShape = {
+          id: `local-${Date.now()}`,
+          conversationId,
+          senderId: 'me',
+          text,
+          timestamp,
+          status: 'sent',
+        };
+        setChatMessages((prev) => [...prev, localMessage]);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  lastMessagePreview: text,
+                  lastMessageTime: timestamp,
+                }
+              : conversation
+          )
+        );
+        return;
+      }
       try {
+        const conversation = chatConversations.find((item) => item.id === conversationId);
+        if (isBwengeConversation(conversation)) {
+          const userMessage: ChatMessageShape = {
+            id: `local-bwenge-user-${Date.now()}`,
+            conversationId,
+            senderId: 'me',
+            text,
+            timestamp,
+            status: 'sent',
+          };
+          setChatMessages((prev) => [...prev, userMessage]);
+          setChatConversations((prev) => prev.map((item) => item.id === conversationId
+            ? { ...item, lastMessagePreview: text, lastMessageTime: timestamp, lastMessageRead: 'sent' }
+            : item));
+
+          const reply = await getAssistantReply(text, 'customer', {
+            businessName: currentUser?.name || userData?.name,
+            accountName: currentUser?.name || userData?.name,
+            accountEmail: currentUser?.email || userData?.email,
+            accountPhone: currentUser?.phone || userData?.phone,
+            accountLocation: currentUser?.location || userData?.location,
+            accountRole: 'customer',
+            loyaltyPoints: Number(userData?.loyaltyPoints || currentUser?.loyaltyPoints || 0),
+          }, {
+            conversationId,
+            history: bwengeHistory,
+          });
+          if (reply.actionType === 'navigate' && reply.targetTab) {
+            setActiveTab(reply.targetTab as any);
+          }
+
+          const assistantMessage: ChatMessageShape = {
+            id: `local-bwenge-ai-${Date.now()}`,
+            conversationId,
+            senderId: 'bwenge',
+            text: reply.reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            status: 'delivered',
+          };
+          setChatMessages((prev) => [...prev, assistantMessage]);
+          setChatConversations((prev) => prev.map((item) => item.id === conversationId
+            ? { ...item, lastMessagePreview: assistantMessage.text || 'Bwenge replied', lastMessageTime: assistantMessage.timestamp }
+            : item));
+          return;
+        }
         const message = await sendChatMessage(conversationId, text, chatAccountNumber, replyToMessageId);
         setChatMessages((prev) => [...prev, message]);
         setChatConversations((prev) =>
@@ -576,12 +761,39 @@ export default function CustomerDashboard() {
         console.error('[CustomerDashboard] failed to send chat message', err);
       }
     },
-    [chatAccountNumber]
+    [chatAccountNumber, chatConversations, chatMessages, currentUser?.email, currentUser?.location, currentUser?.name, currentUser?.phone, userData?.email, userData?.location, userData?.loyaltyPoints, userData?.name, userData?.phone]
   );
 
   const handleChatSendFile = useCallback(
     async (conversationId: string, file: File, replyToMessageId?: string | null) => {
-      if (!chatAccountNumber) return;
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (!chatAccountNumber) {
+        const localMessage: ChatMessageShape = {
+          id: `local-file-${Date.now()}`,
+          conversationId,
+          senderId: 'me',
+          attachment: {
+            type: file.type.startsWith('image/') ? 'file' : 'file',
+            name: file.name,
+            meta: file.type,
+          },
+          timestamp,
+          status: 'sent',
+        };
+        setChatMessages((prev) => [...prev, localMessage]);
+        setChatConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === conversationId
+              ? {
+                  ...conversation,
+                  lastMessagePreview: file.type.startsWith('image/') ? '📷 Photo' : `📎 ${file.name}`,
+                  lastMessageTime: timestamp,
+                }
+              : conversation
+          )
+        );
+        return;
+      }
       try {
         const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber, replyToMessageId);
         setChatMessages((prev) => [...prev, message]);
@@ -607,8 +819,9 @@ export default function CustomerDashboard() {
     async (accountNumber: string, displayName?: string) => {
       if (!chatAccountNumber) return null;
       try {
-        await lookupChatAccount(accountNumber);
-        const conversation = await createConversation(accountNumber, displayName, chatAccountNumber);
+        const account = await lookupChatAccount(accountNumber);
+        const resolvedAccountNumber = account?.accountNumber || accountNumber;
+        const conversation = await createConversation(resolvedAccountNumber, displayName, chatAccountNumber);
         setChatConversations((prev) => [...prev, conversation]);
         setSelectedChatConversationId(conversation.id);
         return conversation;
@@ -682,6 +895,21 @@ export default function CustomerDashboard() {
     [chatAccountNumber]
   );
 
+  const studioItems = useMemo(
+    () =>
+      currentUser
+        ? [
+            {
+              id: 'customer-general-post',
+              label: 'My latest purchase',
+              traderName: userData?.businessName || userData?.name || 'a local shop',
+              category: userData?.category || 'default',
+            },
+          ]
+        : [],
+    [currentUser, userData?.businessName, userData?.name, userData?.category]
+  );
+
   const preference = userData?.dashboardPreference || 'full';
   if (loading)
     return (
@@ -723,7 +951,7 @@ export default function CustomerDashboard() {
             </div>
 
             <p className="text-neutral-400 dark:text-neutral-500 font-bold text-[10px] uppercase tracking-[0.3em] max-w-[200px]">
-              {t.common.loadingWallet}
+              Syncing your wallet, orders, and messages
             </p>
           </div>
         </div>
@@ -739,8 +967,6 @@ export default function CustomerDashboard() {
         activeTab === 'chat' ? 'h-screen' : 'min-h-screen'
       )}
     >
-      <AnimatePresence>{isChangingTab && <SlitLoader />}</AnimatePresence>
-
       {/* Sidebar - Desktop Only (Fixed) */}
       <aside
         className={cn(
@@ -788,7 +1014,6 @@ export default function CustomerDashboard() {
                           level={getCustomerBadgeLevel(userData?.category)}
                           size="xs"
                           showLabel={false}
-                          animated
                           className="!border-white/10"
                         />
                       )}
@@ -1238,266 +1463,305 @@ export default function CustomerDashboard() {
                 transition={{ duration: 0.2 }}
                 className={cn('flex-1 flex flex-col min-h-0', activeTab === 'chat' && 'h-full')}
               >
+                {activeTab !== 'chat' && (
+                  <div className="flex flex-wrap justify-end gap-2 px-2 md:px-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/feed')}
+                      className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/70 transition hover:bg-white/10"
+                    >
+                      <Flame size={14} className="text-orange-400" /> View feed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (requireAuth('customer', 'Sign in to scan a payment code')) {
+                          setShowScanner(true);
+                        }
+                      }}
+                      className="flex items-center gap-2 rounded-2xl border border-white/10 bg-emerald-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300 transition hover:bg-emerald-500/20"
+                    >
+                      <QrCode size={14} className="text-emerald-300" /> Pay & Scan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (requireAuth('customer', 'Sign in to create a post')) {
+                          setShowPostStudio(true);
+                        }
+                      }}
+                      className="flex items-center gap-2 rounded-2xl border border-orange-500/30 bg-orange-600/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 transition hover:bg-orange-600/20"
+                    >
+                      <Plus size={14} /> Create
+                    </button>
+                  </div>
+                )}
                 {activeTab === 'overview' && (
-                  <div className="space-y-8">
-                    {/* Activity Page Header */}
-                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
-                      <div>
-                        <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
-                          Customer Hub
-                        </h2>
-                        <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
-                          Real-time intelligence on your transactions, social growth, and financial
-                          velocity.
-                        </p>
+                  <>
+                    <div className="space-y-8">
+                      {/* Activity Page Header */}
+                      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 px-2">
+                        <div>
+                          <h2 className="text-3xl font-black text-white tracking-tight leading-none mb-2">
+                            Customer Hub
+                          </h2>
+                          <p className="text-neutral-500 font-medium text-sm tracking-tight text-balance">
+                            Real-time intelligence on your transactions, social growth, and financial
+                            velocity.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 px-4 py-2 bg-[#0a0a0a] rounded-2xl border border-white/5 shadow-sm shrink-0">
+                          <TrendingUp size={16} className="text-emerald-500" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
+                            Velocity: +12.4%
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 px-4 py-2 bg-[#0a0a0a] rounded-2xl border border-white/5 shadow-sm shrink-0">
-                        <TrendingUp size={16} className="text-emerald-500" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-neutral-400">
-                          Velocity: +12.4%
-                        </span>
-                      </div>
-                    </div>
 
-                    {/* Wallet & Quick Actions in Overview */}
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                      <div className="lg:col-span-4 space-y-6">
-                        <motion.div
-                          variants={FADE_IN_UP}
-                          initial="initial"
-                          animate="animate"
-                          className="group relative w-full p-8 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
-                        >
-                          <div className="relative z-10">
-                            <div className="flex justify-between items-start mb-12">
-                              <div>
-                                <h2 className="text-4xl font-black tracking-tighter sm:text-5xl">
-                                  {showBalance
-                                    ? `${(userData?.walletBalance || 0).toLocaleString()}`
-                                    : 'â€¢â€¢â€¢â€¢â€¢'}
-                                  <span className="text-sm font-bold ml-1 opacity-40">RWF</span>
-                                </h2>
-                                <div className="flex items-center gap-2 mt-2">
-                                  <p className="text-orange-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                                    {t.common.totalBalance}
+                      {/* Wallet & Quick Actions in Overview */}
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        <div className="lg:col-span-4 space-y-6">
+                          <motion.div
+                            variants={FADE_IN_UP}
+                            initial="initial"
+                            animate="animate"
+                            className="group relative w-full p-8 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
+                          >
+                            <div className="relative z-10">
+                              <div className="flex justify-between items-start mb-12">
+                                <div>
+                                  <h2 className="text-4xl font-black tracking-tighter sm:text-5xl">
+                                    {showBalance
+                                      ? `${(userData?.walletBalance || 0).toLocaleString()}`
+                                      : '•••••'}
+                                    <span className="text-sm font-bold ml-1 opacity-40">RWF</span>
+                                  </h2>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <p className="text-orange-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                                      {t.common.totalBalance}
+                                    </p>
+                                    <button
+                                      onClick={() => setShowBalance(!showBalance)}
+                                      className="p-1 hover:bg-white/10 rounded-full"
+                                    >
+                                      {showBalance ? <EyeOff size={14} /> : <Eye size={14} />}
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="bg-white/10 p-4 rounded-3xl border border-white/10 transition-all">
+                                  <CreditCard size={28} />
+                                </div>
+                              </div>
+                              <div className="flex justify-between items-end">
+                                <div>
+                                  <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                                    Nexus ID
                                   </p>
+                                  <p className="font-mono font-bold tracking-[0.2em] text-sm bg-white/5 p-2 rounded-xl border border-white/5">
+                                    {userData?.appNumber || '--- ---'}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
+                                    Loyalty
+                                  </p>
+                                  <p className="font-black text-2xl">{userData?.loyaltyPoints || 0}</p>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          <motion.div
+                            variants={FADE_IN_UP}
+                            initial="initial"
+                            animate="animate"
+                            className="group relative w-full p-6 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
+                          >
+                            <div className="relative z-10">
+                              <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                                <div>
+                                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500">
+                                    Profile Summary
+                                  </p>
+                                  <h3 className="text-2xl font-black tracking-tight">
+                                    {userData?.name || 'My Profile'}
+                                  </h3>
+                                </div>
+                                {accountVerified ? (
+                                  <VerifiedBadge
+                                    level={getCustomerBadgeLevel(userData?.category)}
+                                    size="sm"
+                                    showLabel={false}
+                                    animated
+                                    className="!border-white/10"
+                                  />
+                                ) : (
+                                  <span className="text-[10px] uppercase tracking-[0.2em] text-yellow-400 font-black">
+                                    Pending
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                    Email
+                                  </p>
+                                  <p className="text-sm font-bold text-white truncate">
+                                    {currentUser?.email || 'Not set'}
+                                  </p>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                    Phone
+                                  </p>
+                                  <p className="text-sm font-bold text-white truncate">
+                                    {userData?.phone || 'Not set'}
+                                  </p>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                    Account Type
+                                  </p>
+                                  <p className="text-sm font-bold text-white truncate">
+                                    {userData?.category
+                                      ? `${userData.category.charAt(0).toUpperCase()}${userData.category.slice(1)}`
+                                      : 'Individual'}
+                                  </p>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
+                                    Tier
+                                  </p>
+                                  <p className="text-sm font-bold text-white truncate">
+                                    {userData?.tier || 'Standard'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-6">
+                                <button
+                                  onClick={() => handleTabChange('profile')}
+                                  className="w-full px-4 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all"
+                                >
+                                  Edit Profile
+                                </button>
+                                <button
+                                  onClick={() => handleTabChange('profile')}
+                                  className="w-full px-4 py-3 bg-white/10 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/20 transition-all"
+                                >
+                                  Manage Details
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <QuickAction
+                              icon={<QrCode size={24} />}
+                              label="Nexus Pay"
+                              onClick={() => setShowScanner(true)}
+                              color="text-orange-500 font-black"
+                            />
+                            <QuickAction
+                              icon={<Nfc size={24} />}
+                              label="Near Pay"
+                              onClick={() => setShowNearPay(true)}
+                              color="text-emerald-400"
+                            />
+                            <QuickAction
+                              icon={<Send size={24} />}
+                              label="Send Cash"
+                              onClick={() => handleTabChange('wallet')}
+                              color="text-blue-400"
+                            />
+                          </div>
+
+                          {/* Motivation: Rewards Card */}
+                          <div className="bg-gradient-to-br from-orange-600 to-orange-800 p-6 rounded-[2.5rem] text-white shadow-xl shadow-orange-900/20 relative overflow-hidden group">
+                            <div className="relative z-10">
+                              <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                                  <Sparkles size={20} />
+                                </div>
+                                <h4 className="text-sm font-black uppercase tracking-widest">
+                                  Rewards
+                                </h4>
+                              </div>
+                              <p className="text-xl font-bold mb-4 leading-tight">
+                                Refer a friend & get{' '}
+                                <span className="text-white underline">500 Points</span>
+                              </p>
+                              <button
+                                onClick={() => {
+                                  const referralLink = `${window.location.origin}/register?ref=${userData?.appNumber}`;
+                                  navigator.clipboard.writeText(referralLink);
+                                  showToast('Referral link copied to clipboard', 'success');
+                                }}
+                                className="w-full py-3 bg-white text-orange-600 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-orange-50 transition-all active:scale-95"
+                              >
+                                Copy Link <Download size={14} className="rotate-270" />
+                              </button>
+                            </div>
+                            <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-110 transition-transform" />
+                          </div>
+                        </div>
+
+                        <div className="lg:col-span-8 space-y-6">
+                          <div className="flex justify-between items-center px-1">
+                            <h3 className="micro-label font-black text-neutral-400 uppercase tracking-[0.2em]">
+                              {t.common.recentTransactions}
+                            </h3>
+                            <button
+                              onClick={() => handleTabChange('purchases')}
+                              className="text-orange-600 text-[10px] font-black uppercase tracking-widest hover:underline"
+                            >
+                              Explore Log
+                            </button>
+                          </div>
+                          <div className="space-y-3">
+                            {transactions.length > 0 ? (
+                              transactions
+                                .slice(0, 5)
+                                .map((tx) => <TransactionItem key={tx.id} tx={tx} />)
+                            ) : (
+                              // Phase 3: Better empty state
+                              <div className="p-8 border-2 border-dashed border-white/10 rounded-[2rem] text-center bg-white/2.5">
+                                <div className="w-12 h-12 mx-auto mb-4 bg-white/5 rounded-2xl flex items-center justify-center">
+                                  <History className="text-neutral-400" size={24} />
+                                </div>
+                                <h3 className="font-black text-sm text-white mb-2">
+                                  No transactions yet
+                                </h3>
+                                <p className="text-[12px] text-neutral-400 mb-4 max-w-sm mx-auto leading-relaxed">
+                                  Start by adding funds to your wallet and making your first payment.
+                                  Your transaction history will appear here.
+                                </p>
+                                <div className="flex items-center justify-center gap-2">
                                   <button
-                                    onClick={() => setShowBalance(!showBalance)}
-                                    className="p-1 hover:bg-white/10 rounded-full"
+                                    onClick={() => handleTabChange('wallet')}
+                                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black rounded-lg transition-all active:scale-95"
                                   >
-                                    {showBalance ? <EyeOff size={14} /> : <Eye size={14} />}
+                                    Add Funds
+                                  </button>
+                                  <button
+                                    onClick={() => handleTabChange('marketplace')}
+                                    className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-black rounded-lg transition-all"
+                                  >
+                                    Browse Shops
                                   </button>
                                 </div>
                               </div>
-                              <div className="bg-white/10 p-4 rounded-3xl border border-white/10 transition-all">
-                                <CreditCard size={28} />
-                              </div>
-                            </div>
-                            <div className="flex justify-between items-end">
-                              <div>
-                                <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-                                  Nexus ID
-                                </p>
-                                <p className="font-mono font-bold tracking-[0.2em] text-sm bg-white/5 p-2 rounded-xl border border-white/5">
-                                  {userData?.appNumber || '--- ---'}
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.2em] mb-1">
-                                  Loyalty
-                                </p>
-                                <p className="font-black text-2xl">{userData?.loyaltyPoints || 0}</p>
-                              </div>
-                            </div>
+                            )}
                           </div>
-                        </motion.div>
-
-                        <motion.div
-                          variants={FADE_IN_UP}
-                          initial="initial"
-                          animate="animate"
-                          className="group relative w-full p-6 rounded-[2.5rem] overflow-hidden transition-all duration-500 bg-[#0a0a0a] text-white shadow-2xl border border-white/5"
-                        >
-                          <div className="relative z-10">
-                            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                              <div>
-                                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral-500">
-                                  Profile Summary
-                                </p>
-                                <h3 className="text-2xl font-black tracking-tight">
-                                  {userData?.name || 'My Profile'}
-                                </h3>
-                              </div>
-                              {accountVerified ? (
-                                <VerifiedBadge
-                                  level={getCustomerBadgeLevel(userData?.category)}
-                                  size="sm"
-                                  showLabel={false}
-                                  animated
-                                  className="!border-white/10"
-                                />
-                              ) : (
-                                <span className="text-[10px] uppercase tracking-[0.2em] text-yellow-400 font-black">
-                                  Pending
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                  Email
-                                </p>
-                                <p className="text-sm font-bold text-white truncate">
-                                  {currentUser?.email || 'Not set'}
-                                </p>
-                              </div>
-                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                  Phone
-                                </p>
-                                <p className="text-sm font-bold text-white truncate">
-                                  {userData?.phone || 'Not set'}
-                                </p>
-                              </div>
-                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                  Account Type
-                                </p>
-                                <p className="text-sm font-bold text-white truncate">
-                                  {userData?.category
-                                    ? `${userData.category.charAt(0).toUpperCase()}${userData.category.slice(1)}`
-                                    : 'Individual'}
-                                </p>
-                              </div>
-                              <div className="space-y-1">
-                                <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-black">
-                                  Tier
-                                </p>
-                                <p className="text-sm font-bold text-white truncate">
-                                  {userData?.tier || 'Standard'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-6">
-                              <button
-                                onClick={() => handleTabChange('profile')}
-                                className="w-full px-4 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-orange-700 transition-all"
-                              >
-                                Edit Profile
-                              </button>
-                              <button
-                                onClick={() => handleTabChange('profile')}
-                                className="w-full px-4 py-3 bg-white/10 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-white/20 transition-all"
-                              >
-                                Manage Details
-                              </button>
-                            </div>
-                          </div>
-                        </motion.div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                          <QuickAction
-                            icon={<QrCode size={24} />}
-                            label="Nexus Pay"
-                            onClick={() => setShowScanner(true)}
-                            color="text-orange-500 font-black"
-                          />
-                          <QuickAction
-                            icon={<Nfc size={24} />}
-                            label="Near Pay"
-                            onClick={() => setShowNearPay(true)}
-                            color="text-emerald-400"
-                          />
-                          <QuickAction
-                            icon={<Send size={24} />}
-                            label="Send Cash"
-                            onClick={() => handleTabChange('wallet')}
-                            color="text-blue-400"
-                          />
-                        </div>
-
-                        {/* Motivation: Rewards Card */}
-                        <div className="bg-gradient-to-br from-orange-600 to-orange-800 p-6 rounded-[2.5rem] text-white shadow-xl shadow-orange-900/20 relative overflow-hidden group">
-                          <div className="relative z-10">
-                            <div className="flex items-center gap-3 mb-4">
-                              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
-                                <Sparkles size={20} />
-                              </div>
-                              <h4 className="text-sm font-black uppercase tracking-widest">
-                                Rewards
-                              </h4>
-                            </div>
-                            <p className="text-xl font-bold mb-4 leading-tight">
-                              Refer a friend & get{' '}
-                              <span className="text-white underline">500 Points</span>
-                            </p>
-                            <button
-                              onClick={() => {
-                                const referralLink = `${window.location.origin}/register?ref=${userData?.appNumber}`;
-                                navigator.clipboard.writeText(referralLink);
-                                showToast('Referral link copied to clipboard', 'success');
-                              }}
-                              className="w-full py-3 bg-white text-orange-600 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-orange-50 transition-all active:scale-95"
-                            >
-                              Copy Link <Download size={14} className="rotate-270" />
-                            </button>
-                          </div>
-                          <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl group-hover:scale-110 transition-transform" />
-                        </div>
-                      </div>
-
-                      <div className="lg:col-span-8 space-y-6">
-                        <div className="flex justify-between items-center px-1">
-                          <h3 className="micro-label font-black text-neutral-400 uppercase tracking-[0.2em]">
-                            {t.common.recentTransactions}
-                          </h3>
-                          <button
-                            onClick={() => handleTabChange('purchases')}
-                            className="text-orange-600 text-[10px] font-black uppercase tracking-widest hover:underline"
-                          >
-                            Explore Log
-                          </button>
-                        </div>
-                        <div className="space-y-3">
-                          {transactions.length > 0 ? (
-                            transactions
-                              .slice(0, 5)
-                              .map((tx) => <TransactionItem key={tx.id} tx={tx} />)
-                          ) : (
-                            // Phase 3: Better empty state
-                            <div className="p-8 border-2 border-dashed border-white/10 rounded-[2rem] text-center bg-white/2.5">
-                              <div className="w-12 h-12 mx-auto mb-4 bg-white/5 rounded-2xl flex items-center justify-center">
-                                <History className="text-neutral-400" size={24} />
-                              </div>
-                              <h3 className="font-black text-sm text-white mb-2">
-                                No transactions yet
-                              </h3>
-                              <p className="text-[12px] text-neutral-400 mb-4 max-w-sm mx-auto leading-relaxed">
-                                Start by adding funds to your wallet and making your first payment.
-                                Your transaction history will appear here.
-                              </p>
-                              <div className="flex items-center justify-center gap-2">
-                                <button
-                                  onClick={() => handleTabChange('wallet')}
-                                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black rounded-lg transition-all active:scale-95"
-                                >
-                                  Add Funds
-                                </button>
-                                <button
-                                  onClick={() => handleTabChange('marketplace')}
-                                  className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-black rounded-lg transition-all"
-                                >
-                                  Browse Shops
-                                </button>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
+
+                    <div className="rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-4 md:p-5">
+                      <FeedWidget maxPosts={3} />
+                    </div>
+                  </>
                 )}
 
                 {activeTab === 'chat' && (
@@ -1677,6 +1941,16 @@ export default function CustomerDashboard() {
       </main>
 
       <AnimatePresence>
+        {showPostStudio && (
+          <PostStudioModal
+            variant="customer"
+            authorId={currentUser?.uid || currentUser?.id || userData?.uid || userData?.id || 'guest'}
+            items={studioItems}
+            defaultTraderId={userData?.uid || currentUser?.uid || currentUser?.id || userData?.id}
+            onClose={() => setShowPostStudio(false)}
+            onCreated={() => setShowPostStudio(false)}
+          />
+        )}
         {showScanner && (
           <QRScanner
             onClose={() => setShowScanner(false)}
@@ -1950,7 +2224,7 @@ function TransactionItem({ tx }: { tx: any }) {
             {tx.productName || tx.traderName || tx.customerName || tx.method || tx.type}
           </p>
           <p className="text-[9px] font-black text-neutral-500 uppercase tracking-widest mt-0.5">
-            {tx.timestamp?.toDate ? format(tx.timestamp.toDate(), 'HH:mm') : 'Just now'} â€¢{' '}
+            {tx.timestamp?.toDate ? format(tx.timestamp.toDate(), 'HH:mm') : 'Just now'} •{' '}
             {tx.method || 'Internal'}
           </p>
         </div>

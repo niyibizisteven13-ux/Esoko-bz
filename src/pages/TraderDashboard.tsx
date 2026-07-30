@@ -21,6 +21,7 @@ import {
   LogOut,
   User,
   Plus,
+  Sparkles,
   Menu,
   X,
   Book,
@@ -34,6 +35,7 @@ import {
   Store,
   ChevronDown,
   Crown,
+  Flame,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '../context/LanguageContext';
@@ -46,6 +48,8 @@ import { isToday } from 'date-fns';
 import ThemeToggle from '../components/ThemeToggle';
 import Logo from '../components/Logo';
 import { ProfileImage, VerifiedBadge } from '../components/VerifiedBadge';
+import PostStudioModal from '../components/shared/PostStudioModal';
+import FeedWidget from '../components/shared/FeedWidget';
 import ProfileEditModal from '../components/profile/ProfileEditModal';
 import { autoReceiptService } from '../services/autoReceiptService';
 import { auth } from '../firebase';
@@ -72,7 +76,9 @@ import {
   clearChat,
   blockContact,
   deleteConversation,
+  isBwengeConversation,
 } from '../services/chatService';
+import { getAssistantReply, fetchAssistantSummary, listAssistantConversations, getAssistantConversation, deleteAssistantConversation } from '../services/aiAssistantService';
 import { useWebRTCCall } from '../hooks/useWebRTCCall';
 
 function colorForAccount(accountNumber: string): string {
@@ -246,12 +252,17 @@ export default function TraderDashboard() {
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showMoreHeader, setShowMoreHeader] = useState(false);
   const [showPostUpload, setShowPostUpload] = useState(false);
+  const [showPostStudio, setShowPostStudio] = useState(false);
   const [chatConversations, setChatConversations] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [selectedChatConversationId, setSelectedChatConversationId] = useState<string>('');
   const selectedChatConversationIdRef = useRef<string>('');
   const wsRef = useRef<WebSocket | null>(null);
   const webrtcRef = useRef<any>(null);
+  const [assistantSummary, setAssistantSummary] = useState<any>(null);
+  const [assistantConversationsList, setAssistantConversationsList] = useState<any[]>([]);
+  const [showAssistantDebug, setShowAssistantDebug] = useState(false);
+  const [selectedAssistantConversationPayload, setSelectedAssistantConversationPayload] = useState<any[] | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -294,6 +305,24 @@ export default function TraderDashboard() {
   const chatAccountNumber = useMemo(() => userData?.appNumber || dashboardTraderId || '', [userData?.appNumber, dashboardTraderId]);
   const socket = useSocket();
 
+  // Derived list for the PostStudio media picker. Place this hook here so
+  // it's executed on every render (before any early returns) and preserves
+  // the hooks call order across renders.
+  const studioItems = useMemo(
+    () =>
+      products.map((product: any) => ({
+        id: String(product.id || product.productId || product.uid || `product-${Math.random()}`),
+        label: product.name || product.title || 'Product',
+        traderId: dashboardTraderId,
+        traderName: userData?.businessName || userData?.name || t.common.trader,
+        price: product.price,
+        stock: product.stock,
+        category: product.category,
+        description: product.description,
+      })),
+    [products, dashboardTraderId, userData?.businessName, userData?.name, t.common.trader]
+  );
+
   // WebRTC call hook
   const webrtc = useWebRTCCall({ socket: wsRef.current, accountNumber: chatAccountNumber });
   
@@ -315,9 +344,104 @@ export default function TraderDashboard() {
   });
 
   const handleChatSendMessage = useCallback(async (conversationId: string, text: string, replyToMessageId?: string | null) => {
-    if (!chatAccountNumber) return;
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const bwengeHistory = chatMessages
+      .filter((item) => item.conversationId === conversationId && (item.senderId === 'me' || item.senderId === 'bwenge'))
+      .slice(-8)
+      .map((item) => ({ role: item.senderId === 'me' ? 'user' : 'assistant', content: item.text || '' }))
+      .filter((item) => item.content);
+    if (!chatAccountNumber) {
+      const localMessage = {
+        id: `local-${Date.now()}`,
+        conversationId,
+        senderId: 'me',
+        text,
+        timestamp,
+        status: 'sent' as const,
+      };
+      setChatMessages((prev) => [...prev, localMessage]);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                lastMessagePreview: text,
+                lastMessageTime: timestamp,
+                lastMessageRead: 'sent',
+              }
+            : conversation
+        )
+      );
+      return;
+    }
     try {
+      const conversation = chatConversations.find((item) => item.id === conversationId);
+      if (isBwengeConversation(conversation)) {
+        const userMessage = {
+          id: `local-bwenge-user-${Date.now()}`,
+          conversationId,
+          senderId: 'me',
+          text,
+          timestamp,
+          status: 'sent' as const,
+        };
+        setChatMessages((prev) => [...prev, userMessage]);
+        setChatConversations((prev) => prev.map((item) => item.id === conversationId
+          ? { ...item, lastMessagePreview: text, lastMessageTime: timestamp, lastMessageRead: 'sent' }
+          : item));
+
+        const lowStockProducts = products.filter((product) => Number(product.stock || 0) <= 5);
+        const totalInventoryValue = products.reduce((sum, product) => sum + Number(product.price || 0) * Number(product.stock || 0), 0);
+        const todaySalesValue = purchases
+          .filter((purchase) => purchase.status === 'approved' && purchase.timestamp && new Date(purchase.timestamp).toDateString() === new Date().toDateString())
+          .reduce((sum, purchase) => sum + Number(purchase.amount || 0), 0);
+        const marketplaceCount = products.filter((product) => Boolean(product.image || product.images || product.description)).length;
+        const analyticsSummary = {
+          salesToday: todaySalesValue,
+          productCount: products.length,
+          lowStockProducts: lowStockProducts.length,
+          inventoryValue: totalInventoryValue,
+          marketplaceReadyProducts: marketplaceCount,
+          businessSummary: businessSummary || null,
+          alerts: businessAlerts.slice(0, 5),
+        };
+
+        const reply = await getAssistantReply(text, 'trader', {
+          businessName: userData?.businessName || userData?.name,
+          accountName: userData?.businessName || userData?.name,
+          accountEmail: userData?.email,
+          accountPhone: userData?.phone,
+          accountLocation: userData?.location,
+          accountRole: 'trader',
+          productCount: products.length,
+          lowStockProductsCount: lowStockProducts.length,
+          recentTransactionCount: transactions.length,
+          analytics: JSON.stringify(analyticsSummary),
+          marketplaceSummary: `readyProducts=${marketplaceCount}`,
+        }, {
+          conversationId,
+          history: bwengeHistory,
+        });
+        if (reply.actionType === 'navigate' && reply.targetTab) {
+          setActiveTab(reply.targetTab as any);
+        }
+
+        const assistantMessage = {
+          id: `local-bwenge-ai-${Date.now()}`,
+          conversationId,
+          senderId: 'bwenge',
+          text: reply.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'delivered' as const,
+        };
+        setChatMessages((prev) => [...prev, assistantMessage]);
+        setChatConversations((prev) => prev.map((item) => item.id === conversationId
+          ? { ...item, lastMessagePreview: assistantMessage.text, lastMessageTime: assistantMessage.timestamp }
+          : item));
+        return;
+      }
       const message = await sendChatMessage(conversationId, text, chatAccountNumber, replyToMessageId);
+      setChatMessages((prev) => [...prev, message]);
       setChatConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === conversationId
@@ -333,7 +457,7 @@ export default function TraderDashboard() {
     } catch (error) {
       console.error('[TraderDashboard] failed to send chat message', error);
     }
-  }, [chatAccountNumber]);
+  }, [businessAlerts, businessSummary, chatAccountNumber, chatConversations, chatMessages, products, transactions.length, userData?.businessName, userData?.email, userData?.location, userData?.name, userData?.phone]);
 
   // Socket.IO: join trader room and listen for incoming messages and product/transaction events
   useEffect(() => {
@@ -395,20 +519,63 @@ export default function TraderDashboard() {
     socket.on('product_created', handleProductUpdated);
 
     return () => {
-      try {
-        socket.off('new_message', handleNewMessage);
-        socket.off('new_message_global', handleNewMessage);
-        socket.off('product_updated', handleProductUpdated);
-        socket.off('product_created', handleProductUpdated);
-        socket.emit('leave', dashboardTraderId);
-      } catch (e) {}
+      socket.off('new_message', handleNewMessage);
+      socket.off('new_message_global', handleNewMessage);
+      socket.off('product_updated', handleProductUpdated);
+      socket.off('product_created', handleProductUpdated);
     };
-  }, [socket, dashboardTraderId]);
+  }, [socket, subscribeToPurchases, subscribeToTransactions, subscribeToProducts, subscribeToUserData, dashboardTraderId, chatAccountNumber, selectedChatConversationIdRef]);
+
+  const openAssistantConversation = async (key: string) => {
+    try {
+      const payload = await getAssistantConversation(key);
+      if (payload?.conversation) {
+        setSelectedAssistantConversationPayload(payload.conversation.payload || []);
+      }
+    } catch (e) {
+      console.error('Failed to open assistant conversation', e);
+    }
+  };
+
+  const handleDeleteAssistantConversation = async (key: string) => {
+    try {
+      await deleteAssistantConversation(key);
+      setAssistantConversationsList((prev) => prev.filter((c) => c.conversationKey !== key));
+      setSelectedAssistantConversationPayload(null);
+    } catch (e) {
+      console.error('Failed to delete assistant conversation', e);
+    }
+  };
 
   const handleChatSendFile = useCallback(async (conversationId: string, file: File, replyToMessageId?: string | null) => {
-    if (!chatAccountNumber) return;
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (!chatAccountNumber) {
+      const localMessage = {
+        id: `local-file-${Date.now()}`,
+        conversationId,
+        senderId: 'me',
+        attachment: { type: 'file' as const, name: file.name, meta: file.type },
+        timestamp,
+        status: 'sent' as const,
+      };
+      setChatMessages((prev) => [...prev, localMessage]);
+      setChatConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                lastMessagePreview: `📎 ${file.name}`,
+                lastMessageTime: timestamp,
+                lastMessageRead: 'sent',
+              }
+            : conversation
+        )
+      );
+      return;
+    }
     try {
       const { message } = await sendChatAttachment(conversationId, file, chatAccountNumber, replyToMessageId);
+      setChatMessages((prev) => [...prev, message]);
       setChatConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === conversationId
@@ -439,10 +606,10 @@ export default function TraderDashboard() {
   const handleChatAddContact = useCallback(async (accountNumber: string, displayName?: string) => {
     if (!chatAccountNumber) return null;
     const trimmedAccount = accountNumber.trim();
-    if (!/^[0-9]{8}$/.test(trimmedAccount)) return null;
+    if (!trimmedAccount) return null;
     const account = await lookupChatAccount(trimmedAccount);
     if (!account?.accountNumber) return null;
-    const conversation = await createConversation(trimmedAccount, displayName, chatAccountNumber);
+    const conversation = await createConversation(account.accountNumber, displayName, chatAccountNumber);
     setChatConversations((prev) => (prev.some((item) => item.id === conversation.id) ? prev : [conversation, ...prev]));
     setSelectedChatConversationId(conversation.id);
     setChatMessages([]);
@@ -544,6 +711,48 @@ export default function TraderDashboard() {
   // (webrtc declared earlier)
 
   useEffect(() => {
+    if (!chatAccountNumber || activeTab !== 'chat') return;
+
+    let isCancelled = false;
+    const openBwengeConversation = async () => {
+      try {
+        const conversations = await fetchConversations(chatAccountNumber);
+        if (isCancelled) return;
+        const existing = conversations.find((conversation) => {
+          const name = (conversation.name || '').toLowerCase();
+          return name.includes('bwenge') || conversation.accountNumber === 'bwenge';
+        });
+
+        if (existing?.id) {
+          selectedChatConversationIdRef.current = existing.id;
+          setSelectedChatConversationId(existing.id);
+          setChatConversations(conversations);
+          const messages = await fetchConversationMessages(existing.id, chatAccountNumber);
+          if (!isCancelled) {
+            setChatMessages(messages);
+          }
+          return;
+        }
+
+        const created = await createConversation('bwenge', 'Bwenge', chatAccountNumber);
+        if (isCancelled) return;
+        setChatConversations((prev) => [created, ...prev]);
+        selectedChatConversationIdRef.current = created.id;
+        setSelectedChatConversationId(created.id);
+        setChatMessages([]);
+      } catch (error) {
+        console.error('[TraderDashboard] failed to open Bwenge conversation', error);
+      }
+    };
+
+    void openBwengeConversation();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeTab, chatAccountNumber]);
+
+  useEffect(() => {
     if (!chatAccountNumber) return;
 
     let isCancelled = false;
@@ -551,13 +760,17 @@ export default function TraderDashboard() {
       const conversations = await fetchConversations(chatAccountNumber);
       if (isCancelled) return;
       setChatConversations(conversations);
-      if (conversations[0]) {
-        const firstId = conversations[0].id;
-        if (selectedChatConversationIdRef.current !== firstId) {
-          selectedChatConversationIdRef.current = firstId;
-          setSelectedChatConversationId(firstId);
+      const preferredConversation = conversations.find((conversation) => {
+        const name = (conversation.name || '').toLowerCase();
+        return name.includes('bwenge') || conversation.accountNumber === 'bwenge';
+      });
+      const preferredId = preferredConversation?.id || conversations[0]?.id || '';
+      if (preferredId) {
+        if (!selectedChatConversationIdRef.current) {
+          selectedChatConversationIdRef.current = preferredId;
+          setSelectedChatConversationId(preferredId);
         }
-        const messages = await fetchConversationMessages(firstId, chatAccountNumber);
+        const messages = await fetchConversationMessages(preferredId, chatAccountNumber);
         if (!isCancelled) {
           setChatMessages(messages);
         }
@@ -798,6 +1011,34 @@ export default function TraderDashboard() {
     if (userData) loadBranches().catch((e) => console.error('loadBranches failed', e));
   }, [userData]);
 
+  // Fetch assistant debug data (summary + conversation list) and refresh periodically
+  useEffect(() => {
+    if (!userData) return;
+    let mounted = true;
+
+    const loadAssistantDebug = async () => {
+      try {
+        const s = await fetchAssistantSummary();
+        if (mounted && s?.summary) setAssistantSummary(s.summary);
+      } catch (e) {
+        console.warn('Failed to fetch assistant summary', e);
+      }
+      try {
+        const list = await listAssistantConversations({ limit: 20 });
+        if (mounted && list?.conversations) setAssistantConversationsList(list.conversations || []);
+      } catch (e) {
+        console.warn('Failed to fetch assistant conversations', e);
+      }
+    };
+
+    loadAssistantDebug();
+    const id = setInterval(loadAssistantDebug, 60000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, [userData]);
+
   const switchBranch = async (branchId: string) => {
     try {
       const payload = await apiPost<{ success: boolean; error?: string }>(`/api/branches/${branchId}/switch`);
@@ -932,6 +1173,20 @@ export default function TraderDashboard() {
           console.error('Failed to load business insights on startup', error);
         }
 
+        // Fetch assistant debug summary and conversations
+        try {
+          const s = await fetchAssistantSummary();
+          if (s?.summary) setAssistantSummary(s.summary);
+        } catch (e) {
+          console.warn('Failed to fetch assistant summary', e);
+        }
+        try {
+          const list = await listAssistantConversations({ limit: 20 });
+          if (list?.conversations) setAssistantConversationsList(list.conversations || []);
+        } catch (e) {
+          console.warn('Failed to fetch assistant conversations', e);
+        }
+
         // Set up real-time listeners
         unsubscribePurchases = subscribeToPurchases(uid, (newPurchases) => {
           setPurchases(newPurchases);
@@ -1047,6 +1302,8 @@ export default function TraderDashboard() {
     .reduce((acc, p) => acc + (p.amount || 0), 0);
   const accountVerified = isAccountVerified(userData);
 
+  
+
   return (
     <div
       className={cn(
@@ -1054,6 +1311,49 @@ export default function TraderDashboard() {
         dashboardAccent.section
       )}
     >
+      {/* Assistant debug floating button and panel */}
+      <button
+        onClick={() => setShowAssistantDebug((s) => !s)}
+        className="fixed bottom-6 right-6 z-50 bg-orange-600 text-white rounded-full p-3 shadow-lg"
+        title="Assistant Debug"
+      >
+        AI
+      </button>
+
+      {showAssistantDebug && (
+        <div className="fixed bottom-24 right-6 z-50 w-96 h-96 bg-white text-black rounded-lg shadow-xl overflow-auto p-3">
+          <div className="flex items-center justify-between mb-2">
+            <strong>Assistant Debug</strong>
+            <div>
+              <button className="text-sm mr-2" onClick={() => { setAssistantSummary(null); setAssistantConversationsList([]); setSelectedAssistantConversationPayload(null); }}>Clear</button>
+              <button className="text-sm" onClick={() => setShowAssistantDebug(false)}>Close</button>
+            </div>
+          </div>
+          <div className="text-xs mb-2">
+            <strong>Summary</strong>
+            <pre className="text-[10px] max-h-28 overflow-auto bg-[#f6f6f6] p-2 rounded mt-1">{JSON.stringify(assistantSummary || {}, null, 2)}</pre>
+          </div>
+          <div className="text-xs mb-2">
+            <strong>Conversations</strong>
+            <ul className="mt-1 max-h-36 overflow-auto">
+              {assistantConversationsList.map((c) => (
+                <li key={c.conversationKey} className="flex items-center justify-between text-[11px] py-1 border-b">
+                  <div className="truncate">{c.conversationKey} <span className="text-neutral-500">({c.role})</span></div>
+                  <div className="flex items-center gap-2">
+                    <button className="text-xs" onClick={() => openAssistantConversation(c.conversationKey)}>Open</button>
+                    <button className="text-xs text-red-600" onClick={() => handleDeleteAssistantConversation(c.conversationKey)}>Delete</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="text-xs">
+            <strong>Conversation Payload</strong>
+            <pre className="text-[10px] max-h-36 overflow-auto bg-[#f6f6f6] p-2 rounded mt-1">{JSON.stringify(selectedAssistantConversationPayload || [], null, 2)}</pre>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar - Desktop Only or Overlay on Mobile */}
       <aside
         className={cn(
@@ -1220,7 +1520,6 @@ export default function TraderDashboard() {
                           level="verified"
                           size="xs"
                           showLabel={false}
-                          animated
                           className="!border-white/10"
                         />
                       )}
@@ -1260,6 +1559,17 @@ export default function TraderDashboard() {
         userData={userData}
         onSaved={refreshUserData}
       />
+
+      {showPostStudio && (
+        <PostStudioModal
+          variant="trader"
+          authorId={actingUserId}
+          items={studioItems}
+          defaultTraderId={dashboardTraderId}
+          onClose={() => setShowPostStudio(false)}
+          onCreated={() => setShowPostStudio(false)}
+        />
+      )}
 
       {/* Mobile Drawer Overlay */}
       <AnimatePresence>
@@ -1733,15 +2043,38 @@ export default function TraderDashboard() {
               className={activeTab === 'chat' ? 'flex-1 min-h-0 h-full overflow-hidden flex flex-col' : undefined}
             >
               <React.Suspense fallback={<TabLoading />}>
+                {activeTab !== 'chat' && (
+                  <div className="flex flex-wrap justify-end gap-2 px-2 md:px-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/feed')}
+                      className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/70 transition hover:bg-white/10"
+                    >
+                      <Flame size={14} className="text-orange-400" /> View feed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPostStudio(true)}
+                      className="flex items-center gap-2 rounded-2xl border border-orange-500/30 bg-orange-600/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 transition hover:bg-orange-600/20"
+                    >
+                      <Sparkles size={14} /> Open Studio
+                    </button>
+                  </div>
+                )}
                 {activeTab === 'overview' && (
-                  <TraderOverview
-                    products={products}
-                    purchases={purchases}
-                    transactions={transactions}
-                    userData={userData}
-                    setActiveTab={handleTabChange}
-                    onUpgradeSuccess={refreshUserData}
-                  />
+                  <>
+                    <TraderOverview
+                      products={products}
+                      purchases={purchases}
+                      transactions={transactions}
+                      userData={userData}
+                      setActiveTab={handleTabChange}
+                      onUpgradeSuccess={refreshUserData}
+                    />
+                    <div className="mt-6 rounded-[2rem] border border-white/10 bg-[#0a0a0a] p-4 md:p-5">
+                      <FeedWidget maxPosts={4} />
+                    </div>
+                  </>
                 )}
                 {activeTab === 'products' && (
                   <>

@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { auth } from '../../firebase';
-import { VerifiedBadge } from '../../components/VerifiedBadge';
+import { VerifiedBadge, VerifiedBadgeLevel } from '../../components/VerifiedBadge';
 import LiveTraderRoom from './LiveTraderRoom';
 import { cn, formatCurrency } from '../../lib/utils';
 import { useLanguage } from '../../context/LanguageContext';
@@ -71,6 +71,7 @@ type MarketplaceProps = {
   initialNearby?: boolean;
   initialMapView?: boolean;
   onAskTrader?: (product: Product, message?: string) => void | Promise<void>;
+  authTransitioning?: boolean;
 };
 
 function normalizeMediaBlocks(product: any): MediaBlock[] {
@@ -110,6 +111,17 @@ function normalizeMediaBlocks(product: any): MediaBlock[] {
   return [{ id: `fallback-${product.id}`, type: 'text', text: product.name || 'ESOKO' }];
 }
 
+function normalizeVerificationLevel(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number') return String(value);
+  if (value && typeof value === 'object') {
+    const candidate = (value as Record<string, unknown>)?.level || (value as Record<string, unknown>)?.verificationLevel;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (typeof candidate === 'number') return String(candidate);
+  }
+  return null;
+}
+
 function normalizeProduct(product: any): Product {
   const priceAmount =
     typeof product.price === 'number'
@@ -118,13 +130,21 @@ function normalizeProduct(product: any): Product {
   const title = product.name || product.title || 'Untitled Product';
   const seller = product.traderName || product.traderBusinessName || product.seller || 'Trader';
   const imageUrl = product.imageUrl || product.image;
+  const sellerVerificationLevel = normalizeVerificationLevel(
+    product.sellerVerificationLevel ||
+      product.traderVerificationLevel ||
+      product.verificationLevel ||
+      product.trader?.verificationLevel ||
+      product.traderProfile?.verificationLevel ||
+      product.account?.verificationLevel
+  );
 
   return {
     id: String(product.id),
     name: title,
     title,
     seller,
-    sellerVerificationLevel: product.sellerVerificationLevel || product.traderVerificationLevel,
+    sellerVerificationLevel: sellerVerificationLevel || undefined,
     price: priceAmount > 0 ? `RWF ${formatCurrency(priceAmount)}` : product.priceText || 'Price on request',
     priceAmount,
     stock: Number(product.stock || 0),
@@ -200,6 +220,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   initialNearby = false,
   initialMapView = false,
   onAskTrader,
+  authTransitioning = false,
 }) => {
   const { t } = useLanguage();
   const [products, setProducts] = useState<Product[]>([]);
@@ -228,6 +249,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const [liveOverlayProduct, setLiveOverlayProduct] = useState<Product | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState('');
+  const [isScrolling, setIsScrolling] = useState(false);
+  const scrollTimerRef = useRef<number | null>(null);
+  const pendingFetchRef = useRef(false);
+  const pendingProductsRef = useRef<Product[] | null>(null);
+  const pendingPostsRef = useRef<any[] | null>(null);
+  // Tracks whether the very first marketplace fetch has completed. Used so that
+  // background refreshes (triggered by subscribeToLiveUpdates) never toggle the
+  // full-screen `loading` state and never wipe an already-populated feed on error
+  // — only the initial load does that.
+  const hasLoadedOnceRef = useRef(false);
 
   // Search/filter drawer — closed by default on every breakpoint now. Opened via the
   // top-right search toggle (see the button near the top of the returned JSX, positioned
@@ -306,8 +337,14 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   useEffect(() => {
     let cancelled = false;
 
-    async function fetchMarketplace() {
-      setLoading(true);
+    // `isBackgroundRefresh` distinguishes the initial mount fetch from refreshes
+    // triggered by subscribeToLiveUpdates. Background refreshes update data in
+    // place without ever touching `loading`, so the feed never unmounts/remounts
+    // and scroll position is preserved. They also don't clear an already-populated
+    // feed on failure — only the initial load falls back to the error state.
+    async function fetchMarketplace(isBackgroundRefresh = false) {
+      console.debug('[Marketplace] fetchMarketplace: start', { isScrolling, authTransitioning, isBackgroundRefresh });
+      if (!isBackgroundRefresh) setLoading(true);
       setError('');
       try {
         const [data, postData] = await Promise.all([
@@ -329,17 +366,43 @@ const Marketplace: React.FC<MarketplaceProps> = ({
         const productIdsInPosts = new Set(loadedPosts.map((post) => post.productId).filter(Boolean));
         const combined = [...postProducts, ...mapped.filter((product: Product) => !productIdsInPosts.has(product.id))];
         if (!cancelled) {
-          setPosts(loadedPosts);
-          setProducts(combined);
+          // If the user is actively scrolling, or the app is currently in an
+          // auth transition window, defer applying the fetched data until
+          // stability to avoid snapping the scroll position.
+          if (isScrolling || authTransitioning) {
+            console.debug('[Marketplace] fetchMarketplace: deferring update (isScrolling|authTransitioning)', {
+              isScrolling,
+              authTransitioning,
+              productsCount: combined.length,
+              postsCount: loadedPosts.length,
+            });
+            pendingFetchRef.current = true;
+            pendingProductsRef.current = combined;
+            pendingPostsRef.current = loadedPosts;
+          } else {
+            console.debug('[Marketplace] fetchMarketplace: applying update immediately', {
+              productsCount: combined.length,
+              postsCount: loadedPosts.length,
+            });
+            setPosts(loadedPosts);
+            setProducts(combined);
+          }
         }
+        hasLoadedOnceRef.current = true;
       } catch (err) {
         console.error(err);
         if (!cancelled) {
-          setProducts([]);
-          setError('Marketplace could not load. Check your connection and try again.');
+          // Background refresh failures shouldn't nuke an already-populated feed —
+          // only clear products to the "load failed" state on the initial load.
+          if (!isBackgroundRefresh || !hasLoadedOnceRef.current) {
+            setProducts([]);
+            setError('Marketplace could not load. Check your connection and try again.');
+          } else {
+            console.warn('[Marketplace] background refresh failed, keeping existing feed', err);
+          }
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !isBackgroundRefresh) setLoading(false);
       }
     }
 
@@ -349,7 +412,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     const unsubscribe = subscribeToLiveUpdates((event) => {
       const collection = (event.collection || (event.path || '').match(/^\/api\/([^/?]+)/)?.[1]) || '';
       if (!collection || collection === 'products' || collection === 'marketplace') {
-        setTimeout(() => void fetchMarketplace(), 200);
+        setTimeout(() => void fetchMarketplace(true), 200);
       }
     });
 
@@ -357,7 +420,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       cancelled = true;
       unsubscribe();
     };
-  }, []);
+  // Re-run if authTransitioning toggles so fetchMarketplace will consider it.
+  }, [authTransitioning]);
 
   // Fix mobile 100vh issues: use real viewport height to avoid address-bar clipping
   useEffect(() => {
@@ -523,7 +587,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
   const ui = useMemo(
     () => ({
       viewText: (t as any)?.common?.view || 'View',
-      commentsText: (t as any)?.common?.comments || (t as any)?.common?.comment || 'Ask',
+      commentsText: (t as any)?.common?.comments || (t as any)?.common?.comment || 'Comment',
       shareText: (t as any)?.common?.share || 'Share',
       wordsText: (t as any)?.common?.words || 'Details',
       buyText: (t as any)?.common?.buy || 'Buy',
@@ -581,6 +645,16 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     });
   }, [filteredProducts, nearbyOnly, userLocation]);
 
+  // Precompute per-trader listing counts to avoid filtering on every render.
+  const traderListingCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredProducts.forEach((p) => {
+      const key = p.traderId || p.seller || '__unknown__';
+      map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
+  }, [filteredProducts]);
+
   const displayProducts = useMemo(() => {
     const baseProducts = nearbyProducts;
     const sortByLive = (a: Product, b: Product) => {
@@ -590,19 +664,31 @@ const Marketplace: React.FC<MarketplaceProps> = ({
     };
 
     if (searchMode === 'products' || shopTraderId) {
-      return [...baseProducts].sort(sortByLive);
+      return isScrolling ? [...baseProducts] : [...baseProducts].sort(sortByLive);
     }
 
     const seen = new Set<string>();
-    return baseProducts
-      .filter((product) => {
+    const filtered = baseProducts.filter((product) => {
         const key = product.traderId || product.seller;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      })
-      .sort(sortByLive);
+    });
+
+    return isScrolling ? filtered : filtered.sort(sortByLive);
   }, [nearbyProducts, searchMode, shopTraderId, liveSessions]);
+
+  const traderBadgeLevels = useMemo(() => {
+    const map = new Map<string, string>();
+    displayProducts.forEach((product) => {
+      const badgeLevel = normalizeVerificationLevel(product.sellerVerificationLevel);
+      if (badgeLevel) {
+        const key = product.traderId || product.seller;
+        if (key) map.set(key, badgeLevel);
+      }
+    });
+    return map;
+  }, [displayProducts]);
 
   const traderRecords = useMemo(() => buildTraderRecords(displayProducts), [displayProducts]);
 
@@ -834,9 +920,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
   return (
     // Root fills whatever height the parent gives it (see CustomerDashboard: h-[calc(100dvh-56px)] / md:h-[100dvh]).
-    // A single scroll container lives inside this box so each card can snap to exactly one
-    // viewport height, TikTok-style — on every breakpoint now, since the header no longer
-    // permanently docks at the top on desktop.
+    // The marketplace feed is intentionally rendered as a normal scrolling list so the
+    // viewport does not snap to the first card while the user is scrolling.
     <div
       className="flex flex-col min-h-[100dvh] h-full"
       style={{ height: 'calc(var(--vh, 1vh) * 100)' }}
@@ -896,11 +981,37 @@ const Marketplace: React.FC<MarketplaceProps> = ({
       {/* Desktop search/filter header is always visible on larger screens. */}
       <div className="hidden md:block">{headerContent}</div>
 
-      {/* TikTok-style full-height snap scroller: one scroll container, one card per viewport,
-          filling the entire 100dvh since there's no in-flow header taking up space anymore. */}
+      {/* Full-height feed scroller: each card occupies a real viewport-height slot and the
+          container snaps between them so scrolling advances to the next item instead of jumping back. */}
       <div
-        className="flex-1 min-h-0 overflow-y-scroll snap-y snap-mandatory overscroll-y-contain"
-        style={{ scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+        className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain"
+        style={{ scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', overscrollBehaviorY: 'contain' }}
+        onScroll={() => {
+          setIsScrolling(true);
+          try {
+            if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
+          } catch (e) {
+            /* ignore */
+          }
+          // mark not-scrolling after a small idle period and apply any pending updates
+          // store timer id as number for window.clearTimeout compatibility
+          // @ts-ignore
+          scrollTimerRef.current = window.setTimeout(() => {
+            setIsScrolling(false);
+            if (pendingFetchRef.current) {
+              console.debug('[Marketplace] scroll idle: applying pending fetch results');
+              pendingFetchRef.current = false;
+              if (pendingPostsRef.current) {
+                setPosts(pendingPostsRef.current);
+                pendingPostsRef.current = null;
+              }
+              if (pendingProductsRef.current) {
+                setProducts(pendingProductsRef.current);
+                pendingProductsRef.current = null;
+              }
+            }
+          }, 180);
+        }}
       >
         {mapView ? (
           <div className="snap-start h-full w-full flex items-center justify-center px-3 md:px-0">
@@ -949,22 +1060,37 @@ const Marketplace: React.FC<MarketplaceProps> = ({
           );
           const isShopCard = searchMode === 'shops' && !shopTraderId;
           const liveSession = getLiveSessionForProduct(product);
+          const traderKey = product.traderId || product.seller;
+          const rawBadgeLevel = normalizeVerificationLevel(product.sellerVerificationLevel) || traderBadgeLevels.get(traderKey) || 'customer-individual';
+          const allowedLevels = [
+            'basic',
+            'verified',
+            'premium',
+            'enterprise',
+            'family',
+            'organization',
+            'trader',
+            'delivery',
+            'customer-individual',
+            'customer-organization',
+            'customer-business',
+          ] as const;
+          const badgeLevel: VerifiedBadgeLevel = (allowedLevels.includes(rawBadgeLevel as any)
+            ? (rawBadgeLevel as VerifiedBadgeLevel)
+            : 'customer-individual');
 
           return (
             <div
               key={`${product.id}-slide`}
               data-product-id={product.id}
+              data-slide-card="true"
               ref={(el) => {
                 if (el) slideRefs.current[product.id] = el;
               }}
-              className="snap-start snap-always h-full w-full flex items-start md:items-center justify-center md:px-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] px-0 md:px-0"
-              style={{ scrollSnapStop: 'always' }}
+              className="min-h-[100dvh] w-full flex items-start md:items-center justify-center md:px-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] px-0 md:px-0"
+              style={{ scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
-              <motion.article
-                key={`${product.id}-${searchMode}-${shopTraderId || 'all'}`}
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.35 }}
+              <article
                 className={cn(
                   'mx-auto w-full',
                   'overflow-visible md:overflow-hidden',
@@ -972,17 +1098,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   'bg-[#0f0f0f]',
                   'shadow-2xl shadow-black/40',
                   'relative',
-                  // Card is a flex column on every breakpoint now: the media block below is
-                  // flex-1 (it always grows to fill whatever the info panel doesn't use), and
-                  // the info panel is sized to its own content (shrink-0). On mobile the card
-                  // should stretch to fill the viewport and avoid empty bottom gaps.
-                  'h-full flex-1 min-h-0 rounded-none',
-                  'md:h-[85vh] md:max-w-[420px] md:rounded-[2rem]',
-                  'flex flex-col'
+                  // The card is now a single relative stacking context: the media block is an
+                  // absolute layer filling 100% of the card (true full-bleed video/photo, no
+                  // more separate panel eating into it), and the caption/buttons float on top
+                  // as absolute overlays — TikTok style on every breakpoint.
+                  'h-[100dvh] min-h-[100dvh] flex-1 rounded-none',
+                  'md:h-[85vh] md:max-w-[420px] md:rounded-[2rem]'
                 )}
               >
-                <div className="relative h-full flex-1 min-h-[160px] flex flex-col overflow-hidden bg-black text-white">
-                  
+                <div className="absolute inset-0 h-full w-full overflow-hidden bg-black text-white">
                   {background?.type === 'image' && background.url ? (
                     <div className="absolute inset-0 w-full h-full overflow-hidden">
                       <img
@@ -1043,7 +1167,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 
                   {liveSession && (
                     <div className="pointer-events-none absolute left-4 top-4 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white shadow-xl shadow-black/30 backdrop-blur-sm">
-                      <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                      <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
                       LIVE NOW
                     </div>
                   )}
@@ -1063,15 +1187,18 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                           </p>
                           <div className="mt-2 flex items-center gap-2">
                             <span className="max-w-[170px] overflow-hidden text-ellipsis whitespace-nowrap text-[10px] uppercase tracking-[0.2em] text-white/60">
-                              {isShopCard ? `${filteredProducts.filter((item) => item.traderId === product.traderId).length} listings` : product.seller}
+                              {isShopCard
+                                ? `${traderListingCounts.get(product.traderId || product.seller || '__unknown__') || 0} listings`
+                                : product.seller}
                             </span>
-                            <VerifiedBadge
-                              level={product.sellerVerificationLevel || 'customer-individual'}
-                              size="xs"
-                              showLabel={false}
-                              animated
-                              className="!border-white/10"
-                            />
+                            {(badgeLevel !== 'customer-individual' && badgeLevel !== 'basic') && (
+                              <VerifiedBadge
+                                level={badgeLevel}
+                                size="xs"
+                                showLabel={false}
+                                className="!border-white/10"
+                              />
+                            )}
                             {post && Number(engagement?.qualityScore || 0) > 0 && (
                               <span className="text-[10px] font-black text-amber-300">
                                 ★ {Number(engagement?.qualityScore || 0).toFixed(1)}
@@ -1093,7 +1220,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                           onClick={() => openLiveRoom(product, liveSession)}
                           className="flex items-center gap-2 rounded-full bg-red-600 px-3 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-white shadow-lg shadow-red-900/40 transition hover:bg-red-500"
                         >
-                          <span className="h-2.5 w-2.5 rounded-full bg-white animate-pulse" />
+                          <span className="h-2.5 w-2.5 rounded-full bg-white" />
                           LIVE
                         </button>
                         <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70">
@@ -1104,15 +1231,15 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                   </div>
                 </div>
 
-                {/* Info panel — sized to its own content (shrink-0), not a fixed height, so it
-                    never leaves leftover space. Caps at 45% of the card height with its own
-                    scroll for unusually long descriptions. */}
+                {/* Caption + actions panel — floats directly on top of the full-bleed media as
+                    a bottom gradient overlay (true TikTok style) instead of a separate solid
+                    panel that used to eat into the video/photo height. */}
                 <div
-                  className="relative shrink-0 h-auto max-h-full md:max-h-[45%] bg-[#0f0f0f] p-4 pr-16 md:pr-4 z-10 flex flex-col gap-4 overflow-visible md:overflow-y-auto overscroll-contain"
+                  className="absolute inset-x-0 bottom-0 z-20 max-h-[44%] md:max-h-[55%] bg-gradient-to-t from-black via-black/80 to-transparent p-4 pt-10 pr-20 md:pr-4 flex flex-col gap-3 overflow-y-auto overscroll-contain"
                   style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
                 >
                   <div>
-                    <p className="line-clamp-2 text-[12px] leading-5 text-white/75">{product.description}</p>
+                    <p className="line-clamp-3 text-[13px] leading-5 text-white/90 drop-shadow-lg">{product.description}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {product.category && (
                         <span className="rounded-full bg-white/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
@@ -1165,11 +1292,11 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         </button>
                         <button
                           onClick={() => void engageWithPost(product, 'follow')}
-                          className="flex h-11 items-center gap-2 rounded-2xl border border-white/10 px-3 text-white transition hover:bg-white/10"
+                          className={cn('flex h-11 items-center gap-2 rounded-2xl border border-white/10 px-3 text-white transition hover:bg-white/10', engagement?.following ? 'bg-rose-500/10 text-rose-300 border-rose-500/20' : '')}
                           aria-label="Follow trader"
                         >
                           <UserPlus size={18} />
-                          <span className="text-[10px] font-black">{engagement?.following ? 'Following' : 'Follow'}</span>
+                          <span className="text-[10px] font-black">{engagement?.following ? 'Loved' : 'Follow'}</span>
                         </button>
                         <button
                           onClick={() => void engageWithPost(product, 'favorite')}
@@ -1198,10 +1325,10 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                         }
                       }}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white transition hover:bg-white/10 md:h-12 md:w-12"
-                      aria-label="Ask seller"
+                      aria-label="Comment"
                       title={ui.commentsText}
                     >
-                      <MessageSquare size={20} />
+                      <MessageCircle size={20} />
                     </button>
 
                     <button
@@ -1264,7 +1391,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                 </div>
 
                 {/* TikTok-style right-side action rail — phones only. Positioned absolutely
-                    against the whole card, so it floats over both the media and the info
+                    against the whole card, so it floats over both the media and the caption
                     panel at a fixed spot on the right edge and never scrolls away. */}
                 <div className="pointer-events-auto absolute right-3 bottom-4 z-40 flex flex-col items-center gap-3 md:hidden">
                   {post && (
@@ -1278,8 +1405,8 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       </button>
                       <button
                         onClick={() => void engageWithPost(product, 'follow')}
-                        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
-                        aria-label="Follow trader"
+                        className={cn('flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90', engagement?.following ? 'text-rose-400' : '')}
+                        aria-label={engagement?.following ? 'Loved trader' : 'Follow trader'}
                       >
                         <UserPlus size={18} />
                       </button>
@@ -1309,9 +1436,9 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                       }
                     }}
                     className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-black/50 text-white backdrop-blur-sm transition active:scale-90"
-                    aria-label="Ask seller"
+                    aria-label="Comment"
                   >
-                    <MessageSquare size={19} />
+                    <MessageCircle size={19} />
                   </button>
 
                   <button
@@ -1366,7 +1493,7 @@ const Marketplace: React.FC<MarketplaceProps> = ({
                     <ShoppingCart size={22} />
                   </button>
                 </div>
-              </motion.article>
+              </article>
             </div>
           );
         })}
@@ -1510,7 +1637,7 @@ function ProductSheet({
 
         <div className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
           <button onClick={onAsk} className="rounded-2xl bg-white/5 px-2 py-4 text-[10px] font-black uppercase tracking-widest text-white/70 sm:px-4">
-            Ask
+            Comment
           </button>
           <button onClick={onShare} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white/5 px-2 py-4 text-[10px] font-black uppercase tracking-widest text-white/70 sm:px-4">
             <Copy size={14} /> Share
@@ -1560,7 +1687,7 @@ function QuestionSheet({
       >
         <div className="mb-5 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">Ask seller</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.24em] text-orange-500">Comment</p>
             <h3 className="mt-1 text-lg font-black text-white sm:text-xl">{product.title}</h3>
             <p className="mt-1 text-xs font-bold text-white/40">{product.seller}</p>
           </div>
@@ -1582,7 +1709,7 @@ function QuestionSheet({
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-600 px-5 py-4 text-[10px] font-black uppercase tracking-widest text-black disabled:opacity-40"
         >
           {saving ? <Loader2 className="animate-spin" size={16} /> : <MessageSquare size={16} />}
-          Send question
+          Send comment
         </button>
       </motion.div>
     </motion.div>

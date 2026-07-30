@@ -1,18 +1,28 @@
 import { apiGet, apiPost, authHeaders } from './apiClient';
+import { TextOverlay, MusicTrack } from '../lib/postStudio';
 
 export interface MarketplacePost {
   id: string;
   traderId: string;
+  authorId: string;
+  authorType: 'trader' | 'customer';
   productId?: string | null;
+  purchaseId?: string | null;
   mediaType: 'image' | 'video';
   mediaUrl: string;
   thumbnailUrl?: string | null;
+  mediaItems?: Array<{ type: 'image' | 'video'; url: string }>;
+  overlays?: TextOverlay[];
+  musicTrack?: MusicTrack;
+  audioUrl?: string;
   caption?: string;
+  hashtags?: string[];
   price?: number;
   stock?: number;
   category?: string;
   likeCount?: number;
-  followCount?: number;
+  commentCount?: number;
+  shareCount?: number;
   viewCount?: number;
   liked?: boolean;
   favorited?: boolean;
@@ -21,12 +31,57 @@ export interface MarketplacePost {
   totalSales?: number;
   traderName?: string;
   traderBusinessName?: string;
+  authorName?: string;
+  authorAvatar?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface MarketplaceComment {
+  id: string;
+  postId: string;
+  commenterId: string;
+  commenterName?: string;
+  commenterAvatar?: string;
+  content: string;
   createdAt?: string;
 }
 
 export async function getMarketplacePosts(params?: { limit?: number; offset?: number }) {
   return apiGet<{ posts: MarketplacePost[] }>('/api/marketplace/posts', {
     params,
+    headers: authHeaders(),
+  });
+}
+
+/** Get recent posts (latest first) */
+export async function getRecentPosts(params?: { limit?: number; offset?: number }) {
+  return apiGet<{ posts: MarketplacePost[] }>('/api/marketplace/posts/feed/recent', {
+    params: { limit: 20, offset: 0, ...params },
+    headers: authHeaders(),
+  });
+}
+
+/** Get trending posts (most engaged) */
+export async function getTrendingPosts(params?: { limit?: number; offset?: number }) {
+  return apiGet<{ posts: MarketplacePost[] }>('/api/marketplace/posts/feed/trending', {
+    params: { limit: 20, offset: 0, ...params },
+    headers: authHeaders(),
+  });
+}
+
+/** Get posts from traders/customers you follow */
+export async function getFollowingPosts(params?: { limit?: number; offset?: number }) {
+  return apiGet<{ posts: MarketplacePost[] }>('/api/marketplace/posts/feed/following', {
+    params: { limit: 20, offset: 0, ...params },
+    headers: authHeaders(),
+  });
+}
+
+/** Get mixed feed: combination of recent, trending, and following */
+export async function getMixedFeed(params?: { limit?: number; offset?: number }) {
+  return apiGet<{ posts: MarketplacePost[] }>('/api/marketplace/posts/feed/mixed', {
+    params: { limit: 20, offset: 0, ...params },
     headers: authHeaders(),
   });
 }
@@ -49,6 +104,21 @@ export async function recordPostView(postId: string) {
 
 export async function reportMarketplacePost(postId: string, reason: string) {
   return apiPost(`/api/marketplace/posts/${postId}/report`, { reason }, { headers: authHeaders() });
+}
+
+export async function getPostComments(postId: string, params?: { limit?: number; offset?: number }) {
+  return apiGet<{ comments: MarketplaceComment[] }>(`/api/marketplace/posts/${postId}/comments`, {
+    params,
+    headers: authHeaders(),
+  });
+}
+
+export async function createPostComment(postId: string, content: string) {
+  return apiPost<{ comment: MarketplaceComment; commentCount: number }>(
+    `/api/marketplace/posts/${postId}/comments`,
+    { content },
+    { headers: authHeaders() }
+  );
 }
 
 export async function createMarketplacePost(payload: Partial<MarketplacePost>) {

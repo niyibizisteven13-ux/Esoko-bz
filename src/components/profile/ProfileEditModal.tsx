@@ -156,7 +156,7 @@ export default function ProfileEditModal({ open, onClose, userData, onSaved }: P
     try {
       const response = await apiPost<any>('/api/verification/otp/verify', {
         channel: 'email',
-        destination: formData.email.trim(),
+        destination: formData.email.trim() || undefined,
         otp: emailOtp.trim(),
       });
       setIsEmailVerified(true);

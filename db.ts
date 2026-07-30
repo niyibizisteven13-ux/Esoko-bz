@@ -305,6 +305,16 @@ function initializeDatabase() {
       FOREIGN KEY (reporterId) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS post_comments (
+      id TEXT PRIMARY KEY,
+      postId TEXT NOT NULL,
+      commenterId TEXT NOT NULL,
+      content TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (postId) REFERENCES marketplace_posts(id) ON DELETE CASCADE,
+      FOREIGN KEY (commenterId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS purchases (
       id TEXT PRIMARY KEY,
       customerId TEXT NOT NULL,
@@ -1332,6 +1342,28 @@ function initializeDatabase() {
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (conversationId) REFERENCES chat_conversations(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS assistant_conversations (
+      id TEXT PRIMARY KEY,
+      conversationKey TEXT UNIQUE NOT NULL,
+      userId TEXT NOT NULL,
+      role TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_assistant_conversations_user_updatedAt ON assistant_conversations(userId, updatedAt);
+
+    CREATE TABLE IF NOT EXISTS assistant_usage (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_assistant_usage_user_createdAt ON assistant_usage(userId, createdAt);
 
     CREATE TABLE IF NOT EXISTS chat_presence (
       accountNumber TEXT PRIMARY KEY,

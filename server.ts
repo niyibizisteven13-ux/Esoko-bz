@@ -27,7 +27,9 @@ import { createOriginGuard, isTrustedDynamicPublicOrigin } from './lib/originGua
 import { createRevenueService } from './lib/revenueService.ts';
 import { normalizeRole } from './lib/roles.ts';
 import { hashPassword, hashToken, verifyPassword } from './lib/security.ts';
+import { resolveVerificationDestination } from './lib/verificationOtp.ts';
 import { validateBody, WalletDepositSchema, WalletWithdrawSchema, WalletTransferSchema, PurchaseCreateSchema, AdminVerifyUserSchema, VoucherCreateSchema, VoucherRedeemSchema, TransactionCreateSchema } from './lib/schemas.ts';
+import { buildLocalAssistantReply } from './src/lib/aiAssistant.ts';
 import FinanceService from './lib/financeService.ts';
 import { setUploadSafeHeaders, validateUploadMagicBytesMiddleware, scanUploadForMalwareMiddleware } from './lib/uploadSecurity.ts';
 import { requireCsrfTokenForRoute, csrfTokenEndpoint, generateCsrfToken } from './lib/csrfToken.ts';
@@ -628,7 +630,10 @@ function updatePresence(accountNumber: string, online: boolean) {
 
 function serializeConversationSummary(row: any, currentAccountNumber: string) {
   const peerAccountNumber = row.accountNumberA === currentAccountNumber ? row.accountNumberB : row.accountNumberA;
-  const peerUser = db.prepare('SELECT id, name, profilePhoto, appNumber FROM users WHERE appNumber = ?').get(peerAccountNumber) as any;
+  const peerUser = db.prepare('SELECT id, name, profilePhoto, appNumber, businessName FROM users WHERE appNumber = ?').get(peerAccountNumber) as any;
+  const isBwenge = peerAccountNumber?.toLowerCase() === 'bwenge';
+  const fallbackDisplayName = isBwenge ? 'Bwenge' : peerAccountNumber;
+  const peerDisplayName = peerUser?.name || fallbackDisplayName;
   const presence = db.prepare('SELECT online, lastSeen FROM chat_presence WHERE accountNumber = ?').get(peerAccountNumber) as any;
   const latestMessage = db
     .prepare(
@@ -646,8 +651,8 @@ function serializeConversationSummary(row: any, currentAccountNumber: string) {
   return {
     id: row.id,
     accountNumber: peerAccountNumber,
-    name: peerUser?.name || peerAccountNumber,
-    initials: (peerUser?.name || peerAccountNumber)
+    name: peerDisplayName,
+    initials: peerDisplayName
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
@@ -659,7 +664,10 @@ function serializeConversationSummary(row: any, currentAccountNumber: string) {
     lastMessageTime: latestMessage?.createdAt || row.updatedAt,
     lastMessageRead: latestMessage?.status || 'sent',
     unreadCount: 0,
-    profilePhoto: peerUser?.profilePhoto || null,
+    profilePhoto: peerUser?.profilePhoto || (isBwenge ? '/bwenge-ai.svg' : null),
+    description: isBwenge
+      ? 'AI commerce companion for ideas, guidance, and practical next steps. Think and work with Bwenge.'
+      : peerUser?.businessName || null,
     lastSeen: presence?.lastSeen || null,
     muted: mutedAccounts.includes(currentAccountNumber),
     blocked: blockedAccounts.includes(currentAccountNumber),
@@ -840,31 +848,37 @@ function flushPendingChatMessages(accountNumber: string, sockets: Map<string, Se
 }
 
 function attachMessengerRoutes() {
-  app.get('/api/accounts/:accountNumber', authenticate, (req: any, res: Response) => {
-    const accountNumber = String(req.params.accountNumber || '').trim();
-    if (!accountNumber) {
-      res.status(400).json({ error: 'Account number is required' });
+  app.get('/api/accounts/:identifier', authenticate, (req: any, res: Response) => {
+    const identifier = String(req.params.identifier || '').trim();
+    if (!identifier) {
+      res.status(400).json({ error: 'Account identifier is required' });
       return;
     }
+
+    const searchTerm = `%${identifier.toLowerCase()}%`;
     const row = db
       .prepare(
         `
-          SELECT u.appNumber, u.name, u.profilePhoto, cp.online, cp.lastSeen
+          SELECT u.appNumber, u.name, u.email, u.profilePhoto, cp.online, cp.lastSeen
           FROM users u
           LEFT JOIN chat_presence cp ON cp.accountNumber = u.appNumber
-          WHERE u.appNumber = ?
+          WHERE lower(COALESCE(u.appNumber, '')) = lower(?)
+             OR lower(COALESCE(u.email, '')) = lower(?)
+             OR lower(COALESCE(u.name, '')) LIKE ?
+             OR u.id = ?
           LIMIT 1
         `
       )
-      .get(accountNumber) as any;
+      .get(identifier, identifier, searchTerm, identifier) as any;
     if (!row) {
       res.status(404).json({ error: 'Account not found' });
       return;
     }
     res.json({
-      accountNumber: row.appNumber,
+      accountNumber: row.appNumber || row.id,
       name: row.name,
       displayName: row.name,
+      email: row.email || null,
       avatar: row.profilePhoto || null,
       online: Boolean(row.online),
       lastSeen: row.lastSeen || null,
@@ -982,11 +996,10 @@ function attachMessengerRoutes() {
       return;
     }
 
-    const recipientUser = db.prepare('SELECT id, name, appNumber FROM users WHERE appNumber = ?').get(recipientAccountNumber) as any;
-    if (!recipientUser) {
-      res.status(404).json({ error: 'Account not found' });
-      return;
-    }
+    const recipientUser = db
+      .prepare('SELECT id, name, appNumber FROM users WHERE appNumber = ? OR id = ?')
+      .get(recipientAccountNumber, recipientAccountNumber) as any;
+    const fallbackName = displayName || (recipientAccountNumber.toLowerCase() === 'bwenge' ? 'Bwenge' : recipientAccountNumber);
 
     const conversationId = ensureConversationRecord(accountNumber, recipientAccountNumber);
     const row = db.prepare('SELECT id, accountNumberA, accountNumberB, updatedAt FROM chat_conversations WHERE id = ?').get(conversationId) as any;
@@ -994,7 +1007,7 @@ function attachMessengerRoutes() {
     res.json({
       conversation: {
         ...serializeConversationSummary(row, accountNumber),
-        name: displayName || serializeConversationSummary(row, accountNumber).name,
+        name: fallbackName,
       },
     });
   });
@@ -1774,6 +1787,31 @@ const adminOtpLimiter = isProduction
       windowMs: 10 * 60 * 1000,
       max: 5,
       message: 'Too many verification attempts, please try again later.',
+      standardHeaders: true,
+      legacyHeaders: false,
+    })
+  : (req: Request, res: Response, next: NextFunction) => next();
+
+const aiAssistantLimiter = isProduction
+  ? rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 30,
+      message: 'Too many assistant requests, please try again later.',
+      standardHeaders: true,
+      legacyHeaders: false,
+    })
+  : (req: Request, res: Response, next: NextFunction) => next();
+
+// Per-user assistant limiter: uses authenticated user id when available.
+const aiAssistantUserLimiter = isProduction
+  ? rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 60, // per-user within window
+      keyGenerator: (req: Request) => {
+        const anyReq = req as any;
+        return String(anyReq?.user?.id ?? req.ip);
+      },
+      message: 'Too many assistant requests for this account, please try again later.',
       standardHeaders: true,
       legacyHeaders: false,
     })
@@ -3908,6 +3946,342 @@ app.use('/api', (req: any, res, next) => {
 });
 
 attachMessengerRoutes();
+
+function buildGeminiSystemInstruction(role: string) {
+  return `You are an in-app commerce assistant for ESOKO. Help ${role} users with practical next steps for shopping, inventory, growth, support, and quick in-app navigation. Use account context when present and return concise, useful guidance in strict JSON.`;
+}
+
+function buildAssistantContextSummary(context: Record<string, unknown>) {
+  return Object.entries(context)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join(', ');
+}
+
+async function callGeminiAssistant(message: string, role: string, context: Record<string, unknown>, history: Array<{ role: string; content: string }> = []) {
+  const effectiveApiKey = env.GEMINI_API_KEY || '';
+  if (!effectiveApiKey) {
+    return null;
+  }
+
+  const contextSummary = buildAssistantContextSummary(context);
+  const historyText = history.length
+    ? `\nConversation history:\n${history.map((entry) => `${entry.role}: ${entry.content}`).join('\n')}`
+    : '';
+
+  const model = String(env.GEMINI_MODEL || 'gemini-flash-latest').trim();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(effectiveApiKey)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: `${message}${contextSummary ? `\nContext: ${contextSummary}` : ''}${historyText}` }],
+        },
+      ],
+      systemInstruction: {
+        parts: [{ text: buildGeminiSystemInstruction(role) }],
+      },
+      generationConfig: {
+        temperature: 0.4,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            reply: { type: 'STRING' },
+            suggestions: { type: 'ARRAY', items: { type: 'STRING' } },
+            actionType: { type: 'STRING' },
+            targetTab: { type: 'STRING' },
+            searchQuery: { type: 'STRING' },
+          },
+          required: ['reply', 'suggestions'],
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API request failed: ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!text) {
+    return null;
+  }
+
+  const parsed = JSON.parse(text);
+  return {
+    reply: String(parsed.reply || 'I can help with the next best action.'),
+    suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions.map(String) : [],
+    mode: 'remote' as const,
+  };
+}
+
+function buildAssistantDataForUser(userId: string) {
+  try {
+    // Top-selling products (by count of purchases)
+    const topProducts = db
+      .prepare(
+        `SELECT p.id, p.name, p.price, p.stock, COALESCE(SUM(pr.quantity),0) as sold
+         FROM products p
+         LEFT JOIN purchases pr ON pr.productId = p.id
+         WHERE p.traderId = ?
+         GROUP BY p.id
+         ORDER BY sold DESC
+         LIMIT 6`
+      )
+      .all(userId);
+
+    // Low stock products
+    const lowStock = db
+      .prepare(
+        `SELECT id, name, price, stock
+         FROM products
+         WHERE traderId = ? AND stock <= COALESCE(lowStockThreshold, 10)
+         ORDER BY stock ASC
+         LIMIT 12`
+      )
+      .all(userId);
+
+    // Recent approved purchases (last 14 days)
+    const recentOrders = db
+      .prepare(
+        `SELECT id, productName, amount, quantity, status, createdAt
+         FROM purchases
+         WHERE traderId = ? AND createdAt > datetime('now', '-14 days')
+         ORDER BY createdAt DESC
+         LIMIT 20`
+      )
+      .all(userId);
+
+    // Revenue last 7 days
+    const revenueRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(amount),0) as revenue
+         FROM purchases
+         WHERE traderId = ? AND status = 'approved' AND createdAt > datetime('now', '-7 days')`
+      )
+      .get(userId) as any;
+
+    // Basic analytics rollups (if table exists)
+    const analytics = db
+      .prepare(
+        `SELECT metric_type, period, value, period_start
+         FROM trader_analytics WHERE trader_id = ? ORDER BY period_start DESC LIMIT 12`
+      )
+      .all(userId);
+
+    return {
+      topProducts: topProducts || [],
+      lowStock: lowStock || [],
+      recentOrders: recentOrders || [],
+      revenue7d: Number((revenueRow && revenueRow.revenue) || 0),
+      analytics: analytics || [],
+    };
+  } catch (err) {
+    console.warn('Failed to build assistant data for user', userId, err);
+    return { topProducts: [], lowStock: [], recentOrders: [], revenue7d: 0, analytics: [] };
+  }
+}
+
+app.post('/api/ai/assistant', authenticate, aiAssistantUserLimiter, async (req: any, res): Promise<any> => {
+  try {
+    const { message = '', role = 'customer', context = {}, conversationId = null, history = [] } = req.body || {};
+    const prompt = String(message).trim();
+    if (!prompt) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    if (prompt.length > 4000) {
+      return res.status(400).json({ error: 'Message is too long' });
+    }
+
+    const normalizedHistory = Array.isArray(history)
+      ? history
+          .slice(-8)
+          .map((entry: any) => ({
+            role: String(entry?.role || 'user').trim(),
+            content: String(entry?.content || '').trim(),
+          }))
+          .filter((entry) => entry.content)
+      : [];
+
+    const effectiveContext: Record<string, unknown> = {
+      accountName: req.user?.businessName || req.user?.name || undefined,
+      accountEmail: req.user?.email || undefined,
+      accountPhone: req.user?.phone || undefined,
+      accountLocation: req.user?.location || undefined,
+      accountRole: req.user?.role || undefined,
+      ...((context as Record<string, unknown>) || {}),
+    };
+
+    // Attach a compact assistant data summary for this user so Gemini can reason
+    // over key business facts without direct DB access.
+    const assistantData = buildAssistantDataForUser(req.user.id);
+    (effectiveContext as any).analytics = JSON.stringify(assistantData.analytics || []);
+    (effectiveContext as any).recentOrders = JSON.stringify((assistantData.recentOrders || []).slice(0, 12));
+    (effectiveContext as any).topProducts = JSON.stringify((assistantData.topProducts || []).slice(0, 6));
+    (effectiveContext as any).lowStock = JSON.stringify((assistantData.lowStock || []).slice(0, 12));
+    (effectiveContext as any).revenue7d = assistantData.revenue7d;
+
+    // Enforce per-user monthly quota (30-day window)
+    const tier = req.user?.tier || 'free';
+    const allowed = tier === 'premium' ? 10000 : 1000;
+    const usedRow = db.prepare("SELECT COUNT(*) as c FROM assistant_usage WHERE userId = ? AND createdAt > datetime('now','-30 days')").get(req.user.id) as any;
+    const used = Number((usedRow && usedRow.c) || 0);
+    if (used >= allowed) {
+      return res.status(429).json({ error: 'Assistant quota exceeded for your account' });
+    }
+
+    const assistantReply = await (async () => {
+      try {
+        const geminiReply = await callGeminiAssistant(prompt, String(role), effectiveContext, normalizedHistory);
+        if (geminiReply) {
+          return geminiReply;
+        }
+      } catch (providerError: any) {
+        console.warn('Gemini AI unavailable, falling back to local guidance', providerError);
+      }
+
+      return buildLocalAssistantReply(prompt, String(role) as any, effectiveContext as any);
+    })();
+
+    const storedConversationId = conversationId || `assistant:${req.user.id}:${String(role)}`;
+    const conversationKey = `assistant:${storedConversationId}`;
+    const existing = db.prepare('SELECT payload FROM assistant_conversations WHERE conversationKey = ?').get(conversationKey) as any;
+    const existingMessages = existing?.payload ? JSON.parse(existing.payload) : [];
+    const nextMessages = [...existingMessages, { role: 'user', content: prompt }, { role: 'assistant', content: assistantReply.reply }].slice(-12);
+
+    db.prepare(`
+      INSERT INTO assistant_conversations (id, conversationKey, userId, role, payload, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(conversationKey)
+      DO UPDATE SET payload = excluded.payload, updatedAt = CURRENT_TIMESTAMP
+    `).run(uuidv4(), conversationKey, req.user.id, String(role), JSON.stringify(nextMessages));
+
+    // Record usage and audit log
+    try {
+      db.prepare('INSERT INTO assistant_usage (id, userId) VALUES (?, ?)').run(uuidv4(), req.user.id);
+    } catch (usageErr) {
+      console.warn('Failed to record assistant usage', usageErr);
+    }
+
+    try {
+      db.prepare('INSERT INTO audit_logs (id, userId, action, resource_type, resource_id, details, ip_address, user_agent, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+        .run(uuidv4(), req.user.id, 'assistant_call', 'assistant_conversation', conversationKey, JSON.stringify({ promptLength: prompt.length, role }), req.ip, req.get('User-Agent') || '');
+    } catch (auditErr) {
+      console.warn('Failed to write assistant audit log', auditErr);
+    }
+
+    return res.json(assistantReply);
+  } catch (error: any) {
+    console.error('AI assistant error', error);
+    return res.status(500).json({ error: 'AI assistant unavailable' });
+  }
+});
+
+// Expose a secure summary endpoint for the assistant UI or for debugging.
+app.get('/api/ai/assistant/summary', authenticate, aiAssistantUserLimiter, (req: any, res) => {
+  try {
+    const data = buildAssistantDataForUser(req.user.id);
+    return res.json({ success: true, summary: data });
+  } catch (err) {
+    console.error('Failed to fetch assistant summary', err);
+    return res.status(500).json({ error: 'Unable to fetch assistant summary' });
+  }
+});
+
+// List conversations for the authenticated user (cursor-based pagination)
+app.get('/api/ai/assistant/conversations', authenticate, aiAssistantUserLimiter, (req: any, res) => {
+  try {
+    const userId = req.user.id;
+    const limit = Math.min(50, Number(req.query.limit || 20));
+    const before = req.query.before ? String(req.query.before) : null;
+
+    let rows;
+    if (before) {
+      rows = db
+        .prepare(
+          `SELECT conversationKey, role, createdAt, updatedAt
+           FROM assistant_conversations
+           WHERE userId = ? AND updatedAt < ?
+           ORDER BY updatedAt DESC
+           LIMIT ?`
+        )
+        .all(userId, before, limit);
+    } else {
+      rows = db
+        .prepare(
+          `SELECT conversationKey, role, createdAt, updatedAt
+           FROM assistant_conversations
+           WHERE userId = ?
+           ORDER BY updatedAt DESC
+           LIMIT ?`
+        )
+        .all(userId, limit);
+    }
+
+    return res.json({ success: true, conversations: rows });
+  } catch (err) {
+    console.error('Failed to list assistant conversations', err);
+    return res.status(500).json({ error: 'Unable to list conversations' });
+  }
+});
+
+// Fetch a single conversation by its conversationKey (must belong to user)
+app.get('/api/ai/assistant/conversations/:conversationKey', authenticate, aiAssistantUserLimiter, (req: any, res) => {
+  try {
+    const userId = req.user.id;
+    const key = String(req.params.conversationKey || '').trim();
+    if (!key) return res.status(400).json({ error: 'conversationKey is required' });
+
+    const row = db
+      .prepare('SELECT conversationKey, role, payload, createdAt, updatedAt FROM assistant_conversations WHERE conversationKey = ? AND userId = ?')
+      .get(key, userId) as any;
+
+    if (!row) return res.status(404).json({ error: 'Conversation not found' });
+
+    let payload = [] as any;
+    try {
+      payload = row.payload ? JSON.parse(row.payload) : [];
+    } catch {
+      payload = [];
+    }
+
+    return res.json({ success: true, conversation: { conversationKey: row.conversationKey, role: row.role, payload, createdAt: row.createdAt, updatedAt: row.updatedAt } });
+  } catch (err) {
+    console.error('Failed to fetch conversation', err);
+    return res.status(500).json({ error: 'Unable to fetch conversation' });
+  }
+});
+
+// Delete a conversation (only owner can delete)
+app.delete('/api/ai/assistant/conversations/:conversationKey', authenticate, aiAssistantUserLimiter, (req: any, res) => {
+  try {
+    const userId = req.user.id;
+    const key = String(req.params.conversationKey || '').trim();
+    if (!key) return res.status(400).json({ error: 'conversationKey is required' });
+
+    const row = db.prepare('SELECT id FROM assistant_conversations WHERE conversationKey = ? AND userId = ?').get(key, userId) as any;
+    if (!row) return res.status(404).json({ error: 'Conversation not found' });
+
+    db.prepare('DELETE FROM assistant_conversations WHERE conversationKey = ? AND userId = ?').run(key, userId);
+
+    try {
+      db.prepare('INSERT INTO audit_logs (id, userId, action, resource_type, resource_id, details, ip_address, user_agent, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)')
+        .run(uuidv4(), userId, 'assistant_delete', 'assistant_conversation', key, JSON.stringify({ deletedBy: userId }), req.ip, req.get('User-Agent') || '');
+    } catch (auditErr) {
+      console.warn('Failed to write assistant delete audit log', auditErr);
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete conversation', err);
+    return res.status(500).json({ error: 'Unable to delete conversation' });
+  }
+});
 
 app.get('/api/events', authenticate, (req: any, res): any => {
   const clientId = uuidv4();
@@ -6088,12 +6462,24 @@ app.post('/api/verification/whatsapp-otp/request', authenticate, async (req: any
 
 app.post('/api/verification/otp/verify', authenticate, (req: any, res): any => {
   const channel = String(req.body.channel || '').trim().toLowerCase();
-  const destination = String(req.body.destination || '').trim();
+  let destination = String(req.body.destination || '').trim();
   const otp = String(req.body.otp || '').trim();
   if (!['email', 'whatsapp'].includes(channel)) {
     return res.status(400).json({ error: 'Verification channel must be email or whatsapp' });
   }
-  if (!destination || !otp) return res.status(400).json({ error: 'Destination and OTP are required' });
+
+  if (!destination) {
+    const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(req.user.id) as any;
+    if (channel === 'email') {
+      destination = String(user?.email || '').trim();
+    } else if (channel === 'whatsapp') {
+      destination = String(user?.phone || '').trim();
+    }
+  }
+
+  if (!destination || !otp) {
+    return res.status(400).json({ error: 'Destination and OTP are required' });
+  }
 
   const record = db
     .prepare(
@@ -7818,6 +8204,111 @@ app.get('/api/marketplace/posts', optionalAuthenticate, (req: any, res): any => 
   res.json({ success: true, posts: rows });
 });
 
+// Feed endpoints: recent, trending, following, mixed
+app.get('/api/marketplace/posts/feed/recent', optionalAuthenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || '';
+  const rows = db
+    .prepare(
+      `
+      SELECT p.*, u.name as traderName, u.businessName as traderBusinessName,
+        COALESCE(ts.qualityScore, 0) as qualityScore,
+        (SELECT COUNT(*) FROM transactions tx WHERE tx.traderId = p.traderId AND tx.status = 'completed') as totalSales,
+        EXISTS(SELECT 1 FROM post_likes l WHERE l.postId = p.id AND l.userId = ?) as liked,
+        EXISTS(SELECT 1 FROM post_favorites f WHERE f.postId = p.id AND f.userId = ?) as favorited,
+        EXISTS(SELECT 1 FROM trader_follows tf WHERE tf.traderId = p.traderId AND tf.followerId = ?) as following
+      FROM marketplace_posts p
+      JOIN users u ON u.id = p.traderId
+      LEFT JOIN trader_stats ts ON ts.traderId = p.traderId
+      WHERE p.status = 'active'
+      ORDER BY p.createdAt DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(userId, userId, userId, limit, offset) as any[];
+  res.json({ success: true, posts: rows });
+});
+
+app.get('/api/marketplace/posts/feed/trending', optionalAuthenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || '';
+  const rows = db
+    .prepare(
+      `
+      SELECT p.*, u.name as traderName, u.businessName as traderBusinessName,
+        COALESCE(ts.qualityScore, 0) as qualityScore,
+        (SELECT COUNT(*) FROM transactions tx WHERE tx.traderId = p.traderId AND tx.status = 'completed') as totalSales,
+        EXISTS(SELECT 1 FROM post_likes l WHERE l.postId = p.id AND l.userId = ?) as liked,
+        EXISTS(SELECT 1 FROM post_favorites f WHERE f.postId = p.id AND f.userId = ?) as favorited,
+        EXISTS(SELECT 1 FROM trader_follows tf WHERE tf.traderId = p.traderId AND tf.followerId = ?) as following
+      FROM marketplace_posts p
+      JOIN users u ON u.id = p.traderId
+      LEFT JOIN trader_stats ts ON ts.traderId = p.traderId
+      WHERE p.status = 'active'
+      ORDER BY (p.likeCount * 1.0 / MAX(p.viewCount, 1)) DESC, COALESCE(ts.qualityScore, 0) DESC, p.createdAt DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(userId, userId, userId, limit, offset) as any[];
+  res.json({ success: true, posts: rows });
+});
+
+app.get('/api/marketplace/posts/feed/following', optionalAuthenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || '';
+  if (!userId) return res.json({ success: true, posts: [] });
+  const rows = db
+    .prepare(
+      `
+      SELECT p.*, u.name as traderName, u.businessName as traderBusinessName,
+        COALESCE(ts.qualityScore, 0) as qualityScore,
+        (SELECT COUNT(*) FROM transactions tx WHERE tx.traderId = p.traderId AND tx.status = 'completed') as totalSales,
+        EXISTS(SELECT 1 FROM post_likes l WHERE l.postId = p.id AND l.userId = ?) as liked,
+        EXISTS(SELECT 1 FROM post_favorites f WHERE f.postId = p.id AND f.userId = ?) as favorited,
+        EXISTS(SELECT 1 FROM trader_follows tf WHERE tf.traderId = p.traderId AND tf.followerId = ?) as following
+      FROM marketplace_posts p
+      JOIN users u ON u.id = p.traderId
+      LEFT JOIN trader_stats ts ON ts.traderId = p.traderId
+      WHERE p.status = 'active' AND p.traderId IN (SELECT traderId FROM trader_follows WHERE followerId = ?)
+      ORDER BY p.createdAt DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(userId, userId, userId, userId, limit, offset) as any[];
+  res.json({ success: true, posts: rows });
+});
+
+app.get('/api/marketplace/posts/feed/mixed', optionalAuthenticate, (req: any, res): any => {
+  // For now, reuse the existing `/api/marketplace/posts` ranking algorithm as a mixed feed.
+  const { limit, offset } = parseLimitOffset(req.query);
+  const userId = req.user?.id || '';
+  const rows = db
+    .prepare(
+      `
+      SELECT p.*, u.name as traderName, u.businessName as traderBusinessName,
+        COALESCE(ts.qualityScore, 0) as qualityScore,
+        (SELECT COUNT(*) FROM transactions tx WHERE tx.traderId = p.traderId AND tx.status = 'completed') as totalSales,
+        EXISTS(SELECT 1 FROM post_likes l WHERE l.postId = p.id AND l.userId = ?) as liked,
+        EXISTS(SELECT 1 FROM post_favorites f WHERE f.postId = p.id AND f.userId = ?) as favorited,
+        EXISTS(SELECT 1 FROM trader_follows tf WHERE tf.traderId = p.traderId AND tf.followerId = ?) as following
+      FROM marketplace_posts p
+      JOIN users u ON u.id = p.traderId
+      LEFT JOIN trader_stats ts ON ts.traderId = p.traderId
+      WHERE p.status = 'active'
+      ORDER BY
+        (
+          (julianday('now') - julianday(p.createdAt)) * -1
+          + (p.likeCount * 1.0 / MAX(p.viewCount, 1)) * 50
+          + COALESCE(ts.qualityScore, 0) * 20
+        ) DESC,
+        p.createdAt DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(userId, userId, userId, limit, offset) as any[];
+  res.json({ success: true, posts: rows });
+});
+
 app.post('/api/marketplace/posts', requireRole(['trader', 'admin']), (req: any, res): any => {
   const { productId, mediaType, mediaUrl, thumbnailUrl, caption, price, stock, category } = req.body || {};
   if (!mediaUrl || !['image', 'video'].includes(String(mediaType || 'image'))) {
@@ -7902,6 +8393,57 @@ app.post('/api/marketplace/posts/:id/report', authenticate, (req: any, res): any
     uuidv4(), req.params.id, post.traderId, req.user.id, reason.slice(0, 500)
   );
   res.status(201).json({ success: true });
+});
+
+app.get('/api/marketplace/posts/:id/comments', optionalAuthenticate, (req: any, res): any => {
+  const { limit, offset } = parseLimitOffset(req.query);
+  const post = db.prepare("SELECT id FROM marketplace_posts WHERE id = ? AND status = 'active'").get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+
+  const comments = db
+    .prepare(
+      `SELECT c.id, c.postId, c.commenterId, c.content, c.createdAt,
+              u.name as commenterName, u.profilePhoto as commenterAvatar
+       FROM post_comments c
+       LEFT JOIN users u ON u.id = c.commenterId
+       WHERE c.postId = ?
+       ORDER BY c.createdAt DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(req.params.id, limit, offset) as any[];
+
+  res.json({ success: true, comments });
+});
+
+app.post('/api/marketplace/posts/:id/comments', authenticate, (req: any, res): any => {
+  const content = String(req.body?.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Comment content is required' });
+
+  const post = db.prepare("SELECT id FROM marketplace_posts WHERE id = ? AND status = 'active'").get(req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO post_comments (id, postId, commenterId, content) VALUES (?, ?, ?, ?)').run(
+    id,
+    req.params.id,
+    req.user.id,
+    content.slice(0, 1000)
+  );
+
+  const commentCount = (db.prepare('SELECT COUNT(*) as count FROM post_comments WHERE postId = ?').get(req.params.id) as any).count;
+  db.prepare('UPDATE marketplace_posts SET commentCount = ? WHERE id = ?').run(commentCount, req.params.id);
+
+  const comment = db
+    .prepare(
+      `SELECT c.id, c.postId, c.commenterId, c.content, c.createdAt,
+              u.name as commenterName, u.profilePhoto as commenterAvatar
+       FROM post_comments c
+       LEFT JOIN users u ON u.id = c.commenterId
+       WHERE c.id = ?`
+    )
+    .get(id) as any;
+
+  res.status(201).json({ success: true, comment, commentCount });
 });
 
 app.post('/api/ratings', authenticate, (req: any, res): any => {
@@ -14983,6 +15525,31 @@ async function startServer() {
       destroyUpgrade: false,
       destroyUpgradeTimeout: 0,
     });
+    (io as any).use((socket: any, next: (error?: Error) => void) => {
+      try {
+        const authToken = String(socket.handshake.auth?.token || '').replace(/^Bearer\s+/i, '');
+        const cookieHeader = String(socket.handshake.headers?.cookie || '');
+        const cookieToken = cookieHeader
+          .split(';')
+          .map((part: string) => part.trim())
+          .find((part: string) => part.startsWith('nexus_auth_token='))
+          ?.slice('nexus_auth_token='.length) || '';
+        const token = authToken || decodeURIComponent(cookieToken);
+        if (!token) return next(new Error('Authentication required'));
+
+        const decodedUser = jwt.verify(token, JWT_SECRET_KEY) as any;
+        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decodedUser.userId) as any;
+        if (!user) return next(new Error('Authentication required'));
+
+        const accountNumber = ensureChatAccountRecord(user);
+        if (!accountNumber) return next(new Error('Account unavailable'));
+        socket.data.user = user;
+        socket.data.accountNumber = accountNumber;
+        next();
+      } catch {
+        next(new Error('Authentication required'));
+      }
+    });
     // Attach Socket.io to the server after ws server is initialized
     (io as any).attach(activeServer);
 
@@ -14991,7 +15558,9 @@ async function startServer() {
       // Allow clients to join rooms (e.g., account rooms) by sending a `join` event
       socket.on('join', (room: string) => {
         try {
-          if (room) socket.join(String(room));
+          if (room && String(room) === String(socket.data.accountNumber)) {
+            socket.join(String(room));
+          }
         } catch (e) {}
       });
       socket.on('leave', (room: string) => {
@@ -15021,7 +15590,7 @@ async function startServer() {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `);
           
-          const initiatorAccount = socket.handshake.auth.accountNumber;
+          const initiatorAccount = socket.data.accountNumber;
           stmt.run(
             callSessionId,
             data.conversationId,
@@ -15054,7 +15623,7 @@ async function startServer() {
         answer: any;
       }) => {
         try {
-          const accountNumber = socket.handshake.auth.accountNumber;
+          const accountNumber = socket.data.accountNumber;
           
           db.prepare(`
             UPDATE call_sessions 
@@ -15091,7 +15660,7 @@ async function startServer() {
         io?.to(data.to).emit('call:ice-candidate', {
           sessionId: data.sessionId,
           candidate: data.candidate,
-          from: socket.handshake.auth.accountNumber
+            from: socket.data.accountNumber
         });
       });
 
@@ -15114,7 +15683,7 @@ async function startServer() {
             });
           }
           
-          logSystem(`Call declined: ${data.sessionId}`, 'info', 'call');
+          logSystem(`Call declined: ${data.sessionId}`, 'info', 'call', socket.data.accountNumber);
         } catch (error: any) {
           console.error('Call decline error:', error);
         }
@@ -15137,7 +15706,7 @@ async function startServer() {
           `).get(data.sessionId) as any;
           
           if (callSession) {
-            const otherParty = callSession.initiatorAccountNumber === socket.handshake.auth.accountNumber
+            const otherParty = callSession.initiatorAccountNumber === socket.data.accountNumber
               ? callSession.recipientAccountNumber
               : callSession.initiatorAccountNumber;
             
@@ -15147,7 +15716,7 @@ async function startServer() {
             });
           }
           
-          logSystem(`Call ended: ${data.sessionId}, duration: ${data.duration}s`, 'info', 'call');
+          logSystem(`Call ended: ${data.sessionId}, duration: ${data.duration}s`, 'info', 'call', socket.data.accountNumber);
         } catch (error: any) {
           console.error('Call end error:', error);
         }

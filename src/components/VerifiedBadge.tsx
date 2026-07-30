@@ -1,28 +1,29 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { ShieldCheck, Star, Crown, Check, Award, Truck } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+export type VerifiedBadgeLevel =
+  | 'basic'
+  | 'verified'
+  | 'premium'
+  | 'enterprise'
+  | 'family'
+  | 'organization'
+  | 'trader'
+  | 'delivery'
+  | 'customer-individual'
+  | 'customer-organization'
+  | 'customer-business';
+
 interface VerifiedBadgeProps {
-  level:
-    | 'basic'
-    | 'verified'
-    | 'premium'
-    | 'enterprise'
-    | 'family'
-    | 'organization'
-    | 'trader'
-    | 'delivery'
-    | 'customer-individual'
-    | 'customer-organization'
-    | 'customer-business';
+  level: VerifiedBadgeLevel;
   size?: 'xs' | 'sm' | 'md' | 'lg' | number;
   showLabel?: boolean;
   className?: string;
   animated?: boolean;
 }
 
-export const VerifiedBadge: React.FC<VerifiedBadgeProps> = ({
+const VerifiedBadgeComponent: React.FC<VerifiedBadgeProps> = ({
   level,
   size = 'md',
   showLabel = true,
@@ -113,7 +114,7 @@ export const VerifiedBadge: React.FC<VerifiedBadgeProps> = ({
   const spacingClass = showLabel ? 'gap-2' : 'gap-0';
 
   return (
-    <motion.div
+    <div
       className={cn(
         'inline-flex items-center rounded-full border font-semibold',
         spacingClass,
@@ -124,20 +125,7 @@ export const VerifiedBadge: React.FC<VerifiedBadgeProps> = ({
         minWidth: badgeSize,
         height: badgeSize,
         borderColor: '#1E40AF',
-        boxShadow: animated ? `0 0 18px ${config.glow}` : undefined,
       }}
-      animate={
-        animated
-          ? {
-              boxShadow: [
-                `0 0 0 0 ${config.glow}`,
-                `0 0 0 10px transparent`,
-                `0 0 0 0 ${config.glow}`,
-              ],
-            }
-          : {}
-      }
-      transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
     >
       <div
         className="flex items-center justify-center"
@@ -177,10 +165,11 @@ export const VerifiedBadge: React.FC<VerifiedBadgeProps> = ({
           {config.label}
         </span>
       )}
-    </motion.div>
+    </div>
   );
 };
 
+export const VerifiedBadge = React.memo(VerifiedBadgeComponent);
 interface ProfileImageProps {
   src?: string;
   alt: string;
@@ -262,7 +251,7 @@ export const ProfileImage: React.FC<ProfileImageProps> = ({
       {/* Verification Badge */}
       {verified && (
         <div className="absolute -bottom-1 -right-1">
-          <VerifiedBadge level={verificationLevel} size="sm" showLabel={false} animated={true} />
+          <VerifiedBadge level={verificationLevel} size="sm" showLabel={false} />
         </div>
       )}
 

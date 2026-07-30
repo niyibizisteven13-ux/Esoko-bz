@@ -11,6 +11,7 @@ const TraderDashboard = lazy(() => import('./pages/TraderDashboard'));
 const AdminPortal = lazy(() => import('./pages/AdminPortal'));
 const AgentPortal = lazy(() => import('./pages/AgentPortal'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const FeedPage = lazy(() => import('./pages/FeedPage'));
 
 const DashboardLoading = () => <div className="flex min-h-screen items-center justify-center bg-[#0B141A] text-sm text-white">Loading Makasi…</div>;
 
@@ -40,7 +41,7 @@ function getRoleRedirect(role: string | null): string {
     case 'agent':
       return '/agent';
     case 'customer':
-      return '/customer?tab=marketplace';
+      return '/customer?tab=overview';
     default:
       return '/login';
   }
@@ -73,10 +74,10 @@ export default function App() {
     };
   }, []);
 
-  const marketplaceEntry = '/customer?tab=marketplace';
-  // Force the app to land on the public marketplace so users can login inline there.
+  const marketplaceEntry = '/customer?tab=overview';
+  // Force the app to land on the customer home overview so users see the feed first.
   const fallbackDestination = marketplaceEntry;
-  const showLanding = false; // disable public landing to land directly on marketplace
+  const showLanding = false; // disable public landing to land directly on customer overview
 
   return (
     <Suspense fallback={<DashboardLoading />}>
@@ -89,6 +90,7 @@ export default function App() {
         <Route path="/admin/*" element={authToken ? <AdminPortal /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/agent/*" element={authToken ? <AgentPortal /> : <Navigate to={marketplaceEntry} replace />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/feed" element={<FeedPage />} />
         <Route path="/landing" element={<Navigate to={marketplaceEntry} replace />} />
         <Route path="*" element={<Navigate to={fallbackDestination} replace />} />
       </Routes>

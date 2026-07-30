@@ -126,6 +126,8 @@ interface Conversation {
 	unreadCount: number;
 	muted?: boolean;
 	blocked?: boolean;
+	profilePhoto?: string | null;
+	description?: string | null;
 }
 
 const AVATAR_COLORS = ['#e8622c', '#3d6b4a', '#7a5c3d', '#3d5a80', '#6a4c93', '#9a3b3b'];
@@ -847,25 +849,23 @@ export default function TraderChat({
 	}
 
 	async function handleAddContact() {
-		const accountNumber = newAccountNumber.trim();
-		if (!accountNumber) { setAddContactError('Enter an 8-digit trader app number.'); return; }
-		if (!/^[0-9]{8}$/.test(accountNumber)) { setAddContactError('Trader app number must be 8 digits.'); return; }
-		if (conversations.some((c) => c.accountNumber === accountNumber)) { setAddContactError('This account is already in your chats.'); return; }
+		const identifier = newAccountNumber.trim();
+		if (!identifier) { setAddContactError('Enter an email, username, or app number for an existing account.'); return; }
 
 		setAddContactError(null);
 		setAddingContact(true);
 		try {
 			let newConversation: Conversation | null = null;
 			if (onAddContact) {
-				newConversation = await onAddContact(accountNumber, newDisplayName.trim() || undefined);
+				newConversation = await onAddContact(identifier, newDisplayName.trim() || undefined);
 			} else {
-				const name = newDisplayName.trim() || `Account ${accountNumber}`;
+				const name = newDisplayName.trim() || `Account ${identifier}`;
 				newConversation = {
-					id: `local-${accountNumber}`,
-					accountNumber,
+					id: `local-${identifier}`,
+					accountNumber: identifier,
 					name,
 					initials: initialsFor(name),
-					avatarColor: colorForAccount(accountNumber),
+					avatarColor: colorForAccount(identifier),
 					online: false,
 					lastMessagePreview: 'No messages yet',
 					lastMessageTime: '',
@@ -873,7 +873,7 @@ export default function TraderChat({
 				};
 			}
 			if (!newConversation) {
-				setAddContactError('No account found with that 8-digit app number.');
+				setAddContactError('No existing account was found for that email, username, or app number.');
 				setAddingContact(false);
 				return;
 			}
@@ -977,7 +977,7 @@ export default function TraderChat({
 				<div className="flex-shrink-0 px-3 py-2">
 					<div className="flex items-center gap-2.5 rounded-lg px-3 py-1.5" style={{ backgroundColor: wa.panelBg }}>
 						<span style={{ color: wa.textSecondary }}><IconSearch /></span>
-						<input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or app number" className="w-full bg-transparent text-[13px] focus:outline-none" style={{ color: wa.textPrimary }} />
+						<input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email, or app number" className="w-full bg-transparent text-[13px] focus:outline-none" style={{ color: wa.textPrimary }} />
 					</div>
 				</div>
 
@@ -990,8 +990,8 @@ export default function TraderChat({
 									<IconX />
 								</button>
 							</div>
-							<label className="mb-2 block text-[13px] font-medium" style={{ color: wa.textSecondary }}>Trader app number (8 digits)</label>
-							<input type="text" value={newAccountNumber} onChange={(e) => setNewAccountNumber(e.target.value)} placeholder="e.g. 24081901" className="mb-4 w-full rounded-md px-3 py-2.5 text-[14px] focus:outline-none" style={{ backgroundColor: wa.fieldBg, color: wa.textPrimary, border: `1px solid ${wa.border}` }} autoFocus />
+							<label className="mb-2 block text-[13px] font-medium" style={{ color: wa.textSecondary }}>Existing account identifier</label>
+							<input type="text" value={newAccountNumber} onChange={(e) => setNewAccountNumber(e.target.value)} placeholder="Email, username, or app number" className="mb-4 w-full rounded-md px-3 py-2.5 text-[14px] focus:outline-none" style={{ backgroundColor: wa.fieldBg, color: wa.textPrimary, border: `1px solid ${wa.border}` }} autoFocus />
 							<label className="mb-2 block text-[13px] font-medium" style={{ color: wa.textSecondary }}>Display name (optional)</label>
 							<input type="text" value={newDisplayName} onChange={(e) => setNewDisplayName(e.target.value)} placeholder="How this contact shows up in your list" className="mb-4 w-full rounded-md px-3 py-2.5 text-[14px] focus:outline-none" style={{ backgroundColor: wa.fieldBg, color: wa.textPrimary, border: `1px solid ${wa.border}` }} />
 							{addContactError && (<p className="mb-4 rounded-md px-3 py-2 text-[12px]" style={{ backgroundColor: 'rgba(227, 91, 91, 0.1)', color: wa.danger }}>{addContactError}</p>)}
@@ -1006,7 +1006,7 @@ export default function TraderChat({
 						<>
 							{conversations.length === 0 && (
 								<div className="flex flex-col items-center gap-3 p-6 text-center">
-									<p className="text-[13px]" style={{ color: wa.textSecondary }}>No chats yet. Add someone by their 8-digit trader app number to start messaging.</p>
+									<p className="text-[13px]" style={{ color: wa.textSecondary }}>No chats yet. Add someone by their email, username, or app number to start messaging.</p>
 									<button onClick={() => setShowAddContact(true)} className="rounded-full px-4 py-1.5 text-[13px] font-medium" style={{ backgroundColor: wa.accent, color: wa.sidebarBg }}>Add contact</button>
 								</div>
 							)}
@@ -1018,7 +1018,7 @@ export default function TraderChat({
 								return (
 									<button key={c.id} onClick={() => { setActiveConversationId(c.id); setMobilePane('chat'); }} className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors touch-manipulation active:opacity-80" style={{ backgroundColor: isActive ? wa.fieldBg : 'transparent' }}>
 										<div className="relative flex h-[46px] w-[46px] flex-shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-white" style={{ backgroundColor: c.avatarColor }}>
-											{c.initials}
+											{c.profilePhoto ? <img src={c.profilePhoto} alt={`${c.name} profile`} className="h-full w-full rounded-full object-cover" /> : c.initials}
 											{c.online && (<span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full" style={{ backgroundColor: wa.accent, border: `2px solid ${wa.sidebarBg}` }} />)}
 										</div>
 										<div className="min-w-0 flex-1 py-0.5" style={{ borderBottom: `1px solid ${wa.border}` }}>
@@ -1058,7 +1058,7 @@ export default function TraderChat({
 				{!activeConversation ? (
 					<div className="flex flex-1 items-center justify-center px-6">
 						<p className="text-sm text-center" style={{ color: wa.textSecondary }}>
-							{conversations.length === 0 ? 'Add a contact by 8-digit trader app number to start chatting.' : 'Select a conversation to start chatting.'}
+							{conversations.length === 0 ? 'Add a contact by email, username, or app number to start chatting.' : 'Select a conversation to start chatting.'}
 						</p>
 					</div>
 				) : (
@@ -1077,12 +1077,12 @@ export default function TraderChat({
 									<IconArrowLeft />
 								</span>
 								<div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white" style={{ backgroundColor: activeConversation.avatarColor }}>
-									{activeConversation.initials}
+									{activeConversation.profilePhoto ? <img src={activeConversation.profilePhoto} alt={`${activeConversation.name} profile`} className="h-full w-full rounded-full object-cover" /> : activeConversation.initials}
 								</div>
 								<div className="min-w-0">
 									<div className="truncate text-[15px]" style={{ color: wa.textPrimary }}>{activeConversation.name}</div>
 									<div className="truncate text-[12px]" style={{ color: wa.textSecondary }}>
-										{isBlocked ? 'Blocked' : activeConversation.online ? 'online' : `#${activeConversation.accountNumber}`}
+											{isBlocked ? 'Blocked' : activeConversation.accountNumber.toLowerCase() === 'bwenge' ? 'AI • Think and work with Bwenge' : activeConversation.online ? 'online' : `#${activeConversation.accountNumber}`}
 									</div>
 								</div>
 							</button>
@@ -1559,11 +1559,12 @@ export default function TraderChat({
 										className="flex h-24 w-24 items-center justify-center rounded-full text-3xl font-semibold text-white"
 										style={{ backgroundColor: activeConversation.avatarColor }}
 									>
-										{activeConversation.initials}
+										{activeConversation.profilePhoto ? <img src={activeConversation.profilePhoto} alt={`${activeConversation.name} profile`} className="h-full w-full rounded-full object-cover" /> : activeConversation.initials}
 									</motion.div>
 									<div className="text-center">
 										<div className="text-[18px]" style={{ color: wa.textPrimary }}>{activeConversation.name}</div>
 										<div className="mt-1 text-[13px]" style={{ color: wa.textSecondary }}>#{activeConversation.accountNumber}</div>
+										{activeConversation.description && <p className="mt-3 max-w-sm text-center text-[13px] leading-relaxed" style={{ color: wa.textSecondary }}>{activeConversation.description}</p>}
 									</div>
 									<div className="w-full max-w-sm">
 										<div className="mb-2 text-[12px] font-semibold uppercase tracking-wide" style={{ color: wa.textSecondary }}>Business labels</div>

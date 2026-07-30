@@ -47,6 +47,13 @@ export function getCurrentCoordinates(): Promise<Coordinates> {
   });
 }
 
+export interface LiveCoordinates extends Coordinates {
+  /** Current ground speed in km/h, when the device reports it (often null while stationary). */
+  speedKmh?: number | null;
+  /** Compass heading in degrees (0 = north), when the device reports it. */
+  headingDeg?: number | null;
+}
+
 /**
  * Continuously tracks the device's live position (used while a turn-by-turn
  * session is active). Returns an unsubscribe function — always call it when
@@ -54,7 +61,7 @@ export function getCurrentCoordinates(): Promise<Coordinates> {
  * polling in the background.
  */
 export function watchUserPosition(
-  onUpdate: (coords: Coordinates) => void,
+  onUpdate: (coords: LiveCoordinates) => void,
   onError?: (error: GeolocationPositionError | Error) => void
 ): () => void {
   if (!navigator.geolocation) {
@@ -64,7 +71,14 @@ export function watchUserPosition(
 
   const watchId = navigator.geolocation.watchPosition(
     (position) => {
-      onUpdate({ lat: position.coords.latitude, lng: position.coords.longitude });
+      const speedMs = position.coords.speed;
+      const heading = position.coords.heading;
+      onUpdate({
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        speedKmh: typeof speedMs === 'number' && speedMs >= 0 ? speedMs * 3.6 : null,
+        headingDeg: typeof heading === 'number' && !Number.isNaN(heading) ? heading : null,
+      });
     },
     (error) => onError?.(error),
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }

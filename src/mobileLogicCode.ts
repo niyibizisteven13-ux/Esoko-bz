@@ -42,6 +42,9 @@ function getBackendServerUrl(): string {
   const port = window.location.port || DEFAULT_BACKEND_PORT;
 
   const localhostHosts = new Set(['localhost', '127.0.0.1', '::1']);
+  const defaultApiBase = import.meta.env.VITE_API_BASE_URL || DEFAULT_BACKEND_BASE;
+  const networkApiBase = import.meta.env.VITE_NETWORK_API_URL || `http://172.20.26.58:${DEFAULT_BACKEND_PORT}`;
+
   if (localhostHosts.has(hostname)) {
     if (protocol === 'http:' || protocol === 'https:') {
       return `${protocol}//${hostname}:${port}`;
@@ -56,7 +59,13 @@ function getBackendServerUrl(): string {
     return DEFAULT_BACKEND_BASE;
   }
 
-  return import.meta.env.VITE_API_BASE_URL || DEFAULT_BACKEND_BASE;
+  const apiUrl = new URL(defaultApiBase, window.location.origin);
+  const apiUrlIsLocalhost = localhostHosts.has(apiUrl.hostname);
+  if (apiUrlIsLocalhost && !localhostHosts.has(hostname)) {
+    return networkApiBase;
+  }
+
+  return defaultApiBase;
 }
 
 export const BACKEND_SERVER_URL = getBackendServerUrl();

@@ -33,11 +33,19 @@ function resolveApiBase(): string {
   if (DEFAULT_API_BASE) {
     try {
       const parsed = new URL(DEFAULT_API_BASE, currentOrigin);
-      const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-      const isRemoteApi = !['localhost', '127.0.0.1'].includes(parsed.hostname);
+      const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+      const isApiLocalHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+      const isRemoteApi = !isApiLocalHost;
+
       if (isLocalHost && isRemoteApi) {
         return '';
       }
+
+      if (isApiLocalHost && !isLocalHost && NETWORK_API_BASE) {
+        console.log('🔗 Using network fallback API host for remote browser:', NETWORK_API_BASE);
+        return NETWORK_API_BASE;
+      }
+
       const isMixedContent = window.location.protocol === 'https:' && parsed.protocol === 'http:';
       if (isMixedContent) {
         return '';
@@ -121,6 +129,8 @@ export function setAuthToken(token: string | null) {
   } catch {
     // ignore
   }
+
+  window.dispatchEvent(new CustomEvent('auth:changed'));
 }
 
 async function request<T>(

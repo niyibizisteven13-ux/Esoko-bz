@@ -196,10 +196,10 @@ export default function FeatureStore() {
         <div className="relative z-10">
           <h3 className="text-2xl font-black mb-2">Need a custom feature?</h3>
           <p className="text-slate-400 mb-6">
-            Our AI can build custom modules tailored to your specific business needs.
+            We can tailor a custom commerce experience for your team, products, and growth goals.
           </p>
           <button className="px-8 py-4 bg-orange-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-orange-700 transition-all">
-            Talk to AI Assistant
+            Book a custom feature
           </button>
         </div>
         <div className="absolute -right-20 -bottom-20 w-64 h-64 bg-orange-600/20 rounded-full blur-3xl"></div>

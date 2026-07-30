@@ -103,7 +103,7 @@ export default function TrustVerificationPanel({ userData, role }: TrustVerifica
     try {
       const res = await apiPost<any>('/api/verification/otp/verify', {
         channel,
-        destination,
+        destination: destination || undefined,
         otp,
       });
       setStatus((prev) => ({

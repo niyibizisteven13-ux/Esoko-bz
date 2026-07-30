@@ -54,8 +54,8 @@ describe('apiClient 401 handling', () => {
       }
     });
 
-    globalThis.localStorage = localStorageMock as Storage;
-    globalThis.sessionStorage = sessionStorageMock as Storage;
+    globalThis.localStorage = localStorageMock as unknown as Storage;
+    globalThis.sessionStorage = sessionStorageMock as unknown as Storage;
     globalThis.window = {
       location,
       dispatchEvent,
@@ -70,7 +70,7 @@ describe('apiClient 401 handling', () => {
         super(type, eventInitDict);
         this.detail = eventInitDict?.detail as T;
       }
-    } as typeof CustomEvent;
+    } as unknown as typeof CustomEvent;
 
     setAuthToken(null);
   });

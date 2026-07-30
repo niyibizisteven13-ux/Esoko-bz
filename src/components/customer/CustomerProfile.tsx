@@ -162,7 +162,7 @@ export default function CustomerProfile({ userData }: CustomerProfileProps) {
     try {
       const response = await apiPost<any>('/api/verification/otp/verify', {
         channel: 'email',
-        destination: userData?.email,
+        destination: userData?.email || undefined,
         otp: otp.trim(),
       });
       if (response?.user) updateStoredAuthUser(response.user);

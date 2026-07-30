@@ -14,6 +14,7 @@ export interface ChatConversationSummary {
   lastMessageRead?: ChatMessageStatus;
   unreadCount: number;
   profilePhoto?: string | null;
+  description?: string | null;
   lastSeen?: string | null;
   muted?: boolean;
   blocked?: boolean;
@@ -35,6 +36,11 @@ export interface ChatMessageShape {
   status?: ChatMessageStatus;
   replyToMessageId?: string | null;
   reactions?: Record<string, string[]>;
+}
+
+export function isBwengeConversation(conversation?: Pick<ChatConversationSummary, 'accountNumber' | 'name'> | null) {
+  const name = String(conversation?.name || '').toLowerCase();
+  return conversation?.accountNumber?.toLowerCase() === 'bwenge' || name === 'bwenge';
 }
 
 function formatTimestamp(timestamp?: string) {
@@ -87,6 +93,7 @@ export function normalizeConversationSummary(payload: any, _currentAccountNumber
     lastMessageRead: payload.lastMessageRead,
     unreadCount: Number(payload.unreadCount || 0),
     profilePhoto: payload.profilePhoto || null,
+    description: payload.description || null,
     lastSeen: payload.lastSeen || null,
     muted: Boolean(payload.muted),
     blocked: Boolean(payload.blocked),
@@ -95,7 +102,41 @@ export function normalizeConversationSummary(payload: any, _currentAccountNumber
 
 export async function fetchConversations(currentAccountNumber: string) {
   const data = await apiGet<{ conversations: any[] }>('/api/conversations');
-  return data.conversations.map((conversation) => normalizeConversationSummary(conversation, currentAccountNumber));
+  const normalized = data.conversations.map((conversation) => normalizeConversationSummary(conversation, currentAccountNumber));
+  const hasBwengeConversation = normalized.some((conversation) => {
+    const name = (conversation.name || '').toLowerCase();
+    return conversation.accountNumber === 'bwenge' || name.includes('bwenge');
+  });
+
+  const fallbackBwengeConversation: ChatConversationSummary = {
+    id: 'bwenge-fallback',
+    accountNumber: 'bwenge',
+    name: 'Bwenge',
+    initials: 'BW',
+    avatarColor: '#e8622c',
+    online: false,
+    lastMessagePreview: 'Start a chat',
+    lastMessageTime: '',
+    unreadCount: 0,
+    profilePhoto: '/bwenge-ai.svg',
+    description: 'AI commerce companion for ideas, guidance, and practical next steps. Think and work with Bwenge.',
+    lastSeen: null,
+  };
+
+  const sorted = [...normalized].sort((a, b) => {
+    const aIsBwenge = a.accountNumber === 'bwenge' || (a.name || '').toLowerCase().includes('bwenge');
+    const bIsBwenge = b.accountNumber === 'bwenge' || (b.name || '').toLowerCase().includes('bwenge');
+
+    if (aIsBwenge && !bIsBwenge) return -1;
+    if (!aIsBwenge && bIsBwenge) return 1;
+    return 0;
+  });
+
+  if (!hasBwengeConversation) {
+    return [fallbackBwengeConversation, ...sorted];
+  }
+
+  return sorted;
 }
 
 export async function fetchConversationMessages(conversationId: string, currentAccountNumber: string) {
@@ -104,8 +145,29 @@ export async function fetchConversationMessages(conversationId: string, currentA
 }
 
 export async function createConversation(accountNumber: string, displayName: string | undefined, currentAccountNumber: string) {
-  const data = await apiPost<{ conversation: any }>('/api/conversations', { accountNumber, displayName });
-  return normalizeConversationSummary(data.conversation, currentAccountNumber);
+  try {
+    const data = await apiPost<{ conversation: any }>('/api/conversations', { accountNumber, displayName });
+    return normalizeConversationSummary(data.conversation, currentAccountNumber);
+  } catch (error) {
+    if (accountNumber.toLowerCase() === 'bwenge' || (displayName || '').toLowerCase() === 'bwenge') {
+      return {
+        id: 'bwenge-fallback',
+        accountNumber,
+        name: displayName || 'Bwenge',
+        initials: 'BW',
+        avatarColor: '#e8622c',
+        online: false,
+        lastMessagePreview: 'Start a chat',
+        lastMessageTime: '',
+        unreadCount: 0,
+        profilePhoto: '/bwenge-ai.svg',
+        description: 'AI commerce companion for ideas, guidance, and practical next steps. Think and work with Bwenge.',
+        lastSeen: null,
+      };
+    }
+
+    throw error;
+  }
 }
 
 export async function sendChatMessage(
@@ -139,8 +201,10 @@ export async function sendChatAttachment(conversationId: string, file: File, cur
   };
 }
 
-export async function lookupChatAccount(accountNumber: string) {
-  return apiGet<any>(`/api/accounts/${accountNumber}`);
+export async function lookupChatAccount(identifier: string) {
+  const trimmedIdentifier = identifier.trim();
+  if (!trimmedIdentifier) throw new Error('Chat account identifier is required.');
+  return apiGet<any>(`/api/accounts/${encodeURIComponent(trimmedIdentifier)}`);
 }
 
 export async function muteConversation(conversationId: string, muted: boolean, currentAccountNumber: string) {

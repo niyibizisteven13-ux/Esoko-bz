@@ -115,7 +115,7 @@ export default function VerificationPage() {
       const destination = otpDestination || contactStatus?.email || '';
       await apiPost('/api/verification/otp/verify', {
         channel: 'email',
-        destination,
+        destination: destination || undefined,
         otp: otp.trim(),
       });
       setSuccess('Email verified. Your customer account is verified.');

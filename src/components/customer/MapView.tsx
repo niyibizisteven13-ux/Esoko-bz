@@ -79,14 +79,40 @@ function MapRecenter({ center, zoom }: { center: [number, number]; zoom?: number
 function MapSizeKeeper() {
   const map = useMap();
   useEffect(() => {
-    const refresh = () => map.invalidateSize();
-    const container = map.getContainer();
-    const observer = new ResizeObserver(refresh);
-    observer.observe(container);
-    const timer = window.setTimeout(refresh, 250);
+    const refresh = () => {
+      try {
+        if (map && typeof map.invalidateSize === 'function') map.invalidateSize();
+      } catch (e) {
+        // swallow intermittent leaflet timing errors
+      }
+    };
+
+    // Only attach observers after the map is ready to avoid calling into
+    // internal pane layout code before Leaflet has initialized DOM state.
+    let observer: ResizeObserver | null = null;
+    const onReady = () => {
+      const container = map.getContainer && map.getContainer();
+      if (container) {
+        observer = new ResizeObserver(refresh);
+        observer.observe(container);
+      }
+      // run a delayed refresh once to ensure correct sizing after layout
+      window.setTimeout(refresh, 250);
+    };
+
+    try {
+      map.whenReady(onReady);
+    } catch (e) {
+      // If whenReady isn't available for some reason, fall back to a safe refresh
+      onReady();
+    }
+
     return () => {
-      observer.disconnect();
-      window.clearTimeout(timer);
+      try {
+        if (observer) observer.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
     };
   }, [map]);
   return null;
@@ -101,16 +127,31 @@ function MapBounds({
 }) {
   const map = useMap();
   useEffect(() => {
-    window.setTimeout(() => {
-      map.invalidateSize();
-      if (points.length > 1) {
-        map.fitBounds(points, { padding: [48, 48], maxZoom: 15 });
-      } else if (points.length === 1) {
-        map.flyTo(points[0], 15);
-      } else {
-        map.flyTo(fallbackCenter, 13);
+    const doBounds = () => {
+      try {
+        if (map && typeof map.invalidateSize === 'function') map.invalidateSize();
+        if (points.length > 1) {
+          map.fitBounds(points, { padding: [48, 48], maxZoom: 15 });
+        } else if (points.length === 1) {
+          map.flyTo(points[0], 15);
+        } else {
+          map.flyTo(fallbackCenter, 13);
+        }
+      } catch (e) {
+        // Leaflet may not have finished creating panes; ignore and try again later
+        try {
+          window.setTimeout(doBounds, 250);
+        } catch (err) {
+          // give up
+        }
       }
-    }, 150);
+    };
+
+    try {
+      map.whenReady(() => window.setTimeout(doBounds, 150));
+    } catch (e) {
+      window.setTimeout(doBounds, 150);
+    }
   }, [fallbackCenter, map, points]);
   return null;
 }
