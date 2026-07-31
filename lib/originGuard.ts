@@ -70,7 +70,7 @@ export function isTrustedDynamicPublicOrigin(value: string) {
     const url = new URL(value);
     return (
       url.protocol === 'https:' &&
-      (url.hostname.endsWith('.trycloudflare.com') || url.hostname.endsWith('.onrender.com'))
+      url.hostname.endsWith('.onrender.com')
     );
   } catch {
     return false;

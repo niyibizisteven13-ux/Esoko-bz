@@ -7,11 +7,6 @@ const db = undefined; // Used by firestoreBridge
 const getWebAuthnDomain = (): string => {
   const hostname = window.location.hostname;
 
-  // Handle Cloudflare tunnel domains
-  if (hostname.includes('trycloudflare.com')) {
-    return hostname; // Use full tunnel domain
-  }
-
   // Handle localhost development
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
     return hostname;
