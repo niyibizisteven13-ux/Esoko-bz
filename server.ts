@@ -15466,7 +15466,7 @@ async function startServer() {
         etag: true,
         lastModified: true,
         setHeaders: (res, filePath) => {
-          if (path.basename(filePath) === 'index.html' || path.basename(filePath) === 'sw.js') {
+          if (['index.html', 'sw.js', 'cache-reset.js'].includes(path.basename(filePath))) {
             // The HTML shell and service worker must always revalidate after a deploy.
             // Otherwise a cached shell can request hashed chunks from an older build.
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
