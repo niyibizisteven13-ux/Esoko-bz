@@ -17,11 +17,11 @@ services:
       - key: COOKIE_SAMESITE
         value: strict
       - key: APP_URL
-        value: https://bwenge.space
+        value: https://esoko-bz.onrender.com
       - key: FRONTEND_URLS
-        value: https://bwenge.space
+        value: https://esoko-bz.onrender.com
       - key: VITE_API_BASE_URL
-        value: https://bwenge.space
+        value: https://esoko-bz.onrender.com
       - key: GEMINI_MODEL
         value: gemini-3.5-flash
       - key: GEMINI_API_KEY
