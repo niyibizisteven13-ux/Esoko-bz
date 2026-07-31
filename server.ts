@@ -15394,8 +15394,15 @@ app.use(errorHandler);
 
 async function startServer() {
   let vite: any | null = null;
-  const distDir = path.join(__dirname, 'dist');
+  // Resolve from the container working directory so production always serves
+  // the artifact created by Dockerfile's `npm run build`.
+  const distDir = path.resolve(process.cwd(), 'dist');
   const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction) {
+    console.log(`Frontend build directory: ${distDir}`);
+    console.log(`Frontend index present: ${fs.existsSync(path.join(distDir, 'index.html'))}`);
+  }
 
   async function findAvailablePort(startPort: number, maxAttempts = 20) {
     for (let candidate = startPort; candidate < startPort + maxAttempts; candidate += 1) {

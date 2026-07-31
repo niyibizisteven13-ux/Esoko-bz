@@ -7,6 +7,7 @@ RUN npm ci
 
 COPY . .
 RUN npm run build
+RUN node -e "const fs=require('fs'); if (!fs.existsSync('dist/index.html') || !fs.existsSync('dist/assets')) { throw new Error('Vite build did not produce dist/index.html and dist/assets'); }"
 
 ENV NODE_ENV=production
 ENV PORT=5173
