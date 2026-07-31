@@ -1,7 +1,7 @@
 // Remove caches created by older service workers that could return stale
 // hashed chunks after a deployment. This runs once per browser session.
 (() => {
-  const resetKey = 'bwenge-service-worker-reset-v1';
+  const resetKey = 'bwenge-service-worker-reset-v2';
   try {
     if (sessionStorage.getItem(resetKey)) return;
     sessionStorage.setItem(resetKey, '1');
