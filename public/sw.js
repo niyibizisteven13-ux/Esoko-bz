@@ -58,13 +58,13 @@ self.addEventListener('fetch', (event) => {
             caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           }
           return response;
-        })
-        .catch(() => cached);
-      const fallback = cached || network;
-      if (fallback instanceof Promise) {
-        return fallback.then((res) => res || new Response(undefined, { status: 204 }));
-      }
-      return fallback || new Response(undefined, { status: 204 });
+        });
+
+      // Network first. Only use a cached response when the network is
+      // unavailable; never let an old cached error mask a healthy deployment.
+      return network
+        .then((response) => (response && response.ok ? response : cached || response))
+        .catch(() => cached || new Response(undefined, { status: 204 }));
     })
   );
 });
