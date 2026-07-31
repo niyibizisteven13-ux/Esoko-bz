@@ -1,14 +1,14 @@
 # Bwenge domain setup
 
-The application uses the Render service URL `https://esoko-bz.onrender.com` as its canonical public URL.
+The application uses `https://bwenge.space` as its canonical public URL, with the Render URL available as a fallback.
 
 ## Render
 
 1. Deploy the repository to Render using `render.yaml`.
-2. The custom domain is optional. The service is available directly at `https://esoko-bz.onrender.com`.
+2. In the Render service named `bwenge`, add both `bwenge.space` and `www.bwenge.space` as custom domains.
 3. Copy the exact DNS records Render displays for the domain. Apex records can vary, so use Render's current values.
 4. At the domain registrar, remove conflicting parking or redirect records and add Render's records.
-5. Add `www.bwenge.space` only if you later want a custom domain, then create the exact DNS record Render provides.
+5. In Cloudflare, set the Render-provided DNS records to **DNS only** (gray cloud) while verifying the domain. Do not proxy the Render custom domain until the site is confirmed working.
 6. Wait for DNS and TLS verification, then confirm `APP_URL` and `FRONTEND_URLS` use the final HTTPS URL.
 
 ## Important
