@@ -15463,6 +15463,7 @@ async function startServer() {
   } else {
     app.use(
       express.static(distDir, {
+        index: false,
         etag: true,
         lastModified: true,
         setHeaders: (res, filePath) => {
@@ -15493,6 +15494,11 @@ async function startServer() {
       let html = fs.readFileSync(htmlPath, 'utf-8');
       if (vite) {
         html = await vite.transformIndexHtml(req.originalUrl, html);
+      } else if (isProduction) {
+        // Force a new URL for every Vite asset after each deployment. This
+        // bypasses stale browser/edge entries that may contain old 500s.
+        const buildVersion = fs.statSync(htmlPath).mtimeMs.toString(36);
+        html = html.replace(/(\/assets\/[^"']+)(?=["'])/g, `$1?v=${buildVersion}`);
       }
       res.status(200).set({ 'Content-Type': 'text/html', 'Cache-Control': 'no-cache' }).end(html);
     } catch (error: any) {
