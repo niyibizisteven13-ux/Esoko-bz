@@ -53,6 +53,9 @@ function getBackendServerUrl(): string {
   }
 
   if (isNativeWebWrapper()) {
+    if (import.meta.env.VITE_API_BASE_URL && !/^https?:\/\/localhost(?::\d+)?$/i.test(import.meta.env.VITE_API_BASE_URL)) {
+      return import.meta.env.VITE_API_BASE_URL;
+    }
     if (protocol === 'http:' || protocol === 'https:') {
       return `${protocol}//${hostname}:${port}`;
     }

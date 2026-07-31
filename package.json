@@ -11,6 +11,8 @@
         "test:api": "tsx test-api.ts",
         "test:config": "tsx test-config.ts",
         "build": "vite build",
+        "build:android": "npm run build && npx cap sync android",
+        "assemble:android": "npm run build:android && cd android && gradlew.bat assembleDebug",
         "preview": "vite preview",
         "lint": "tsc --noEmit",
         "lint:fix": "eslint . --ext .ts,.tsx --fix --quiet",

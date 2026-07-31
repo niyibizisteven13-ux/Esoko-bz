@@ -3,4 +3,7 @@
 - Logout clears the stored token.
 - Production CORS now allows Capacitor-style origins such as https://localhost and the deployed app origin.
 - The app builds successfully with Vite and syncs into Android via Capacitor.
-- The Android APK build requires a Java 21 environment; the current local shell lacks JAVA_HOME/java.
+- The Android APK build requires a Java 21 environment.
+- The packaged app is self-contained and no longer points at a developer LAN server. Set `VITE_API_BASE_URL` to the deployed API before building.
+- Web root and unknown routes open the Marketplace by default at `/customer?tab=marketplace`.
+- Build the web bundle and sync native assets with `npm run build:android`; create a debug APK with `npm run assemble:android`.

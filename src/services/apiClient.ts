@@ -26,7 +26,12 @@ function resolveApiBase(): string {
 
   // For native mobile apps (Capacitor/Android)
   if (isNativeWrapper()) {
-    // Prefer network IP for physical devices/real phones
+    // A packaged app must use the deployed API. Only use the LAN address for
+    // local development when no public API base was configured.
+    if (DEFAULT_API_BASE && !/^https?:\/\/localhost(?::\d+)?$/i.test(DEFAULT_API_BASE)) {
+      return DEFAULT_API_BASE;
+    }
+    // Prefer network IP for local physical-device development
     if (NETWORK_API_BASE && NETWORK_API_BASE !== '') {
       console.log('🔗 Using network API:', NETWORK_API_BASE);
       return NETWORK_API_BASE;

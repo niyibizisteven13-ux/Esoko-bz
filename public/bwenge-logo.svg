@@ -1,16 +1,21 @@
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1B2A4A"/>
-      <stop offset="100%" stop-color="#131F38"/>
+    <linearGradient id="field" x1="58" y1="34" x2="454" y2="478" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D1B2A"/>
+      <stop offset="1" stop-color="#173B4D"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#F0B75A"/>
-      <stop offset="100%" stop-color="#E8A33D"/>
+    <linearGradient id="sun" x1="132" y1="116" x2="386" y2="395" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#F28F3B"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <path d="M 118 158 L 170 158 L 256 264 L 256 344 L 224 344 L 224 306 L 150 214 L 150 344 L 118 344 Z" fill="#F7F5F1"/>
-  <path d="M 342 158 L 394 158 L 394 344 L 362 344 L 362 214 L 288 306 L 288 264 Z" fill="url(#gold)"/>
-  <circle cx="256" cy="392" r="15" fill="url(#gold)"/>
+  <rect width="512" height="512" rx="128" fill="url(#field)"/>
+  <path d="M92 338C139 282 181 253 228 253C276 253 313 285 350 285C380 285 404 270 430 243" stroke="#2EC4B6" stroke-width="22" stroke-linecap="round"/>
+  <path d="M105 365C151 323 187 304 229 304C270 304 306 331 347 331C380 331 402 319 427 297" stroke="#2EC4B6" stroke-opacity=".35" stroke-width="10" stroke-linecap="round"/>
+  <path d="M150 184H362L340 352H172L150 184Z" fill="url(#sun)"/>
+  <path d="M137 184H375" stroke="#FFF7E6" stroke-width="18" stroke-linecap="round"/>
+  <path d="M185 184L205 140H327L347 184" stroke="#FFF7E6" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M205 226V307M256 226V307M307 226V307" stroke="#0D1B2A" stroke-opacity=".38" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="196" cy="384" r="17" fill="#FFF7E6"/>
+  <circle cx="326" cy="384" r="17" fill="#FFF7E6"/>
 </svg>

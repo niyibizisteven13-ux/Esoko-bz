@@ -3961,6 +3961,7 @@ function buildAssistantContextSummary(context: Record<string, unknown>) {
 async function callGeminiAssistant(message: string, role: string, context: Record<string, unknown>, history: Array<{ role: string; content: string }> = []) {
   const effectiveApiKey = env.GEMINI_API_KEY || '';
   if (!effectiveApiKey) {
+    console.warn('Gemini AI is disabled: GEMINI_API_KEY is not configured');
     return null;
   }
 
@@ -4003,7 +4004,8 @@ async function callGeminiAssistant(message: string, role: string, context: Recor
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API request failed: ${response.status}`);
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`Gemini API request failed: ${response.status}${errorBody ? ` - ${errorBody.slice(0, 500)}` : ''}`);
   }
 
   const payload = await response.json();

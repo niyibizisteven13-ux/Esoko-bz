@@ -20,6 +20,12 @@ services:
         value: https://bwenge.space
       - key: FRONTEND_URLS
         value: https://bwenge.space
+      - key: VITE_API_BASE_URL
+        value: https://bwenge.space
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_API_KEY
+        sync: false
       - key: DATA_DIR
         value: /app/data
       - key: UPLOAD_DIR

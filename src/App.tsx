@@ -41,7 +41,7 @@ function getRoleRedirect(role: string | null): string {
     case 'agent':
       return '/agent';
     case 'customer':
-      return '/customer?tab=overview';
+      return '/customer?tab=marketplace';
     default:
       return '/login';
   }
@@ -74,8 +74,8 @@ export default function App() {
     };
   }, []);
 
-  const marketplaceEntry = '/customer?tab=overview';
-  // Force the app to land on the customer home overview so users see the feed first.
+  const marketplaceEntry = '/customer?tab=marketplace';
+  // Every public entry point opens the marketplace first.
   const fallbackDestination = marketplaceEntry;
   const showLanding = false; // disable public landing to land directly on customer overview
 
