@@ -15457,7 +15457,11 @@ async function startServer() {
         etag: true,
         lastModified: true,
         setHeaders: (res, filePath) => {
-          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          if (path.basename(filePath) === 'index.html' || path.basename(filePath) === 'sw.js') {
+            // The HTML shell and service worker must always revalidate after a deploy.
+            // Otherwise a cached shell can request hashed chunks from an older build.
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
           } else {
             res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -15465,6 +15469,11 @@ async function startServer() {
         },
       })
     );
+
+    // Never turn a stale hashed asset URL into the SPA shell. That masks deploy
+    // mismatches as JavaScript parse errors and makes the blank page harder to
+    // diagnose in the browser.
+    app.use('/assets', (_req, res) => res.status(404).send('Asset not found'));
   }
 
   app.use(async (req, res) => {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'esoko-nexus-offline-v1';
+const CACHE_NAME = 'esoko-nexus-offline-v2';
 const APP_SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -31,7 +31,7 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      fetch(request, { cache: 'no-store' })
         .then((response) => {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', copy));
@@ -49,7 +49,9 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(request).then((cached) => {
-      const network = fetch(request)
+      // Prefer the current deployment. A cached hashed chunk can belong to a
+      // previous build and cause the app to load as a blank page.
+      const network = fetch(request, { cache: 'no-store' })
         .then((response) => {
           if (response && response.ok && response.status !== 206) {
             const copy = response.clone();

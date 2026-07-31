@@ -1,4 +1,6 @@
 import { Pool } from 'pg';
+import fs from 'fs';
+import path from 'path';
 
 type SqliteDb = {
   prepare: (sql: string) => {
@@ -37,6 +39,13 @@ export function isPostgresAccountStoreEnabled() {
 export async function initializePostgresAccountStore() {
   const client = getPool();
   if (!client || initialized) return false;
+
+  // Apply the complete schema first. The legacy compatibility DDL below uses
+  // IF NOT EXISTS and must not be allowed to define a reduced version of a
+  // table before the canonical schema runs.
+  const schemaPath = path.resolve(process.cwd(), 'migrations', 'postgres', '001_schema.sql');
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  await client.query(schemaSql);
 
   await client.query(`
     CREATE TABLE IF NOT EXISTS users (
