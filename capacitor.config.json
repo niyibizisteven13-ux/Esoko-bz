@@ -3,7 +3,7 @@
   "appName": "Bwenge",
   "webDir": "dist",
   "server": {
-    "url": "http://172.20.26.58:5173",
+    "url": "http://172.20.24.97:5173",
     "cleartext": true
   }
 }
