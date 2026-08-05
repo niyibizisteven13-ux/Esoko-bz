@@ -31,10 +31,6 @@ jobs:
         run: npm ci
 
       - name: Build web app
-        env:
-          # Packaged apps must call the deployed HTTPS API, never a developer
-          # workstation or private LAN address.
-          VITE_API_BASE_URL: https://bwenge.space
         run: npm run build
 
       - name: Sync Capacitor Android project

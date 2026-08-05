@@ -30,8 +30,6 @@ jobs:
         run: npm ci
 
       - name: Build web app
-        env:
-          VITE_API_BASE_URL: https://bwenge.space
         run: npm run build
 
       - name: Sync Capacitor
