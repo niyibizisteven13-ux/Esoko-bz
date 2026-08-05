@@ -42,18 +42,8 @@ export default defineConfig(() => {
         protocol: 'ws',
       },
       allowedHosts: true as const,
-      proxy: {
-        '/api': {
-          target: 'http://localhost:5173',
-          changeOrigin: true,
-          rewrite: (path) => path,
-        },
-        '/socket.io': {
-          target: 'http://localhost:5173',
-          changeOrigin: true,
-          ws: true,
-        },
-      },
+      // No dev proxy for /api or /socket.io when the backend is served
+      // from the same origin via the Express server and Vite middleware.
     },
     resolve: {
       alias: {
